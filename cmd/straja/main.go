@@ -1,21 +1,33 @@
 package main
 
 import (
- "flag"
- "log"
+    "flag"
+    "log"
 
- "github.com/somanole/straja/internal/server"
+    "github.com/somanole/straja/internal/config"
+    "github.com/somanole/straja/internal/server"
 )
 
 func main() {
- addr := flag.String("addr", ":8080", "HTTP listen address")
- // we’ll add --config later
- flag.Parse()
+    addrFlag := flag.String("addr", "", "HTTP listen address (overrides config)")
+    configPath := flag.String("config", "straja.yaml", "Path to Straja config file")
+    flag.Parse()
 
- srv := server.New()
+    // Load config
+    cfg, err := config.Load(*configPath)
+    if err != nil {
+        log.Fatalf("failed to load config: %v", err)
+    }
 
- log.Printf("Starting Straja on %s...", *addr)
- if err := srv.Start(*addr); err != nil {
-  log.Fatalf("server error: %v", err)
- }
+    addr := cfg.Server.Addr
+    if *addrFlag != "" {
+        addr = *addrFlag
+    }
+
+    srv := server.New(cfg)
+
+    log.Printf("Starting Straja on %s...", addr)
+    if err := srv.Start(addr); err != nil {
+        log.Fatalf("server error: %v", err)
+    }
 }
