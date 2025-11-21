@@ -1,5 +1,5 @@
-module github.com/somanole/straja
+module github.com/straja-ai/straja
 
 go 1.25.4
 
-require gopkg.in/yaml.v3 v3.0.1 // indirect
+require gopkg.in/yaml.v3 v3.0.1

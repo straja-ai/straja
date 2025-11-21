@@ -9,11 +9,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/somanole/straja/internal/auth"
-	"github.com/somanole/straja/internal/config"
-	"github.com/somanole/straja/internal/inference"
-	"github.com/somanole/straja/internal/policy"
-	"github.com/somanole/straja/internal/provider"
+	"github.com/straja-ai/straja/internal/auth"
+	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja/internal/policy"
+	"github.com/straja-ai/straja/internal/provider"
 )
 
 // Server wraps the HTTP server components for Straja.

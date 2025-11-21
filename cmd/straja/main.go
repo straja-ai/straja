@@ -4,9 +4,9 @@ import (
 	"flag"
 	"log"
 
-	"github.com/somanole/straja/internal/auth"
-	"github.com/somanole/straja/internal/config"
-	"github.com/somanole/straja/internal/server"
+	"github.com/straja-ai/straja/internal/auth"
+	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja/internal/server"
 )
 
 func main() {

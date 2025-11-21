@@ -18,7 +18,7 @@ Straja is distributed as a single binary (Linux, macOS) and official Docker imag
 ### Download (example)
 
 ```bash
-curl -LO https://github.com/somanole/straja/releases/latest/download/straja
+curl -LO https://github.com/straja-ai/straja/releases/latest/download/straja
 chmod +x straja
 ./straja --config straja.yaml
 ```

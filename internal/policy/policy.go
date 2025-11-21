@@ -3,7 +3,7 @@ package policy
 import (
  "context"
 
- "github.com/somanole/straja/internal/inference"
+ "github.com/straja-ai/straja/internal/inference"
 )
 
 // Engine defines the interface for Straja's policy engine.

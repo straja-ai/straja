@@ -3,7 +3,7 @@ package provider
 import (
  "context"
 
- "github.com/somanole/straja/internal/inference"
+ "github.com/straja-ai/straja/internal/inference"
 )
 
 // Provider is the interface for all upstream LLM providers.
