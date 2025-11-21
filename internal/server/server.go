@@ -7,12 +7,15 @@ import (
     "net/http"
 
     "github.com/somanole/straja/internal/config"
+    "github.com/somanole/straja/internal/inference"
+    "github.com/somanole/straja/internal/policy"
 )
 
 // Server wraps the HTTP server components for Straja.
 type Server struct {
-    mux *http.ServeMux
-    cfg *config.Config
+    mux    *http.ServeMux
+    cfg    *config.Config
+    policy policy.Engine
 }
 
 // New creates a new Straja server with all routes registered.
@@ -20,8 +23,9 @@ func New(cfg *config.Config) *Server {
     mux := http.NewServeMux()
 
     s := &Server{
-        mux: mux,
-        cfg: cfg,
+        mux:    mux,
+        cfg:    cfg,
+        policy: policy.NewNoop(), // later we can inject a real engine
     }
 
     // Routes
@@ -43,11 +47,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
     fmt.Fprintln(w, "ok")
 }
 
-// Minimal types to parse an OpenAI-style chat completion request.
+// --- OpenAI-style request/response types for the HTTP layer ---
+
 type chatCompletionRequest struct {
-    Model    string           `json:"model"`
-    Messages []chatMessage    `json:"messages"`
-    Stream   bool             `json:"stream,omitempty"`
+    Model    string        `json:"model"`
+    Messages []chatMessage `json:"messages"`
+    Stream   bool          `json:"stream,omitempty"`
+    // Later we'll add: user, tools, etc.
 }
 
 type chatMessage struct {
@@ -55,18 +61,17 @@ type chatMessage struct {
     Content string `json:"content"`
 }
 
-// We'll also define a minimal response type to send back.
 type chatCompletionResponse struct {
-    ID      string                      `json:"id"`
-    Object  string                      `json:"object"`
-    Choices []chatCompletionChoice      `json:"choices"`
-    Usage   chatCompletionUsage         `json:"usage"`
+    ID      string                 `json:"id"`
+    Object  string                 `json:"object"`
+    Choices []chatCompletionChoice `json:"choices"`
+    Usage   chatCompletionUsage    `json:"usage"`
 }
 
 type chatCompletionChoice struct {
-    Index        int               `json:"index"`
-    Message      chatMessage       `json:"message"`
-    FinishReason string            `json:"finish_reason"`
+    Index        int         `json:"index"`
+    Message      chatMessage `json:"message"`
+    FinishReason string      `json:"finish_reason"`
 }
 
 type chatCompletionUsage struct {
@@ -81,43 +86,90 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    var req chatCompletionRequest
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+    var reqBody chatCompletionRequest
+    if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
         http.Error(w, "invalid JSON body", http.StatusBadRequest)
         return
     }
 
-    // For now, this is just a stub that ignores the model/messages
-    // and returns a static, OpenAI-shaped response.
-    // Later we'll:
-    //  - normalize to an internal InferenceRequest
-    //  - run policies
-    //  - call upstream providers
-    //  - run post-LLM policies
-    //  - emit activation events
+    ctx := r.Context()
 
-    resp := chatCompletionResponse{
-        ID:     "chatcmpl-straja-skeleton",
-        Object: "chat.completion",
-        Choices: []chatCompletionChoice{
-            {
-                Index: 0,
-                Message: chatMessage{
-                    Role:    "assistant",
-                    Content: "Hello from Straja skeleton! (This will later proxy to a real LLM.)",
-                },
-                FinishReason: "stop",
-            },
+    // 1) Normalize HTTP/OpenAI request → internal inference.Request
+    infReq := normalizeToInferenceRequest(&reqBody)
+
+    // 2) Pre-LLM policy hook (BeforeModel)
+    if err := s.policy.BeforeModel(ctx, infReq); err != nil {
+        // Later we’ll return a proper OpenAI-style error with details.
+        http.Error(w, "blocked by policy (before model)", http.StatusForbidden)
+        return
+    }
+
+    // 3) Call upstream provider (later).
+    // For now, we synthesize a dummy inference.Response to simulate an LLM.
+    infResp := &inference.Response{
+        Message: inference.Message{
+            Role:    "assistant",
+            Content: "Hello from Straja skeleton! (This will later proxy to a real LLM.)",
         },
-        Usage: chatCompletionUsage{
+        Usage: inference.Usage{
             PromptTokens:     0,
             CompletionTokens: 0,
             TotalTokens:      0,
         },
     }
 
+    // 4) Post-LLM policy hook (AfterModel)
+    if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
+        http.Error(w, "blocked by policy (after model)", http.StatusForbidden)
+        return
+    }
+
+    // 5) Convert internal response → HTTP/OpenAI response
+    respBody := buildChatCompletionResponse(infResp)
+
     w.Header().Set("Content-Type", "application/json")
-    if err := json.NewEncoder(w).Encode(resp); err != nil {
+    if err := json.NewEncoder(w).Encode(respBody); err != nil {
         log.Printf("failed to write response: %v", err)
+    }
+}
+
+// normalizeToInferenceRequest converts the HTTP/OpenAI payload into our internal representation.
+func normalizeToInferenceRequest(req *chatCompletionRequest) *inference.Request {
+    msgs := make([]inference.Message, 0, len(req.Messages))
+    for _, m := range req.Messages {
+        msgs = append(msgs, inference.Message{
+            Role:    m.Role,
+            Content: m.Content,
+        })
+    }
+
+    return &inference.Request{
+        ProjectID: "", // later: derive from API key / auth
+        Model:     req.Model,
+        UserID:    "", // later: could be taken from request body or headers
+        Messages:  msgs,
+    }
+}
+
+// buildChatCompletionResponse converts an internal inference.Response into OpenAI-style JSON.
+func buildChatCompletionResponse(resp *inference.Response) chatCompletionResponse {
+    return chatCompletionResponse{
+        ID:     "chatcmpl-straja-skeleton",
+        Object: "chat.completion",
+        Choices: []chatCompletionChoice{
+            {
+                Index: 0,
+                Message: chatMessage{
+                    Role:    resp.Message.Role,
+                    Content: resp.Message.Content,
+                },
+                FinishReason: "stop",
+            },
+        },
+        Usage: chatCompletionUsage{
+            PromptTokens:     resp.Usage.PromptTokens,
+            CompletionTokens: resp.Usage.CompletionTokens,
+            TotalTokens:      resp.Usage.TotalTokens,
+        },
     }
 }
