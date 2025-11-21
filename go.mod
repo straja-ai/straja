@@ -1,3 +1,3 @@
-module github.com/somanole/straja-gateway
+module github.com/somanole/straja
 
 go 1.25.4
