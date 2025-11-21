@@ -11,6 +11,7 @@ type Config struct {
 	Server          ServerConfig              `yaml:"server"`
 	Providers       map[string]ProviderConfig `yaml:"providers"`
 	DefaultProvider string                    `yaml:"default_provider"`
+	Projects        []ProjectConfig           `yaml:"projects"`
 }
 
 type ServerConfig struct {
@@ -21,6 +22,12 @@ type ProviderConfig struct {
 	Type      string `yaml:"type"`        // e.g. "openai"
 	BaseURL   string `yaml:"base_url"`    // e.g. "https://api.openai.com/v1"
 	APIKeyEnv string `yaml:"api_key_env"` // e.g. "OPENAI_API_KEY"
+}
+
+type ProjectConfig struct {
+	ID       string   `yaml:"id"`
+	Provider string   `yaml:"provider"` // provider name from Providers map
+	APIKeys  []string `yaml:"api_keys"`
 }
 
 // Load reads configuration from a YAML file.
@@ -52,6 +59,7 @@ func defaultConfig() *Config {
 		},
 		Providers:       map[string]ProviderConfig{},
 		DefaultProvider: "",
+		Projects:        []ProjectConfig{},
 	}
 }
 

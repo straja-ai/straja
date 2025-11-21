@@ -7,7 +7,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
+	"github.com/somanole/straja/internal/auth"
 	"github.com/somanole/straja/internal/config"
 	"github.com/somanole/straja/internal/inference"
 	"github.com/somanole/straja/internal/policy"
@@ -18,8 +20,37 @@ import (
 type Server struct {
 	mux      *http.ServeMux
 	cfg      *config.Config
+	auth     *auth.Auth
 	policy   policy.Engine
-	provider provider.Provider
+	provider provider.Provider // default provider for now; later per-project routing
+}
+
+// New creates a new Straja server with all routes registered.
+func New(cfg *config.Config, authz *auth.Auth) *Server {
+	mux := http.NewServeMux()
+
+	pol := policy.NewNoop() // later: real policies
+
+	prov, err := buildProviderFromConfig(cfg)
+	if err != nil {
+		log.Printf("warning: failed to build provider from config: %v", err)
+		log.Printf("falling back to echo provider")
+		prov = provider.NewEcho()
+	}
+
+	s := &Server{
+		mux:      mux,
+		cfg:      cfg,
+		auth:     authz,
+		policy:   pol,
+		provider: prov,
+	}
+
+	// Routes
+	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
+
+	return s
 }
 
 func buildProviderFromConfig(cfg *config.Config) (provider.Provider, error) {
@@ -42,33 +73,6 @@ func buildProviderFromConfig(cfg *config.Config) (provider.Provider, error) {
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q", pcfg.Type)
 	}
-}
-
-// New creates a new Straja server with all routes registered.
-func New(cfg *config.Config) *Server {
-	mux := http.NewServeMux()
-
-	pol := policy.NewNoop() // later: real policies
-
-	prov, err := buildProviderFromConfig(cfg)
-	if err != nil {
-		log.Printf("warning: failed to build provider from config: %v", err)
-		log.Printf("falling back to echo provider")
-		prov = provider.NewEcho()
-	}
-
-	s := &Server{
-		mux:      mux,
-		cfg:      cfg,
-		policy:   pol,
-		provider: prov,
-	}
-
-	// Routes
-	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
-
-	return s
 }
 
 // Start runs the HTTP server on the given address.
@@ -116,9 +120,32 @@ type chatCompletionUsage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+type openAIErrorBody struct {
+	Error openAIErrorDetail `json:"error"`
+}
+
+type openAIErrorDetail struct {
+	Message string      `json:"message"`
+	Type    string      `json:"type"`
+	Code    interface{} `json:"code,omitempty"`
+}
+
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 0) Auth: extract API key and map to project
+	apiKey, ok := parseBearerToken(r.Header.Get("Authorization"))
+	if !ok || apiKey == "" {
+		writeOpenAIError(w, http.StatusUnauthorized, "Invalid or missing API key", "authentication_error")
+		return
+	}
+
+	project, ok := s.auth.Lookup(apiKey)
+	if !ok {
+		writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key", "authentication_error")
 		return
 	}
 
@@ -131,26 +158,26 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// 1) Normalize HTTP/OpenAI request → internal inference.Request
-	infReq := normalizeToInferenceRequest(&reqBody)
+	infReq := normalizeToInferenceRequest(project.ID, &reqBody)
 
 	// 2) Pre-LLM policy hook (BeforeModel)
 	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
-		// Later we’ll return a proper OpenAI-style error with details.
-		http.Error(w, "blocked by policy (before model)", http.StatusForbidden)
+		// Later we’ll return more detailed policy info
+		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
 	}
 
-	// 3) Call upstream provider (for now, our stub echo provider).
+	// 3) Call upstream provider (for now, default provider, later per-project routing).
 	infResp, err := s.provider.ChatCompletion(ctx, infReq)
 	if err != nil {
 		log.Printf("provider error: %v", err)
-		http.Error(w, "provider error", http.StatusBadGateway)
+		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
 
 	// 4) Post-LLM policy hook (AfterModel)
 	if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
-		http.Error(w, "blocked by policy (after model)", http.StatusForbidden)
+		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
 	}
 
@@ -164,7 +191,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 // normalizeToInferenceRequest converts the HTTP/OpenAI payload into our internal representation.
-func normalizeToInferenceRequest(req *chatCompletionRequest) *inference.Request {
+func normalizeToInferenceRequest(projectID string, req *chatCompletionRequest) *inference.Request {
 	msgs := make([]inference.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		msgs = append(msgs, inference.Message{
@@ -174,7 +201,7 @@ func normalizeToInferenceRequest(req *chatCompletionRequest) *inference.Request 
 	}
 
 	return &inference.Request{
-		ProjectID: "", // later: derive from API key / auth
+		ProjectID: projectID,
 		Model:     req.Model,
 		UserID:    "", // later: could be taken from request body or headers
 		Messages:  msgs,
@@ -202,4 +229,31 @@ func buildChatCompletionResponse(resp *inference.Response) chatCompletionRespons
 			TotalTokens:      resp.Usage.TotalTokens,
 		},
 	}
+}
+
+// parseBearerToken extracts the token from an Authorization: Bearer header.
+func parseBearerToken(h string) (string, bool) {
+	if h == "" {
+		return "", false
+	}
+	parts := strings.Fields(h)
+	if len(parts) != 2 {
+		return "", false
+	}
+	if !strings.EqualFold(parts[0], "Bearer") {
+		return "", false
+	}
+	return parts[1], true
+}
+
+// writeOpenAIError writes an OpenAI-style error JSON.
+func writeOpenAIError(w http.ResponseWriter, status int, message, typ string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(openAIErrorBody{
+		Error: openAIErrorDetail{
+			Message: message,
+			Type:    typ,
+		},
+	})
 }

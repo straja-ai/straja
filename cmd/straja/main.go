@@ -1,33 +1,40 @@
 package main
 
 import (
-    "flag"
-    "log"
+	"flag"
+	"log"
 
-    "github.com/somanole/straja/internal/config"
-    "github.com/somanole/straja/internal/server"
+	"github.com/somanole/straja/internal/auth"
+	"github.com/somanole/straja/internal/config"
+	"github.com/somanole/straja/internal/server"
 )
 
 func main() {
-    addrFlag := flag.String("addr", "", "HTTP listen address (overrides config)")
-    configPath := flag.String("config", "straja.yaml", "Path to Straja config file")
-    flag.Parse()
+	addrFlag := flag.String("addr", "", "HTTP listen address (overrides config)")
+	configPath := flag.String("config", "straja.yaml", "Path to Straja config file")
+	flag.Parse()
 
-    // Load config
-    cfg, err := config.Load(*configPath)
-    if err != nil {
-        log.Fatalf("failed to load config: %v", err)
-    }
+	// Load config
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
 
-    addr := cfg.Server.Addr
-    if *addrFlag != "" {
-        addr = *addrFlag
-    }
+	// Build auth mappings
+	authz, err := auth.NewFromConfig(cfg)
+	if err != nil {
+		log.Fatalf("failed to initialize auth: %v", err)
+	}
 
-    srv := server.New(cfg)
+	addr := cfg.Server.Addr
+	if *addrFlag != "" {
+		addr = *addrFlag
+	}
 
-    log.Printf("Starting Straja on %s...", addr)
-    if err := srv.Start(addr); err != nil {
-        log.Fatalf("server error: %v", err)
-    }
+	srv := server.New(cfg, authz)
+
+	log.Printf("Starting Straja on %s...", addr)
+	if err := srv.Start(addr); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
 }
