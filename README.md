@@ -204,5 +204,5 @@ MIT
 
 # 💬 Contact
 
-Built by Sorin Manole  
+hello@straja.ai
 **https://straja.ai**
