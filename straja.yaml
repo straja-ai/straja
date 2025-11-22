@@ -27,7 +27,7 @@ logging:
   activation_level: "full"   # metadata | redacted | full
 
 policy:
-  banned_words: "block" #  | redact| ignore | block | log
+  banned_words: "redact" #  | redact| ignore | block | log
   banned_words_list:
     - "blocked_test"
     - "foo_bar"
@@ -38,8 +38,8 @@ policy:
     email: true
     phone: true
     credit_card: true
-    iban: false
-    tokens: false
+    iban: true
+    tokens: true
 
   injection: "block"
   prompt_injection: "block"

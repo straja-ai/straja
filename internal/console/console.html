@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Straja Gateway Console</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; padding: 16px; background: #f5f5f7; }
+    .container { max-width: 1100px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.06); }
+    h1 { margin-top: 0; font-size: 22px; }
+    .config { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-bottom: 16px; }
+    .config .full { grid-column: 1 / -1; }
+    label { display: block; font-size: 13px; margin-bottom: 4px; color: #444; }
+    input, textarea, select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #d0d0d7; font-size: 14px; }
+    textarea { resize: vertical; min-height: 80px; }
+    .prompt-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+    .prompt-row textarea { flex: 1; }
+    .actions { display: flex; flex-direction: column; gap: 8px; min-width: 120px; }
+    button { padding: 8px 12px; border-radius: 8px; border: none; font-size: 14px; cursor: pointer; background: #111827; color: #fff; }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .status { font-size: 12px; color: #555; min-height: 16px; }
+    .results { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; margin-top: 8px; }
+    .card { border-radius: 10px; border: 1px solid #e3e3ec; padding: 12px; background: #fafafa; overflow: hidden; }
+    .card h2 { margin: 0 0 6px; font-size: 14px; }
+    pre { margin: 0; font-size: 12px; overflow: auto; max-height: 260px; background: #f3f4f6; padding: 8px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+    .assistant-output { margin-top: 8px; padding: 8px; background: #eff6ff; border-radius: 8px; font-size: 13px; min-height: 32px; white-space: pre-wrap; }
+    .small { font-size: 11px; color: #777; }
+    @media (max-width: 900px) {
+      .config, .results { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Straja Gateway Console</h1>
+
+    <div class="config">
+        <div class="full">
+            <label for="gatewayUrl">Console API base URL</label>
+            <input
+            id="gatewayUrl"
+            type="text"
+            value="/console/api"
+            />
+        </div>
+        <div>
+            <label for="projectSelect">Project</label>
+            <select id="projectSelect">
+            <option value="">Loading projects…</option>
+            </select>
+        </div>
+        <div>
+            <label for="model">Model</label>
+            <input
+            id="model"
+            type="text"
+            value="gpt-4.1-mini"
+            />
+        </div>
+    </div>
+
+    <div class="prompt-row">
+      <textarea
+        id="prompt"
+        placeholder="Type your prompt here…"
+      ></textarea>
+      <div class="actions">
+        <button id="sendBtn">Send</button>
+        <button id="clearBtn" type="button">Clear</button>
+        <div class="status" id="status"></div>
+      </div>
+    </div>
+
+    <div class="results">
+      <div class="card">
+        <h2>Completion</h2>
+        <div class="assistant-output" id="assistantText"></div>
+        <div class="small">Raw response</div>
+        <pre id="completionJson"></pre>
+      </div>
+      <div class="card">
+        <h2>Activation event</h2>
+        <div class="small">
+          Reads JSON from response header
+          <code>X-Straja-Activation</code> (or <code>X-Activation-Event</code>).
+        </div>
+        <pre id="activationJson"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const gatewayUrlInput = document.getElementById('gatewayUrl');
+    const projectSelect = document.getElementById('projectSelect');
+    const modelInput = document.getElementById('model');
+    const promptInput = document.getElementById('prompt');
+    const sendBtn = document.getElementById('sendBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const statusEl = document.getElementById('status');
+    const completionJsonEl = document.getElementById('completionJson');
+    const activationJsonEl = document.getElementById('activationJson');
+    const assistantTextEl = document.getElementById('assistantText');
+
+    const STORAGE_KEY = 'strajaConsoleConfig';
+
+    
+    function loadConfig() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return;
+            const cfg = JSON.parse(raw);
+            if (cfg.baseUrl) gatewayUrlInput.value = cfg.baseUrl;
+            if (cfg.model) modelInput.value = cfg.model;
+            if (cfg.projectId) {
+            // we'll select this after projects load
+            projectSelect.dataset.selected = cfg.projectId;
+            }
+        } catch (_) {}
+    }
+
+    function saveConfig() {
+        const cfg = {
+            baseUrl: gatewayUrlInput.value.trim(),
+            model: modelInput.value.trim(),
+            projectId: projectSelect.value
+        };
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+        } catch (_) {}
+    }
+
+    async function loadProjects() {
+        const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
+        try {
+            const res = await fetch(baseUrl + '/projects');
+            if (!res.ok) {
+            projectSelect.innerHTML = '<option value="">Error loading projects</option>';
+            return;
+            }
+            const projects = await res.json();
+            if (!Array.isArray(projects) || projects.length === 0) {
+            projectSelect.innerHTML = '<option value="">No projects in config</option>';
+            return;
+            }
+            projectSelect.innerHTML = '';
+            const storedId = projectSelect.dataset.selected;
+            projects.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.id + (p.provider ? ` (${p.provider})` : '');
+            projectSelect.appendChild(opt);
+            });
+            if (storedId) {
+            const found = Array.from(projectSelect.options).some(o => o.value === storedId);
+            if (found) {
+                projectSelect.value = storedId;
+            }
+            }
+        } catch (err) {
+            projectSelect.innerHTML = '<option value="">Error loading projects</option>';
+        }
+    }
+
+    async function sendRequest() {
+        const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
+        const projectId = projectSelect.value;
+        const model = modelInput.value.trim() || 'gpt-4.1-mini';
+        const prompt = promptInput.value.trim();
+
+        if (!projectId) {
+            statusEl.textContent = 'Please select a project.';
+            return;
+        }
+        if (!prompt) {
+            statusEl.textContent = 'Please enter a prompt.';
+            return;
+        }
+
+        saveConfig();
+
+        sendBtn.disabled = true;
+        clearBtn.disabled = true;
+        statusEl.textContent = 'Sending request…';
+        completionJsonEl.textContent = '';
+        activationJsonEl.textContent = '';
+        assistantTextEl.textContent = '';
+
+        const body = {
+            project_id: projectId,
+            model: model,
+            messages: [
+            { role: 'user', content: prompt }
+            ]
+        };
+
+        try {
+            const res = await fetch(baseUrl + '/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+            });
+
+            const text = await res.text();
+            let json;
+            try {
+            json = JSON.parse(text);
+            } catch (_) {
+            completionJsonEl.textContent = text;
+            assistantTextEl.textContent = '';
+            }
+
+            if (json) {
+            completionJsonEl.textContent = JSON.stringify(json, null, 2);
+
+            const assistantMessage =
+                json.choices &&
+                json.choices[0] &&
+                json.choices[0].message &&
+                json.choices[0].message.content;
+
+            assistantTextEl.textContent = assistantMessage || '(no assistant message found)';
+            }
+
+            const activationHeader =
+            res.headers.get('x-straja-activation') ||
+            res.headers.get('x-activation-event');
+
+            if (activationHeader) {
+            try {
+                const actJson = JSON.parse(activationHeader);
+                activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
+            } catch (_) {
+                activationJsonEl.textContent = activationHeader;
+            }
+            } else {
+            activationJsonEl.textContent = '(no activation header present)';
+            }
+
+            statusEl.textContent = `HTTP ${res.status} ${res.statusText}`;
+        } catch (err) {
+            statusEl.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+            completionJsonEl.textContent = '';
+            activationJsonEl.textContent = '';
+            assistantTextEl.textContent = '';
+        } finally {
+            sendBtn.disabled = false;
+            clearBtn.disabled = false;
+        }
+    }
+
+    function clearAll() {
+      promptInput.value = '';
+      completionJsonEl.textContent = '';
+      activationJsonEl.textContent = '';
+      assistantTextEl.textContent = '';
+      statusEl.textContent = '';
+    }
+
+    sendBtn.addEventListener('click', sendRequest);
+    clearBtn.addEventListener('click', clearAll);
+    promptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        sendRequest();
+      }
+    });
+
+    loadConfig();
+    loadProjects();
+  </script>
+</body>
+</html>

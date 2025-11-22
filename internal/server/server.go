@@ -15,6 +15,7 @@ import (
 	"github.com/straja-ai/straja/internal/activation"
 	"github.com/straja-ai/straja/internal/auth"
 	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja/internal/console"
 	"github.com/straja-ai/straja/internal/inference"
 	"github.com/straja-ai/straja/internal/policy"
 	"github.com/straja-ai/straja/internal/provider"
@@ -22,26 +23,127 @@ import (
 
 // Server wraps the HTTP server components for Straja.
 type Server struct {
-	mux             *http.ServeMux
-	cfg             *config.Config
-	auth            *auth.Auth
-	policy          policy.Engine
-	providers       map[string]provider.Provider // name -> provider
-	defaultProvider string                       // name of default provider
-	activation      activation.Emitter
-	loggingLevel    string
+	mux              *http.ServeMux
+	cfg              *config.Config
+	auth             *auth.Auth
+	policy           policy.Engine
+	providers        map[string]provider.Provider // name -> provider
+	defaultProvider  string                       // name of default provider
+	activation       activation.Emitter
+	loggingLevel     string
+	projectProviders map[string]string // project ID -> provider name
+}
+
+type consoleProject struct {
+	ID       string `json:"id"`
+	Provider string `json:"provider"`
+}
+
+func (s *Server) handleConsoleProjects(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	projects := make([]consoleProject, 0, len(s.cfg.Projects))
+	for _, p := range s.cfg.Projects {
+		projects = append(projects, consoleProject{
+			ID:       p.ID,
+			Provider: p.Provider,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(projects); err != nil {
+		log.Printf("failed to write console projects: %v", err)
+	}
+}
+
+type consoleChatRequest struct {
+	ProjectID string        `json:"project_id"`
+	Model     string        `json:"model"`
+	Messages  []chatMessage `json:"messages"`
+}
+
+func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var reqBody consoleChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if reqBody.ProjectID == "" {
+		http.Error(w, "missing project_id", http.StatusBadRequest)
+		return
+	}
+
+	// lookup provider for this project
+	providerName := s.projectProviders[reqBody.ProjectID]
+	if providerName == "" {
+		providerName = s.defaultProvider
+	}
+	prov, ok := s.providers[providerName]
+	if !ok {
+		log.Printf("no provider %q for project %q (console)", providerName, reqBody.ProjectID)
+		writeOpenAIError(w, http.StatusInternalServerError, "Straja misconfiguration: unknown provider for project", "configuration_error")
+		return
+	}
+
+	// Reuse the same normalization as /v1/chat/completions:
+	infReq := normalizeToInferenceRequest(reqBody.ProjectID, &chatCompletionRequest{
+		Model:    reqBody.Model,
+		Messages: reqBody.Messages,
+	})
+
+	ctx := r.Context()
+
+	// Policy + provider + activation, same flow as handleChatCompletions:
+
+	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
+		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
+		return
+	}
+
+	infResp, err := prov.ChatCompletion(ctx, infReq)
+	if err != nil {
+		log.Printf("provider %q error (console): %v", providerName, err)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
+		return
+	}
+
+	if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
+		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
+		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
+		return
+	}
+
+	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
+
+	respBody := buildChatCompletionResponse(infResp)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(respBody); err != nil {
+		log.Printf("failed to write console response: %v", err)
+	}
 }
 
 // New creates a new Straja server with all routes registered.
 func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux := http.NewServeMux()
 
-	// Basic policy engine (first real policy implementation)
+	// Build policy engine
 	pol := policy.NewBasic(cfg.Policy)
 
-	provs, err := buildProviderRegistry(cfg)
-	if err != nil {
-		log.Printf("warning: failed to build providers from config: %v", err)
+	// Build providers
+	provs, provErr := buildProviderRegistry(cfg)
+	if provErr != nil {
+		log.Printf("warning: failed to build providers from config: %v", provErr)
 		log.Printf("falling back to echo provider")
 		provs = map[string]provider.Provider{
 			"echo": provider.NewEcho(),
@@ -51,20 +153,35 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		}
 	}
 
+	// Build project → provider map
+	projectProviders := make(map[string]string)
+	for _, p := range cfg.Projects {
+		providerName := p.Provider
+		if providerName == "" {
+			providerName = cfg.DefaultProvider
+		}
+		projectProviders[p.ID] = providerName
+	}
+
 	s := &Server{
-		mux:             mux,
-		cfg:             cfg,
-		auth:            authz,
-		policy:          pol,
-		providers:       provs,
-		defaultProvider: cfg.DefaultProvider,
-		activation:      activation.NewStdout(),
-		loggingLevel:    strings.ToLower(cfg.Logging.ActivationLevel),
+		mux:              mux,
+		cfg:              cfg,
+		auth:             authz,
+		policy:           pol,
+		providers:        provs,
+		defaultProvider:  cfg.DefaultProvider,
+		activation:       activation.NewStdout(),
+		loggingLevel:     strings.ToLower(cfg.Logging.ActivationLevel),
+		projectProviders: projectProviders,
 	}
 
 	// Routes
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
+
+	mux.Handle("/console", console.Handler())
+	mux.HandleFunc("/console/api/projects", s.handleConsoleProjects)
+	mux.HandleFunc("/console/api/chat", s.handleConsoleChat)
 
 	return s
 }
@@ -200,7 +317,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// 2) Before-model block
 	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
-		s.emitActivation(ctx, infReq, nil, providerName, activation.DecisionBlockedBefore)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
 	}
@@ -209,20 +326,20 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	infResp, err := prov.ChatCompletion(ctx, infReq)
 	if err != nil {
 		log.Printf("provider %q error: %v", providerName, err)
-		s.emitActivation(ctx, infReq, nil, providerName, activation.DecisionErrorProvider)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
 
 	// 4) After-model block
 	if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
-		s.emitActivation(ctx, infReq, infResp, providerName, activation.DecisionBlockedAfter)
+		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
 	}
 
 	// 5) Success
-	s.emitActivation(ctx, infReq, infResp, providerName, activation.DecisionAllow)
+	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
 
 	respBody := buildChatCompletionResponse(infResp)
 
@@ -301,7 +418,7 @@ func writeOpenAIError(w http.ResponseWriter, status int, message, typ string) {
 }
 
 // emitActivation builds and sends an activation event via the configured emitter.
-func (s *Server) emitActivation(ctx context.Context, req *inference.Request, resp *inference.Response, providerName string, decision activation.Decision) {
+func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req *inference.Request, resp *inference.Response, providerName string, decision activation.Decision) {
 	if s.activation == nil || req == nil {
 		return
 	}
@@ -316,10 +433,18 @@ func (s *Server) emitActivation(ctx context.Context, req *inference.Request, res
 		Decision:          decision,
 		PromptPreview:     promptPreview,
 		CompletionPreview: completionPreview,
-		PolicyHits:        append([]string(nil), req.PolicyHits...), // copy to be safe
+		PolicyHits:        append([]string(nil), req.PolicyHits...),
 	}
 
+	// Emit via configured emitter (stdout, later webhooks, etc.)
 	s.activation.Emit(ctx, ev)
+
+	// Also expose activation to clients via header so the console can show it
+	if w != nil {
+		if b, err := json.Marshal(ev); err == nil {
+			w.Header().Set("X-Straja-Activation", string(b))
+		}
+	}
 }
 
 var (
