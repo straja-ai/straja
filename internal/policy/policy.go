@@ -1,37 +1,60 @@
 package policy
 
 import (
- "context"
+	"context"
+	"errors"
+	"regexp"
 
- "github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja/internal/inference"
 )
 
-// Engine defines the interface for Straja's policy engine.
-// It runs before and after the upstream LLM call.
 type Engine interface {
- // BeforeModel runs on the normalized request before calling the model.
- // It can mutate the request (e.g. redact PII) or return an error to block.
- BeforeModel(ctx context.Context, req *inference.Request) error
-
- // AfterModel runs on the normalized response after calling the model.
- // It can mutate the response (e.g. redact) or return an error to block.
- AfterModel(ctx context.Context, req *inference.Request, resp *inference.Response) error
+	BeforeModel(ctx context.Context, req *inference.Request) error
+	AfterModel(ctx context.Context, req *inference.Request, resp *inference.Response) error
 }
 
-// noopEngine is the simplest possible implementation: it does nothing.
-type noopEngine struct{}
+// ------------------------------
+// Basic Policy (first version)
+// ------------------------------
 
-// NewNoop returns a policy engine that performs no checks or modifications.
-func NewNoop() Engine {
- return &noopEngine{}
+type Basic struct {
+	bannedWords []string
+	redactRegex *regexp.Regexp
 }
 
-func (n *noopEngine) BeforeModel(ctx context.Context, req *inference.Request) error {
- // no-op for now
- return nil
+func NewBasic() Engine {
+	return &Basic{
+		bannedWords: []string{
+			"blocked_test", // sample banned keyword
+			"forbidden",    // you can add more
+		},
+		redactRegex: regexp.MustCompile(`(?i)\b(password|secret|token)\b`),
+	}
 }
 
-func (n *noopEngine) AfterModel(ctx context.Context, req *inference.Request, resp *inference.Response) error {
- // no-op for now
- return nil
+// BeforeModel blocks requests containing banned words in user prompt
+func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
+	if len(req.Messages) == 0 {
+		return nil
+	}
+	last := req.Messages[len(req.Messages)-1]
+
+	for _, banned := range p.bannedWords {
+		if containsIgnoreCase(last.Content, banned) {
+			return errors.New("prompt blocked due to banned content")
+		}
+	}
+
+	return nil
+}
+
+// AfterModel redacts sensitive keywords in the LLM output
+func (p *Basic) AfterModel(ctx context.Context, req *inference.Request, resp *inference.Response) error {
+	resp.Message.Content = p.redactRegex.ReplaceAllString(resp.Message.Content, "[REDACTED]")
+	return nil
+}
+
+// Utility
+func containsIgnoreCase(s, sub string) bool {
+	return regexp.MustCompile("(?i)"+regexp.QuoteMeta(sub)).FindStringIndex(s) != nil
 }

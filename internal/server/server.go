@@ -29,7 +29,7 @@ type Server struct {
 func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux := http.NewServeMux()
 
-	pol := policy.NewNoop() // later: real policies
+	pol := policy.NewBasic()
 
 	prov, err := buildProviderFromConfig(cfg)
 	if err != nil {
