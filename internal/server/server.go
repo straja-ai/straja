@@ -22,14 +22,14 @@ import (
 
 // Server wraps the HTTP server components for Straja.
 type Server struct {
-	mux          *http.ServeMux
-	cfg          *config.Config
-	auth         *auth.Auth
-	policy       policy.Engine
-	provider     provider.Provider
-	providerName string
-	activation   activation.Emitter
-	loggingLevel string
+	mux             *http.ServeMux
+	cfg             *config.Config
+	auth            *auth.Auth
+	policy          policy.Engine
+	providers       map[string]provider.Provider // name -> provider
+	defaultProvider string                       // name of default provider
+	activation      activation.Emitter
+	loggingLevel    string
 }
 
 // New creates a new Straja server with all routes registered.
@@ -39,22 +39,27 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	// Basic policy engine (first real policy implementation)
 	pol := policy.NewBasic()
 
-	prov, err := buildProviderFromConfig(cfg)
+	provs, err := buildProviderRegistry(cfg)
 	if err != nil {
-		log.Printf("warning: failed to build provider from config: %v", err)
+		log.Printf("warning: failed to build providers from config: %v", err)
 		log.Printf("falling back to echo provider")
-		prov = provider.NewEcho()
+		provs = map[string]provider.Provider{
+			"echo": provider.NewEcho(),
+		}
+		if cfg.DefaultProvider == "" {
+			cfg.DefaultProvider = "echo"
+		}
 	}
 
 	s := &Server{
-		mux:          mux,
-		cfg:          cfg,
-		auth:         authz,
-		policy:       pol,
-		provider:     prov,
-		providerName: cfg.DefaultProvider,
-		activation:   activation.NewStdout(),
-		loggingLevel: strings.ToLower(cfg.Logging.ActivationLevel),
+		mux:             mux,
+		cfg:             cfg,
+		auth:            authz,
+		policy:          pol,
+		providers:       provs,
+		defaultProvider: cfg.DefaultProvider,
+		activation:      activation.NewStdout(),
+		loggingLevel:    strings.ToLower(cfg.Logging.ActivationLevel),
 	}
 
 	// Routes
@@ -64,26 +69,35 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	return s
 }
 
-func buildProviderFromConfig(cfg *config.Config) (provider.Provider, error) {
-	if cfg.DefaultProvider == "" {
-		return nil, errors.New("no default_provider configured")
+// buildProviderRegistry constructs all configured providers.
+func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, error) {
+	if len(cfg.Providers) == 0 {
+		return nil, errors.New("no providers configured")
 	}
 
-	pcfg, ok := cfg.Providers[cfg.DefaultProvider]
-	if !ok {
+	reg := make(map[string]provider.Provider, len(cfg.Providers))
+
+	for name, pcfg := range cfg.Providers {
+		switch pcfg.Type {
+		case "openai":
+			apiKey := os.Getenv(pcfg.APIKeyEnv)
+			if apiKey == "" {
+				return nil, fmt.Errorf("provider %q: environment variable %s is empty", name, pcfg.APIKeyEnv)
+			}
+			reg[name] = provider.NewOpenAI(pcfg.BaseURL, apiKey)
+		default:
+			return nil, fmt.Errorf("provider %q: unsupported type %q", name, pcfg.Type)
+		}
+	}
+
+	if cfg.DefaultProvider == "" {
+		return nil, errors.New("default_provider is empty")
+	}
+	if _, ok := reg[cfg.DefaultProvider]; !ok {
 		return nil, fmt.Errorf("default_provider %q not found in providers map", cfg.DefaultProvider)
 	}
 
-	switch pcfg.Type {
-	case "openai":
-		apiKey := os.Getenv(pcfg.APIKeyEnv)
-		if apiKey == "" {
-			return nil, fmt.Errorf("environment variable %s is empty", pcfg.APIKeyEnv)
-		}
-		return provider.NewOpenAI(pcfg.BaseURL, apiKey), nil
-	default:
-		return nil, fmt.Errorf("unsupported provider type %q", pcfg.Type)
-	}
+	return reg, nil
 }
 
 // Start runs the HTTP server on the given address.
@@ -168,34 +182,47 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	// Determine provider for this project
+	providerName := project.Provider
+	if providerName == "" {
+		providerName = s.defaultProvider
+	}
+
+	prov, ok := s.providers[providerName]
+	if !ok {
+		log.Printf("no provider %q for project %q", providerName, project.ID)
+		writeOpenAIError(w, http.StatusInternalServerError, "Straja misconfiguration: unknown provider for project", "configuration_error")
+		return
+	}
+
 	// 1) Normalize HTTP/OpenAI request → internal inference.Request
 	infReq := normalizeToInferenceRequest(project.ID, &reqBody)
 
 	// 2) Before-model block
 	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
-		s.emitActivation(ctx, infReq, nil, activation.DecisionBlockedBefore)
+		s.emitActivation(ctx, infReq, nil, providerName, activation.DecisionBlockedBefore)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
 	}
 
 	// 3) Provider error
-	infResp, err := s.provider.ChatCompletion(ctx, infReq)
+	infResp, err := prov.ChatCompletion(ctx, infReq)
 	if err != nil {
-		log.Printf("provider error: %v", err)
-		s.emitActivation(ctx, infReq, nil, activation.DecisionErrorProvider)
+		log.Printf("provider %q error: %v", providerName, err)
+		s.emitActivation(ctx, infReq, nil, providerName, activation.DecisionErrorProvider)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
 
 	// 4) After-model block
 	if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
-		s.emitActivation(ctx, infReq, infResp, activation.DecisionBlockedAfter)
+		s.emitActivation(ctx, infReq, infResp, providerName, activation.DecisionBlockedAfter)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
 	}
 
 	// 5) Success
-	s.emitActivation(ctx, infReq, infResp, activation.DecisionAllow)
+	s.emitActivation(ctx, infReq, infResp, providerName, activation.DecisionAllow)
 
 	respBody := buildChatCompletionResponse(infResp)
 
@@ -274,7 +301,7 @@ func writeOpenAIError(w http.ResponseWriter, status int, message, typ string) {
 }
 
 // emitActivation builds and sends an activation event via the configured emitter.
-func (s *Server) emitActivation(ctx context.Context, req *inference.Request, resp *inference.Response, decision activation.Decision) {
+func (s *Server) emitActivation(ctx context.Context, req *inference.Request, resp *inference.Response, providerName string, decision activation.Decision) {
 	if s.activation == nil || req == nil {
 		return
 	}
@@ -284,7 +311,7 @@ func (s *Server) emitActivation(ctx context.Context, req *inference.Request, res
 	ev := &activation.Event{
 		Timestamp:         time.Now().UTC(),
 		ProjectID:         req.ProjectID,
-		Provider:          s.providerName,
+		Provider:          providerName,
 		Model:             req.Model,
 		Decision:          decision,
 		PromptPreview:     promptPreview,
