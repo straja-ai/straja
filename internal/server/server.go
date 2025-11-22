@@ -179,7 +179,9 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
 
-	mux.Handle("/console", console.Handler())
+	// Serve console + static
+	mux.Handle("/console/", console.Handler())
+	mux.Handle("/console", http.RedirectHandler("/console/", http.StatusMovedPermanently))
 	mux.HandleFunc("/console/api/projects", s.handleConsoleProjects)
 	mux.HandleFunc("/console/api/chat", s.handleConsoleChat)
 
