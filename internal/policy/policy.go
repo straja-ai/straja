@@ -282,10 +282,16 @@ func (p *Basic) AfterModel(ctx context.Context, req *inference.Request, resp *in
 	if resp == nil {
 		return nil
 	}
-	// record that output was redacted (for activation logs)
-	addPolicyHit(req, "output_redaction")
 
-	resp.Message.Content = p.outputRedactRegex.ReplaceAllString(resp.Message.Content, "[REDACTED]")
+	original := resp.Message.Content
+	redacted := p.outputRedactRegex.ReplaceAllString(original, "[REDACTED]")
+
+	// Only record a hit if something actually changed
+	if redacted != original {
+		addPolicyHit(req, "output_redaction")
+		resp.Message.Content = redacted
+	}
+
 	return nil
 }
 

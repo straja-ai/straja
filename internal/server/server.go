@@ -125,7 +125,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 
 	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
 
-	respBody := buildChatCompletionResponse(infResp)
+	respBody := buildChatCompletionResponse(infReq, infResp)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(respBody); err != nil {
@@ -244,16 +244,20 @@ type chatMessage struct {
 }
 
 type chatCompletionResponse struct {
-	ID      string                 `json:"id"`
-	Object  string                 `json:"object"`
-	Choices []chatCompletionChoice `json:"choices"`
-	Usage   chatCompletionUsage    `json:"usage"`
+	ID                string                 `json:"id"`
+	Object            string                 `json:"object"`
+	Created           int64                  `json:"created"`
+	Model             string                 `json:"model"`
+	Choices           []chatCompletionChoice `json:"choices"`
+	Usage             chatCompletionUsage    `json:"usage"`
+	SystemFingerprint *string                `json:"system_fingerprint,omitempty"`
 }
 
 type chatCompletionChoice struct {
 	Index        int         `json:"index"`
 	Message      chatMessage `json:"message"`
 	FinishReason string      `json:"finish_reason"`
+	Logprobs     interface{} `json:"logprobs,omitempty"`
 }
 
 type chatCompletionUsage struct {
@@ -341,7 +345,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 5) Success
 	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
 
-	respBody := buildChatCompletionResponse(infResp)
+	respBody := buildChatCompletionResponse(infReq, infResp)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(respBody); err != nil {
@@ -368,10 +372,12 @@ func normalizeToInferenceRequest(projectID string, req *chatCompletionRequest) *
 }
 
 // buildChatCompletionResponse converts an internal inference.Response into OpenAI-style JSON.
-func buildChatCompletionResponse(resp *inference.Response) chatCompletionResponse {
+func buildChatCompletionResponse(req *inference.Request, resp *inference.Response) chatCompletionResponse {
 	return chatCompletionResponse{
-		ID:     "chatcmpl-straja-skeleton",
-		Object: "chat.completion",
+		ID:      "chatcmpl-straja-skeleton", // later: generate nicer IDs if you want
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   req.Model,
 		Choices: []chatCompletionChoice{
 			{
 				Index: 0,
@@ -380,6 +386,7 @@ func buildChatCompletionResponse(resp *inference.Response) chatCompletionRespons
 					Content: resp.Message.Content,
 				},
 				FinishReason: "stop",
+				// Logprobs left as nil → serializes as null or omitted depending on client
 			},
 		},
 		Usage: chatCompletionUsage{
@@ -387,6 +394,7 @@ func buildChatCompletionResponse(resp *inference.Response) chatCompletionRespons
 			CompletionTokens: resp.Usage.CompletionTokens,
 			TotalTokens:      resp.Usage.TotalTokens,
 		},
+		// SystemFingerprint: nil for now
 	}
 }
 

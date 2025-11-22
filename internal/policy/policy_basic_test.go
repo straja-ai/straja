@@ -330,3 +330,30 @@ func TestBasicPolicy_AfterModel_RedactsAndAddsHit(t *testing.T) {
 		t.Fatalf("expected 'output_redaction' hit, got: %+v", req.PolicyHits)
 	}
 }
+
+func TestBasicPolicy_AfterModel_NoRedactionNoHit(t *testing.T) {
+	p := newTestPolicy()
+
+	req := &inference.Request{
+		ProjectID: "test",
+		Model:     "gpt-4.1-mini",
+		Messages: []inference.Message{
+			{Role: "user", Content: "Just say hello."},
+		},
+	}
+	resp := &inference.Response{
+		Message: inference.Message{
+			Role:    "assistant",
+			Content: "Hello there!",
+		},
+	}
+
+	err := p.AfterModel(context.Background(), req, resp)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if hasHit(req, "output_redaction") {
+		t.Fatalf("did not expect 'output_redaction' hit for safe content, got: %+v", req.PolicyHits)
+	}
+}
