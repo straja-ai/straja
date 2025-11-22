@@ -24,9 +24,68 @@
     .card h2 { margin: 0 0 6px; font-size: 14px; }
     pre { margin: 0; font-size: 12px; overflow: auto; max-height: 260px; background: #f3f4f6; padding: 8px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
     .assistant-output { margin-top: 8px; padding: 8px; background: #eff6ff; border-radius: 8px; font-size: 13px; min-height: 32px; white-space: pre-wrap; }
+        .output-block {
+      position: relative;
+      margin-top: 8px;
+    }
+
+    .output-block pre,
+    .output-block .assistant-output {
+      padding-right: 40px; /* space for copy chip on the right */
+    }
+
+    .copy-chip {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid #e5e7eb;
+      background: #f9fafb;
+      font-size: 11px;
+      color: #374151;
+      cursor: pointer;
+    }
+
+    .copy-chip:hover {
+      background: #e5e7eb;
+    }
+
+    .copy-icon {
+      width: 14px;
+      height: 14px;
+      display: inline-block;
+    }
+
+    .copy-icon svg {
+      width: 100%;
+      height: 100%;
+      fill: #6b7280;
+    }
     .small { font-size: 11px; color: #777; }
     @media (max-width: 900px) {
       .config, .results { grid-template-columns: 1fr; }
+    }
+    .copy-row {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      margin-bottom: 4px;
+    }
+    .copy-btn {
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid #d0d0d7;
+      background: #f3f4f6;
+      color: #111827;
+      cursor: pointer;
+    }
+    .copy-btn:hover {
+      background: #e5e7eb;
     }
   </style>
 </head>
@@ -72,20 +131,61 @@
     </div>
 
     <div class="results">
-      <div class="card">
+    <div class="card">
         <h2>Completion</h2>
+
+        <!-- Assistant text with copy chip -->
+        <div class="output-block">
         <div class="assistant-output" id="assistantText"></div>
+        <button type="button" class="copy-chip" id="copyAssistantBtn">
+            <span class="copy-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" ry="2"></rect>
+                <rect x="4" y="4" width="11" height="11" rx="2" ry="2"></rect>
+            </svg>
+            </span>
+            <span>Copy</span>
+        </button>
+        </div>
+
         <div class="small">Raw response</div>
+
+        <!-- Raw JSON with copy chip -->
+        <div class="output-block">
         <pre id="completionJson"></pre>
-      </div>
-      <div class="card">
+        <button type="button" class="copy-chip" id="copyCompletionBtn">
+            <span class="copy-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" ry="2"></rect>
+                <rect x="4" y="4" width="11" height="11" rx="2" ry="2"></rect>
+            </svg>
+            </span>
+            <span>Copy</span>
+        </button>
+        </div>
+    </div>
+
+    <div class="card">
         <h2>Activation event</h2>
         <div class="small">
-          Reads JSON from response header
-          <code>X-Straja-Activation</code> (or <code>X-Activation-Event</code>).
+        Reads JSON from response header
+        <code>X-Straja-Activation</code> (or <code>X-Activation-Event</code>).
         </div>
+
+        <!-- Activation JSON with copy chip -->
+        <div class="output-block">
         <pre id="activationJson"></pre>
-      </div>
+        <button type="button" class="copy-chip" id="copyActivationBtn">
+            <span class="copy-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" ry="2"></rect>
+                <rect x="4" y="4" width="11" height="11" rx="2" ry="2"></rect>
+            </svg>
+            </span>
+            <span>Copy</span>
+        </button>
+        </div>
+    </div>
     </div>
   </div>
 
@@ -101,9 +201,56 @@
     const activationJsonEl = document.getElementById('activationJson');
     const assistantTextEl = document.getElementById('assistantText');
 
+    const copyAssistantBtn = document.getElementById('copyAssistantBtn');
+    const copyCompletionBtn = document.getElementById('copyCompletionBtn');
+    const copyActivationBtn = document.getElementById('copyActivationBtn');
+
     const STORAGE_KEY = 'strajaConsoleConfig';
 
-    
+    async function copyFromElement(el) {
+    const text = (el && (el.textContent || el.value || '')).trim();
+    if (!text) {
+        statusEl.textContent = 'Nothing to copy.';
+        statusEl.style.color = '#b91c1c'; // red-700 for error
+        setTimeout(() => {
+        statusEl.textContent = '';
+        statusEl.style.color = '';
+        }, 3000);
+        return;
+    }
+
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        } else {
+        const tmp = document.createElement('textarea');
+        tmp.value = text;
+        tmp.style.position = 'fixed';
+        tmp.style.left = '-9999px';
+        document.body.appendChild(tmp);
+        tmp.focus();
+        tmp.select();
+        document.execCommand('copy');
+        document.body.removeChild(tmp);
+        }
+
+        statusEl.textContent = 'Copied to clipboard.';
+        statusEl.style.color = '#16a34a'; // green-600
+        setTimeout(() => {
+        statusEl.textContent = '';
+        statusEl.style.color = '';
+        }, 3000);
+    } catch (err) {
+        console.error('Copy failed', err);
+        statusEl.textContent = 'Copy failed.';
+        statusEl.style.color = '#b91c1c'; // red-700
+        setTimeout(() => {
+        statusEl.textContent = '';
+        statusEl.style.color = '';
+        }, 3000);
+    }
+    }
+
     function loadConfig() {
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
@@ -266,6 +413,10 @@
         sendRequest();
       }
     });
+    
+    copyAssistantBtn.addEventListener('click', () => copyFromElement(assistantTextEl));
+    copyCompletionBtn.addEventListener('click', () => copyFromElement(completionJsonEl));
+    copyActivationBtn.addEventListener('click', () => copyFromElement(activationJsonEl));
 
     loadConfig();
     loadProjects();
