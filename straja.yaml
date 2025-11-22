@@ -24,12 +24,24 @@ projects:
       - "local-dev-key-124"
 
 logging:
-  activation_level: "redacted"   # metadata | redacted | full
+  activation_level: "full"   # metadata | redacted | full
 
 policy:
-  banned_words: "block"       # block | log | ignore | redact
-  pii: "block"
+  banned_words: "block" #  | redact| ignore | block | log
+  banned_words_list:
+    - "blocked_test"
+    - "foo_bar"
+    - "forbidden"
+
+  pii: "redact"
+  pii_entities:
+    email: true
+    phone: true
+    credit_card: true
+    iban: false
+    tokens: false
+
   injection: "block"
   prompt_injection: "block"
-  jailbreak: "redact"
-  toxicity: "redact"
+  jailbreak: "block"
+  toxicity: "log"

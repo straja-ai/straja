@@ -13,7 +13,7 @@ type Config struct {
 	DefaultProvider string                    `yaml:"default_provider"`
 	Projects        []ProjectConfig           `yaml:"projects"`
 	Logging         LoggingConfig             `yaml:"logging"`
-    Policy          PolicyConfig              `yaml:"policy"`
+	Policy          PolicyConfig              `yaml:"policy"`
 }
 
 type ServerConfig struct {
@@ -36,13 +36,25 @@ type LoggingConfig struct {
 	ActivationLevel string `yaml:"activation_level"`
 }
 
+type PIIEntitiesConfig struct {
+	Email      bool `yaml:"email"`
+	Phone      bool `yaml:"phone"`
+	CreditCard bool `yaml:"credit_card"`
+	IBAN       bool `yaml:"iban"`
+	Tokens     bool `yaml:"tokens"`
+}
+
 type PolicyConfig struct {
-	BannedWords     string `yaml:"banned_words"`     // block | log | ignore | redact
-	PII             string `yaml:"pii"`              // block | log | ignore | redact
-	Injection       string `yaml:"injection"`        // block | log | ignore | redact
-	PromptInjection string `yaml:"prompt_injection"` // block | log | ignore | redact
-	Jailbreak       string `yaml:"jailbreak"`        // block | log | ignore | redact
-	Toxicity        string `yaml:"toxicity"`         // block | log | ignore | redact
+	BannedWords     string   `yaml:"banned_words"`      // action: block | log | ignore | redact
+	BannedWordsList []string `yaml:"banned_words_list"` // actual banned terms
+
+	PII         string            `yaml:"pii"`          // action: block | log | ignore | redact
+	PIIEntities PIIEntitiesConfig `yaml:"pii_entities"` // PII entity toggles
+
+	Injection       string `yaml:"injection"`
+	PromptInjection string `yaml:"prompt_injection"`
+	Jailbreak       string `yaml:"jailbreak"`
+	Toxicity        string `yaml:"toxicity"`
 }
 
 // Load reads configuration from a YAML file.
@@ -89,13 +101,17 @@ func defaultConfig() *Config {
 	}
 }
 
+func (c PIIEntitiesConfig) IsZero() bool {
+	return !c.Email && !c.Phone && !c.CreditCard && !c.IBAN && !c.Tokens
+}
+
 func applyDefaults(cfg *Config) {
+	// Default server address
 	if cfg.Server.Addr == "" {
 		cfg.Server.Addr = ":8080"
 	}
 
-	// If no default provider is set but there's exactly one provider,
-	// use that as default.
+	// Default provider logic: if only one provider exists, use it
 	if cfg.DefaultProvider == "" && len(cfg.Providers) == 1 {
 		for name := range cfg.Providers {
 			cfg.DefaultProvider = name
@@ -103,14 +119,12 @@ func applyDefaults(cfg *Config) {
 		}
 	}
 
+	// Logging defaults
 	if cfg.Logging.ActivationLevel == "" {
 		cfg.Logging.ActivationLevel = "metadata"
 	}
 
-    if cfg.Logging.ActivationLevel == "" {
-		cfg.Logging.ActivationLevel = "metadata"
-	}
-
+	// Policy action defaults
 	if cfg.Policy.BannedWords == "" {
 		cfg.Policy.BannedWords = "block"
 	}
@@ -128,5 +142,17 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Policy.Toxicity == "" {
 		cfg.Policy.Toxicity = "log"
+	}
+
+	// PII ENTITIES DEFAULTS:
+	// If user omitted pii_entities entirely (zero struct), default to all true.
+	if cfg.Policy.PIIEntities.IsZero() {
+		cfg.Policy.PIIEntities = PIIEntitiesConfig{
+			Email:      true,
+			Phone:      true,
+			CreditCard: true,
+			IBAN:       true,
+			Tokens:     true,
+		}
 	}
 }

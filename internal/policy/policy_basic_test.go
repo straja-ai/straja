@@ -10,10 +10,21 @@ import (
 )
 
 func newTestPolicy() Engine {
-	// Default actions:
-	// banned_words, pii, injection, prompt_injection, jailbreak = block
-	// toxicity = log
-	return NewBasic(config.PolicyConfig{})
+	// For tests, mimic default behavior:
+	// - some banned words
+	// - PII blocking enabled
+	// - all PII entities turned on
+	return NewBasic(config.PolicyConfig{
+		BannedWordsList: []string{"blocked_test", "forbidden"},
+		PII:             "block",
+		PIIEntities: config.PIIEntitiesConfig{
+			Email:      true,
+			Phone:      true,
+			CreditCard: true,
+			IBAN:       true,
+			Tokens:     true,
+		},
+	})
 }
 
 func hasHit(req *inference.Request, category string) bool {
@@ -177,7 +188,7 @@ func TestBasicPolicy_BeforeModel_MultiHit_PII_And_Injection(t *testing.T) {
 
 	err := p.BeforeModel(context.Background(), req)
 	if err == nil {
-		t.Fatalf("expected block for PII + injection, got nil")
+		t.Fatalf("expected error for PII + injection, got nil")
 	}
 
 	if !hasHit(req, "pii") {
@@ -214,6 +225,70 @@ func TestBasicPolicy_BeforeModel_MultiHit_PromptInjection_PII_Toxicity(t *testin
 	}
 	if !hasHit(req, "toxicity") {
 		t.Fatalf("missing 'toxicity' hit: %+v", req.PolicyHits)
+	}
+}
+
+//
+// ---- PII ENTITIES TESTS ----
+//
+
+func TestBasicPolicy_PIIEntities_EmailDisabledDoesNotTrigger(t *testing.T) {
+	pc := config.PolicyConfig{
+		PII: "block",
+		PIIEntities: config.PIIEntitiesConfig{
+			Email:      false,
+			Phone:      false,
+			CreditCard: false,
+			IBAN:       false,
+			Tokens:     false,
+		},
+	}
+	p := NewBasic(pc)
+
+	req := &inference.Request{
+		ProjectID: "test",
+		Model:     "gpt-4.1-mini",
+		Messages: []inference.Message{
+			{Role: "user", Content: "My email is john.doe@example.com"},
+		},
+	}
+
+	err := p.BeforeModel(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected no block when all PII entities are disabled, got: %v", err)
+	}
+	if hasHit(req, "pii") {
+		t.Fatalf("expected no 'pii' hit when entities are disabled, got: %+v", req.PolicyHits)
+	}
+}
+
+func TestBasicPolicy_PIIEntities_IBANEnabledTriggers(t *testing.T) {
+	pc := config.PolicyConfig{
+		PII: "block",
+		PIIEntities: config.PIIEntitiesConfig{
+			Email:      false,
+			Phone:      false,
+			CreditCard: false,
+			IBAN:       true,
+			Tokens:     false,
+		},
+	}
+	p := NewBasic(pc)
+
+	req := &inference.Request{
+		ProjectID: "test",
+		Model:     "gpt-4.1-mini",
+		Messages: []inference.Message{
+			{Role: "user", Content: "My IBAN is DE89370400440532013000"},
+		},
+	}
+
+	err := p.BeforeModel(context.Background(), req)
+	if err == nil {
+		t.Fatalf("expected block when IBAN entity is enabled and IBAN is present, got nil")
+	}
+	if !hasHit(req, "pii") {
+		t.Fatalf("expected 'pii' hit for IBAN, got: %+v", req.PolicyHits)
 	}
 }
 

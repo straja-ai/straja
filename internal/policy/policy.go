@@ -56,7 +56,15 @@ type Basic struct {
 	emailRegex *regexp.Regexp
 	phoneRegex *regexp.Regexp
 	ccRegex    *regexp.Regexp
+	ibanRegex  *regexp.Regexp
 	tokenRegex *regexp.Regexp
+
+	// PII entity toggles
+	piiEmail      bool
+	piiPhone      bool
+	piiCreditCard bool
+	piiIBAN       bool
+	piiTokens     bool
 
 	// Injection patterns
 	sqlInjectionRegex *regexp.Regexp
@@ -83,11 +91,11 @@ type Basic struct {
 
 // NewBasic builds the Basic policy engine using config.PolicyConfig.
 func NewBasic(pc config.PolicyConfig) Engine {
+	// PII entity toggles come directly from config (defaults are applied in config.applyDefaults).
+	entities := pc.PIIEntities
+
 	return &Basic{
-		bannedWords: []string{
-			"blocked_test",
-			"forbidden",
-		},
+		bannedWords: normalizeBannedWords(pc.BannedWordsList),
 
 		emailRegex: regexp.MustCompile(
 			`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`,
@@ -98,9 +106,18 @@ func NewBasic(pc config.PolicyConfig) Engine {
 		ccRegex: regexp.MustCompile(
 			`\b(?:\d[ -]*?){13,16}\b`,
 		),
+		ibanRegex: regexp.MustCompile(
+			`\b[A-Z]{2}[0-9A-Z]{13,34}\b`,
+		),
 		tokenRegex: regexp.MustCompile(
 			`[A-Za-z0-9_\-]{20,}`,
 		),
+
+		piiEmail:      entities.Email,
+		piiPhone:      entities.Phone,
+		piiCreditCard: entities.CreditCard,
+		piiIBAN:       entities.IBAN,
+		piiTokens:     entities.Tokens,
 
 		sqlInjectionRegex: regexp.MustCompile(
 			`(?i)(union\s+select|or\s+1=1|drop\s+table|information_schema|xp_cmdshell|sleep$begin:math:text$\\d+$end:math:text$)`,
@@ -193,11 +210,25 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 	}
 
 	// 2) PII / secrets
+	piiHit := false
+	if p.piiEmail && p.emailRegex.MatchString(content) {
+		piiHit = true
+	}
+	if p.piiPhone && p.phoneRegex.MatchString(content) {
+		piiHit = true
+	}
+	if p.piiCreditCard && p.ccRegex.MatchString(content) {
+		piiHit = true
+	}
+	if p.piiIBAN && p.ibanRegex.MatchString(content) {
+		piiHit = true
+	}
+	if p.piiTokens && p.tokenRegex.MatchString(content) {
+		piiHit = true
+	}
+
 	handle(
-		p.emailRegex.MatchString(content) ||
-			p.phoneRegex.MatchString(content) ||
-			p.ccRegex.MatchString(content) ||
-			p.tokenRegex.MatchString(content),
+		piiHit,
 		p.piiAction,
 		"pii",
 		"prompt blocked due to possible PII or secrets",
@@ -273,10 +304,35 @@ func truncatePreview(s string) string {
 }
 
 func (p *Basic) redactPII(s string) string {
-	s = p.emailRegex.ReplaceAllString(s, "[REDACTED_EMAIL]")
-	s = p.phoneRegex.ReplaceAllString(s, "[REDACTED_PHONE]")
-	s = p.ccRegex.ReplaceAllString(s, "[REDACTED_CC]")
-	s = p.tokenRegex.ReplaceAllString(s, "[REDACTED_TOKEN]")
+	// IMPORTANT: order matters.
+	// We run more specific types first to avoid generic patterns
+	// (phone, IBAN) “stealing” matches.
+
+	// 1) Tokens (very generic, so do them first)
+	if p.piiTokens {
+		s = p.tokenRegex.ReplaceAllString(s, "[REDACTED_TOKEN]")
+	}
+
+	// 2) Credit cards
+	if p.piiCreditCard {
+		s = p.ccRegex.ReplaceAllString(s, "[REDACTED_CC]")
+	}
+
+	// 3) IBANs
+	if p.piiIBAN {
+		s = p.ibanRegex.ReplaceAllString(s, "[REDACTED_IBAN]")
+	}
+
+	// 4) Emails
+	if p.piiEmail {
+		s = p.emailRegex.ReplaceAllString(s, "[REDACTED_EMAIL]")
+	}
+
+	// 5) Phone numbers (very broad, do last)
+	if p.piiPhone {
+		s = p.phoneRegex.ReplaceAllString(s, "[REDACTED_PHONE]")
+	}
+
 	return s
 }
 
@@ -326,4 +382,28 @@ func addPolicyHit(req *inference.Request, category string) {
 		}
 	}
 	req.PolicyHits = append(req.PolicyHits, category)
+}
+
+// ------------------------------
+// Banned words helper
+// ------------------------------
+
+func normalizeBannedWords(words []string) []string {
+	m := make(map[string]struct{})
+	out := make([]string, 0, len(words))
+
+	for _, w := range words {
+		trimmed := strings.TrimSpace(w)
+		if trimmed == "" {
+			continue
+		}
+		lw := strings.ToLower(trimmed)
+		if _, exists := m[lw]; exists {
+			continue
+		}
+		m[lw] = struct{}{}
+		out = append(out, trimmed)
+	}
+
+	return out
 }
