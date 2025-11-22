@@ -14,3 +14,6 @@ projects:
     provider: "openai_default"
     api_keys:
       - "local-dev-key-123"
+
+logging:
+  activation_level: "redacted"   # "metadata", "redacted" or "full"

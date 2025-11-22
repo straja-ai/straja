@@ -1,14 +1,18 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
+	"time"
 
+	"github.com/straja-ai/straja/internal/activation"
 	"github.com/straja-ai/straja/internal/auth"
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/inference"
@@ -18,17 +22,21 @@ import (
 
 // Server wraps the HTTP server components for Straja.
 type Server struct {
-	mux      *http.ServeMux
-	cfg      *config.Config
-	auth     *auth.Auth
-	policy   policy.Engine
-	provider provider.Provider // default provider for now; later per-project routing
+	mux          *http.ServeMux
+	cfg          *config.Config
+	auth         *auth.Auth
+	policy       policy.Engine
+	provider     provider.Provider
+	providerName string
+	activation   activation.Emitter
+	loggingLevel string
 }
 
 // New creates a new Straja server with all routes registered.
 func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux := http.NewServeMux()
 
+	// Basic policy engine (first real policy implementation)
 	pol := policy.NewBasic()
 
 	prov, err := buildProviderFromConfig(cfg)
@@ -39,11 +47,14 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	}
 
 	s := &Server{
-		mux:      mux,
-		cfg:      cfg,
-		auth:     authz,
-		policy:   pol,
-		provider: prov,
+		mux:          mux,
+		cfg:          cfg,
+		auth:         authz,
+		policy:       pol,
+		provider:     prov,
+		providerName: cfg.DefaultProvider,
+		activation:   activation.NewStdout(),
+		loggingLevel: strings.ToLower(cfg.Logging.ActivationLevel),
 	}
 
 	// Routes
@@ -136,7 +147,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 0) Auth: extract API key and map to project
+	// Auth: extract API key and map to project
 	apiKey, ok := parseBearerToken(r.Header.Get("Authorization"))
 	if !ok || apiKey == "" {
 		writeOpenAIError(w, http.StatusUnauthorized, "Invalid or missing API key", "authentication_error")
@@ -160,28 +171,32 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 1) Normalize HTTP/OpenAI request → internal inference.Request
 	infReq := normalizeToInferenceRequest(project.ID, &reqBody)
 
-	// 2) Pre-LLM policy hook (BeforeModel)
+	// 2) Before-model block
 	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
-		// Later we’ll return more detailed policy info
+		s.emitActivation(ctx, infReq, nil, activation.DecisionBlockedBefore)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
 	}
 
-	// 3) Call upstream provider (for now, default provider, later per-project routing).
+	// 3) Provider error
 	infResp, err := s.provider.ChatCompletion(ctx, infReq)
 	if err != nil {
 		log.Printf("provider error: %v", err)
+		s.emitActivation(ctx, infReq, nil, activation.DecisionErrorProvider)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
 
-	// 4) Post-LLM policy hook (AfterModel)
+	// 4) After-model block
 	if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
+		s.emitActivation(ctx, infReq, infResp, activation.DecisionBlockedAfter)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
 	}
 
-	// 5) Convert internal response → HTTP/OpenAI response
+	// 5) Success
+	s.emitActivation(ctx, infReq, infResp, activation.DecisionAllow)
+
 	respBody := buildChatCompletionResponse(infResp)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -256,4 +271,75 @@ func writeOpenAIError(w http.ResponseWriter, status int, message, typ string) {
 			Type:    typ,
 		},
 	})
+}
+
+// emitActivation builds and sends an activation event via the configured emitter.
+func (s *Server) emitActivation(ctx context.Context, req *inference.Request, resp *inference.Response, decision activation.Decision) {
+	if s.activation == nil || req == nil {
+		return
+	}
+
+	promptPreview, completionPreview := s.buildPreviews(req, resp)
+
+	ev := &activation.Event{
+		Timestamp:         time.Now().UTC(),
+		ProjectID:         req.ProjectID,
+		Provider:          s.providerName,
+		Model:             req.Model,
+		Decision:          decision,
+		PromptPreview:     promptPreview,
+		CompletionPreview: completionPreview,
+	}
+
+	s.activation.Emit(ctx, ev)
+}
+
+var (
+	emailRegex = regexp.MustCompile(`(?i)[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+	tokenRegex = regexp.MustCompile(`[A-Za-z0-9_\-]{20,}`)
+)
+
+func (s *Server) buildPreviews(req *inference.Request, resp *inference.Response) (string, string) {
+	level := s.loggingLevel
+	if level == "" {
+		level = "metadata"
+	}
+
+	var promptPreview, completionPreview string
+
+	switch level {
+	case "full":
+		if len(req.Messages) > 0 {
+			last := req.Messages[len(req.Messages)-1]
+			promptPreview = truncate(last.Content, 500)
+		}
+		if resp != nil {
+			completionPreview = truncate(resp.Message.Content, 500)
+		}
+	case "redacted":
+		if len(req.Messages) > 0 {
+			last := req.Messages[len(req.Messages)-1]
+			promptPreview = truncate(simpleRedact(last.Content), 500)
+		}
+		if resp != nil {
+			completionPreview = truncate(simpleRedact(resp.Message.Content), 500)
+		}
+	default: // "metadata"
+		// no previews
+	}
+
+	return promptPreview, completionPreview
+}
+
+func simpleRedact(s string) string {
+	s = emailRegex.ReplaceAllString(s, "[REDACTED_EMAIL]")
+	s = tokenRegex.ReplaceAllString(s, "[REDACTED_TOKEN]")
+	return s
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }

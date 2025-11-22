@@ -12,6 +12,7 @@ type Config struct {
 	Providers       map[string]ProviderConfig `yaml:"providers"`
 	DefaultProvider string                    `yaml:"default_provider"`
 	Projects        []ProjectConfig           `yaml:"projects"`
+	Logging         LoggingConfig             `yaml:"logging"`
 }
 
 type ServerConfig struct {
@@ -28,6 +29,10 @@ type ProjectConfig struct {
 	ID       string   `yaml:"id"`
 	Provider string   `yaml:"provider"` // provider name from Providers map
 	APIKeys  []string `yaml:"api_keys"`
+}
+
+type LoggingConfig struct {
+	ActivationLevel string `yaml:"activation_level"`
 }
 
 // Load reads configuration from a YAML file.
@@ -60,6 +65,9 @@ func defaultConfig() *Config {
 		Providers:       map[string]ProviderConfig{},
 		DefaultProvider: "",
 		Projects:        []ProjectConfig{},
+		Logging: LoggingConfig{
+			ActivationLevel: "metadata",
+		},
 	}
 }
 
@@ -75,5 +83,9 @@ func applyDefaults(cfg *Config) {
 			cfg.DefaultProvider = name
 			break
 		}
+	}
+
+	if cfg.Logging.ActivationLevel == "" {
+		cfg.Logging.ActivationLevel = "metadata"
 	}
 }
