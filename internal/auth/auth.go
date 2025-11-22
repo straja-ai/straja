@@ -17,7 +17,18 @@ type Auth struct {
 	apiKeyToProject map[string]Project
 }
 
-// NewFromConfig builds an Auth instance from the loaded config.
+// NewAuth is a convenience constructor that panics on invalid config.
+// Useful for tests or places where config is already validated.
+func NewAuth(cfg *config.Config) *Auth {
+	a, err := NewFromConfig(cfg)
+	if err != nil {
+		// For now, fail fast – in tests or well-formed configs this should not happen.
+		panic(err)
+	}
+	return a
+}
+
+// NewFromConfig builds an Auth instance from the loaded config, with validation.
 func NewFromConfig(cfg *config.Config) (*Auth, error) {
 	m := make(map[string]Project)
 
