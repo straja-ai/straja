@@ -12,7 +12,9 @@ type Request struct {
 	Model     string
 	UserID    string
 	Messages  []Message
-	// Later we'll add: Metadata, tools, etc.
+	// PolicyHits captures which policy categories triggered for this request,
+	// e.g. ["pii", "injection", "prompt_injection", "output_redaction"].
+	PolicyHits []string
 }
 
 // Usage holds token accounting.

@@ -24,4 +24,12 @@ projects:
       - "local-dev-key-124"
 
 logging:
-  activation_level: "redacted"   # "metadata", "redacted" or "full"
+  activation_level: "redacted"   # metadata | redacted | full
+
+policy:
+  banned_words: "block"       # block | log | ignore | redact
+  pii: "block"
+  injection: "block"
+  prompt_injection: "block"
+  jailbreak: "redact"
+  toxicity: "redact"

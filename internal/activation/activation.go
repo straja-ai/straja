@@ -26,6 +26,9 @@ type Event struct {
 	Decision          Decision  `json:"decision"`
 	PromptPreview     string    `json:"prompt_preview"`
 	CompletionPreview string    `json:"completion_preview"`
+	// PolicyHits contains all policy categories that triggered for this request,
+	// e.g. ["pii", "injection", "prompt_injection", "output_redaction"].
+	PolicyHits []string `json:"policy_hits"`
 }
 
 // Emitter sends activation events to some sink (stdout, file, webhook, etc.).

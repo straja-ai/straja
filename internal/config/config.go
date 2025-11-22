@@ -13,6 +13,7 @@ type Config struct {
 	DefaultProvider string                    `yaml:"default_provider"`
 	Projects        []ProjectConfig           `yaml:"projects"`
 	Logging         LoggingConfig             `yaml:"logging"`
+    Policy          PolicyConfig              `yaml:"policy"`
 }
 
 type ServerConfig struct {
@@ -33,6 +34,15 @@ type ProjectConfig struct {
 
 type LoggingConfig struct {
 	ActivationLevel string `yaml:"activation_level"`
+}
+
+type PolicyConfig struct {
+	BannedWords     string `yaml:"banned_words"`     // block | log | ignore | redact
+	PII             string `yaml:"pii"`              // block | log | ignore | redact
+	Injection       string `yaml:"injection"`        // block | log | ignore | redact
+	PromptInjection string `yaml:"prompt_injection"` // block | log | ignore | redact
+	Jailbreak       string `yaml:"jailbreak"`        // block | log | ignore | redact
+	Toxicity        string `yaml:"toxicity"`         // block | log | ignore | redact
 }
 
 // Load reads configuration from a YAML file.
@@ -68,6 +78,14 @@ func defaultConfig() *Config {
 		Logging: LoggingConfig{
 			ActivationLevel: "metadata",
 		},
+		Policy: PolicyConfig{
+			BannedWords:     "block",
+			PII:             "block",
+			Injection:       "block",
+			PromptInjection: "block",
+			Jailbreak:       "block",
+			Toxicity:        "log",
+		},
 	}
 }
 
@@ -87,5 +105,28 @@ func applyDefaults(cfg *Config) {
 
 	if cfg.Logging.ActivationLevel == "" {
 		cfg.Logging.ActivationLevel = "metadata"
+	}
+
+    if cfg.Logging.ActivationLevel == "" {
+		cfg.Logging.ActivationLevel = "metadata"
+	}
+
+	if cfg.Policy.BannedWords == "" {
+		cfg.Policy.BannedWords = "block"
+	}
+	if cfg.Policy.PII == "" {
+		cfg.Policy.PII = "block"
+	}
+	if cfg.Policy.Injection == "" {
+		cfg.Policy.Injection = "block"
+	}
+	if cfg.Policy.PromptInjection == "" {
+		cfg.Policy.PromptInjection = "block"
+	}
+	if cfg.Policy.Jailbreak == "" {
+		cfg.Policy.Jailbreak = "block"
+	}
+	if cfg.Policy.Toxicity == "" {
+		cfg.Policy.Toxicity = "log"
 	}
 }

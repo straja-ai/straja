@@ -37,7 +37,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux := http.NewServeMux()
 
 	// Basic policy engine (first real policy implementation)
-	pol := policy.NewBasic()
+	pol := policy.NewBasic(cfg.Policy)
 
 	provs, err := buildProviderRegistry(cfg)
 	if err != nil {
@@ -316,6 +316,7 @@ func (s *Server) emitActivation(ctx context.Context, req *inference.Request, res
 		Decision:          decision,
 		PromptPreview:     promptPreview,
 		CompletionPreview: completionPreview,
+		PolicyHits:        append([]string(nil), req.PolicyHits...), // copy to be safe
 	}
 
 	s.activation.Emit(ctx, ev)
