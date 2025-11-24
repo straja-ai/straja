@@ -205,7 +205,7 @@
         <h2>Activation event</h2>
         <div class="small">
         Reads JSON from response header
-        <code>X-Straja-Activation</code> (or <code>X-Activation-Event</code>).
+        <code>X-Straja-Activation</code>.
         </div>
 
         <!-- Activation JSON with copy chip -->
@@ -407,8 +407,7 @@
         }
 
         const activationHeader =
-              res.headers.get('x-straja-activation') ||
-              res.headers.get('x-activation-event');
+              res.headers.get('x-straja-activation');
 
             const decisionEl = document.getElementById('decisionStatus');
 
