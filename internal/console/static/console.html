@@ -28,6 +28,11 @@
       position: relative;
       margin-top: 8px;
     }
+    .json-output { margin-top: 8px; padding: 8px; background: #f3f4f6; border-radius: 8px; font-size: 13px; min-height: 32px; white-space: pre-wrap; }
+        .output-block {
+      position: relative;
+      margin-top: 8px;
+    }
 
     .output-block pre,
     .output-block .assistant-output {
@@ -149,7 +154,21 @@
 
     <div class="results">
     <div class="card">
-        <h2>Completion</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2>Completion</h2>
+          <div
+            id="decisionStatus"
+            style="
+              font-size: 11px;
+              padding: 4px 8px;
+              border-radius: 6px;
+              background: #eef2ff;
+              border: 1px solid #c7d2fe;
+              color: #3730a3;
+              display: none;
+            "
+          ></div>
+        </div>
 
         <!-- Assistant text with copy chip -->
         <div class="output-block">
@@ -169,7 +188,7 @@
 
         <!-- Raw JSON with copy chip -->
         <div class="output-block">
-        <pre id="completionJson"></pre>
+        <div class="json-output" id="completionJson"></div>
         <button type="button" class="copy-chip" id="copyCompletionBtn">
             <span class="copy-icon">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -191,7 +210,7 @@
 
         <!-- Activation JSON with copy chip -->
         <div class="output-block">
-        <pre id="activationJson"></pre>
+        <div class="json-output" id="activationJson"></div>
         <button type="button" class="copy-chip" id="copyActivationBtn">
             <span class="copy-icon">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -206,7 +225,7 @@
     </div>
   </div>
 
-  <script>
+    <script>
     const gatewayUrlInput = document.getElementById('gatewayUrl');
     const projectSelect = document.getElementById('projectSelect');
     const modelInput = document.getElementById('model');
@@ -225,193 +244,250 @@
     const STORAGE_KEY = 'strajaConsoleConfig';
 
     async function copyFromElement(el) {
-    const text = (el && (el.textContent || el.value || '')).trim();
-    if (!text) {
+      const text = (el && (el.textContent || el.value || '')).trim();
+      if (!text) {
         statusEl.textContent = 'Nothing to copy.';
-        statusEl.style.color = '#b91c1c'; // red-700 for error
+        statusEl.style.color = '#b91c1c'; // red
         setTimeout(() => {
-        statusEl.textContent = '';
-        statusEl.style.color = '';
+          statusEl.textContent = '';
+          statusEl.style.color = '';
         }, 3000);
         return;
-    }
+      }
 
-    try {
+      try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(text);
         } else {
-        const tmp = document.createElement('textarea');
-        tmp.value = text;
-        tmp.style.position = 'fixed';
-        tmp.style.left = '-9999px';
-        document.body.appendChild(tmp);
-        tmp.focus();
-        tmp.select();
-        document.execCommand('copy');
-        document.body.removeChild(tmp);
+          const tmp = document.createElement('textarea');
+          tmp.value = text;
+          tmp.style.position = 'fixed';
+          tmp.style.left = '-9999px';
+          document.body.appendChild(tmp);
+          tmp.focus();
+          tmp.select();
+          document.execCommand('copy');
+          document.body.removeChild(tmp);
         }
 
         statusEl.textContent = 'Copied to clipboard.';
-        statusEl.style.color = '#16a34a'; // green-600
+        statusEl.style.color = '#16a34a'; // green
         setTimeout(() => {
-        statusEl.textContent = '';
-        statusEl.style.color = '';
+          statusEl.textContent = '';
+          statusEl.style.color = '';
         }, 3000);
-    } catch (err) {
+      } catch (err) {
         console.error('Copy failed', err);
         statusEl.textContent = 'Copy failed.';
-        statusEl.style.color = '#b91c1c'; // red-700
+        statusEl.style.color = '#b91c1c'; // red
         setTimeout(() => {
-        statusEl.textContent = '';
-        statusEl.style.color = '';
+          statusEl.textContent = '';
+          statusEl.style.color = '';
         }, 3000);
-    }
+      }
     }
 
     function loadConfig() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (!raw) return;
-            const cfg = JSON.parse(raw);
-            if (cfg.baseUrl) gatewayUrlInput.value = cfg.baseUrl;
-            if (cfg.model) modelInput.value = cfg.model;
-            if (cfg.projectId) {
-            // we'll select this after projects load
-            projectSelect.dataset.selected = cfg.projectId;
-            }
-        } catch (_) {}
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const cfg = JSON.parse(raw);
+        if (cfg.baseUrl) gatewayUrlInput.value = cfg.baseUrl;
+        if (cfg.model) modelInput.value = cfg.model;
+        if (cfg.projectId) {
+          // we'll select this after projects load
+          projectSelect.dataset.selected = cfg.projectId;
+        }
+      } catch (_) {}
     }
 
     function saveConfig() {
-        const cfg = {
-            baseUrl: gatewayUrlInput.value.trim(),
-            model: modelInput.value.trim(),
-            projectId: projectSelect.value
-        };
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
-        } catch (_) {}
+      const cfg = {
+        baseUrl: gatewayUrlInput.value.trim(),
+        model: modelInput.value.trim(),
+        projectId: projectSelect.value
+      };
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+      } catch (_) {}
     }
 
     async function loadProjects() {
-        const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
-        try {
-            const res = await fetch(baseUrl + '/projects');
-            if (!res.ok) {
-            projectSelect.innerHTML = '<option value="">Error loading projects</option>';
-            return;
-            }
-            const projects = await res.json();
-            if (!Array.isArray(projects) || projects.length === 0) {
-            projectSelect.innerHTML = '<option value="">No projects in config</option>';
-            return;
-            }
-            projectSelect.innerHTML = '';
-            const storedId = projectSelect.dataset.selected;
-            projects.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = p.id + (p.provider ? ` (${p.provider})` : '');
-            projectSelect.appendChild(opt);
-            });
-            if (storedId) {
-            const found = Array.from(projectSelect.options).some(o => o.value === storedId);
-            if (found) {
-                projectSelect.value = storedId;
-            }
-            }
-        } catch (err) {
-            projectSelect.innerHTML = '<option value="">Error loading projects</option>';
+      const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
+      try {
+        const res = await fetch(baseUrl + '/projects');
+        if (!res.ok) {
+          projectSelect.innerHTML = '<option value="">Error loading projects</option>';
+          return;
         }
+        const projects = await res.json();
+        if (!Array.isArray(projects) || projects.length === 0) {
+          projectSelect.innerHTML = '<option value="">No projects in config</option>';
+          return;
+        }
+        projectSelect.innerHTML = '';
+        const storedId = projectSelect.dataset.selected;
+        projects.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.id + (p.provider ? ` (${p.provider})` : '');
+          projectSelect.appendChild(opt);
+        });
+        if (storedId) {
+          const found = Array.from(projectSelect.options).some(o => o.value === storedId);
+          if (found) {
+            projectSelect.value = storedId;
+          }
+        }
+      } catch (err) {
+        projectSelect.innerHTML = '<option value="">Error loading projects</option>';
+      }
     }
 
     async function sendRequest() {
-        const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
-        const projectId = projectSelect.value;
-        const model = modelInput.value.trim() || 'gpt-4.1-mini';
-        const prompt = promptInput.value.trim();
+      const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
+      const projectId = projectSelect.value;
+      const model = modelInput.value.trim() || 'gpt-4.1-mini';
+      const prompt = promptInput.value.trim();
 
-        if (!projectId) {
-            statusEl.textContent = 'Please select a project.';
-            return;
+      if (!projectId) {
+        statusEl.textContent = 'Please select a project.';
+        return;
+      }
+      if (!prompt) {
+        statusEl.textContent = 'Please enter a prompt.';
+        return;
+      }
+
+      saveConfig();
+
+      sendBtn.disabled = true;
+      clearBtn.disabled = true;
+      statusEl.textContent = 'Sending request…';
+      completionJsonEl.textContent = '';
+      activationJsonEl.textContent = '';
+      assistantTextEl.textContent = '';
+
+      const body = {
+        project_id: projectId,
+        model: model,
+        messages: [
+          { role: 'user', content: prompt }
+        ]
+      };
+
+      try {
+        const res = await fetch(baseUrl + '/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+
+        const text = await res.text();
+        let json;
+        try {
+          json = JSON.parse(text);
+        } catch (_) {
+          completionJsonEl.textContent = text;
+          assistantTextEl.textContent = '';
         }
-        if (!prompt) {
-            statusEl.textContent = 'Please enter a prompt.';
-            return;
+
+        if (json) {
+          completionJsonEl.textContent = JSON.stringify(json, null, 2);
+
+          const assistantMessage =
+            json.choices &&
+            json.choices[0] &&
+            json.choices[0].message &&
+            json.choices[0].message.content;
+
+          assistantTextEl.textContent = assistantMessage || '(no assistant message found)';
         }
 
-        saveConfig();
+        const activationHeader =
+              res.headers.get('x-straja-activation') ||
+              res.headers.get('x-activation-event');
 
-        sendBtn.disabled = true;
-        clearBtn.disabled = true;
-        statusEl.textContent = 'Sending request…';
+            const decisionEl = document.getElementById('decisionStatus');
+
+            // Reset decision badge by default
+            if (decisionEl) {
+              decisionEl.style.display = 'none';
+              decisionEl.textContent = '';
+              decisionEl.style.background = '#eef2ff';
+              decisionEl.style.border = '1px solid #c7d2fe';
+              decisionEl.style.color = '#3730a3';
+            }
+
+            if (activationHeader) {
+              try {
+                const actJson = JSON.parse(activationHeader);
+                activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
+
+                if (decisionEl && actJson.decision) {
+                  // base decision from backend
+                  let d = String(actJson.decision);
+
+                  // If backend says "allow" but we have non-toxic policy hits,
+                  // treat this as "redacted" for the UI.
+                  if (
+                    d === 'allow' &&
+                    Array.isArray(actJson.policy_hits) &&
+                    actJson.policy_hits.some(h => h !== 'toxicity')
+                  ) {
+                    d = 'redacted';
+                  }
+
+                  decisionEl.textContent = d;
+                  decisionEl.style.display = 'inline-block';
+
+                  if (d.startsWith('blocked')) {
+                    // red badge
+                    decisionEl.style.background = '#fee2e2';
+                    decisionEl.style.border = '1px solid #fecaca';
+                    decisionEl.style.color = '#b91c1c';
+                  } else if (d === 'allow') {
+                    // green badge
+                    decisionEl.style.background = '#dcfce7';
+                    decisionEl.style.border = '1px solid #bbf7d0';
+                    decisionEl.style.color = '#166534';
+                  } else if (d === 'redacted') {
+                    // yellow badge
+                    decisionEl.style.background = '#fef9c3';
+                    decisionEl.style.border = '1px solid #fef08a';
+                    decisionEl.style.color = '#854d0e';
+                  } else {
+                    // fallback – neutral
+                    decisionEl.style.background = '#e5e7eb';
+                    decisionEl.style.border = '1px solid #d1d5db';
+                    decisionEl.style.color = '#374151';
+                  }
+                }
+              } catch (_) {
+                activationJsonEl.textContent = activationHeader;
+              }
+            } else {
+              activationJsonEl.textContent = '(no activation header present)';
+            }
+
+        statusEl.textContent = `HTTP ${res.status} ${res.statusText}`;
+      } catch (err) {
+        statusEl.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
         completionJsonEl.textContent = '';
         activationJsonEl.textContent = '';
         assistantTextEl.textContent = '';
 
-        const body = {
-            project_id: projectId,
-            model: model,
-            messages: [
-            { role: 'user', content: prompt }
-            ]
-        };
-
-        try {
-            const res = await fetch(baseUrl + '/chat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(body)
-            });
-
-            const text = await res.text();
-            let json;
-            try {
-            json = JSON.parse(text);
-            } catch (_) {
-            completionJsonEl.textContent = text;
-            assistantTextEl.textContent = '';
-            }
-
-            if (json) {
-            completionJsonEl.textContent = JSON.stringify(json, null, 2);
-
-            const assistantMessage =
-                json.choices &&
-                json.choices[0] &&
-                json.choices[0].message &&
-                json.choices[0].message.content;
-
-            assistantTextEl.textContent = assistantMessage || '(no assistant message found)';
-            }
-
-            const activationHeader =
-            res.headers.get('x-straja-activation') ||
-            res.headers.get('x-activation-event');
-
-            if (activationHeader) {
-            try {
-                const actJson = JSON.parse(activationHeader);
-                activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
-            } catch (_) {
-                activationJsonEl.textContent = activationHeader;
-            }
-            } else {
-            activationJsonEl.textContent = '(no activation header present)';
-            }
-
-            statusEl.textContent = `HTTP ${res.status} ${res.statusText}`;
-        } catch (err) {
-            statusEl.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
-            completionJsonEl.textContent = '';
-            activationJsonEl.textContent = '';
-            assistantTextEl.textContent = '';
-        } finally {
-            sendBtn.disabled = false;
-            clearBtn.disabled = false;
+        const decisionEl = document.getElementById('decisionStatus');
+        if (decisionEl) {
+          decisionEl.style.display = 'none';
+          decisionEl.textContent = '';
         }
+      } finally {
+        sendBtn.disabled = false;
+        clearBtn.disabled = false;
+      }
     }
 
     function clearAll() {
@@ -420,6 +496,12 @@
       activationJsonEl.textContent = '';
       assistantTextEl.textContent = '';
       statusEl.textContent = '';
+
+      const decisionEl = document.getElementById('decisionStatus');
+      if (decisionEl) {
+        decisionEl.style.display = 'none';
+        decisionEl.textContent = '';
+      }
     }
 
     sendBtn.addEventListener('click', sendRequest);
@@ -430,7 +512,7 @@
         sendRequest();
       }
     });
-    
+
     copyAssistantBtn.addEventListener('click', () => copyFromElement(assistantTextEl));
     copyCompletionBtn.addEventListener('click', () => copyFromElement(completionJsonEl));
     copyActivationBtn.addEventListener('click', () => copyFromElement(activationJsonEl));
