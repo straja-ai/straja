@@ -22,10 +22,18 @@ build:
 	@mkdir -p $(BIN_DIR)
 	@go build -o $(BIN_DIR)/$(BIN_NAME) $(CMD_PKG)
 
-## Run Straja with local config (straja.yaml)
+## Run Straja with local config + .env variables (if .env exists)
 run:
 	@echo ">> Running $(BIN_NAME)..."
-	@go run $(CMD_PKG) --config=straja.yaml
+	@if [ -f .env ]; then \
+		echo "   -> Loading .env"; \
+		set -a; \
+		. ./.env; \
+		set +a; \
+	else \
+		echo "   -> No .env file found, running with current environment"; \
+	fi; \
+	go run $(CMD_PKG) --config=straja.yaml
 
 ## Run tests
 test:
