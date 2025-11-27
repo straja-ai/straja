@@ -1,75 +1,41 @@
 # Straja Gateway
 
-🚀 **Straja** is a local, OpenAI-compatible AI gateway that filters, routes, and activates LLM traffic *inside your infrastructure*.
+🚧 **Straja** is a local, OpenAI-compatible AI gateway that runs *inside your infrastructure*.
 
-It provides:
-- **Security:** PII filtering, jailbreak detection, prompt-injection protection  
-- **Privacy:** LLM provider keys stay inside Straja  
-- **Observability:** structured activation events  
-- **Provider routing:** OpenAI, Azure, local inference  
-- **Drop-in DX:** same OpenAI API, same SDKs  
+It gives you:
+
+- 🔐 **Security** – PII / secrets detection, basic prompt-injection & jailbreak heuristics  
+- 🕵️ **Privacy** – Apps never see upstream provider keys  
+- 📊 **Observability** – Structured activation events for every request  
+- 🔀 **Routing** – Projects mapped to providers (OpenAI today, more later)  
+- 🧪 **Drop-in DX** – Same OpenAI SDKs and request shapes, just a different base URL + key  
 
 ---
 
-# 📦 Installation
+## 🚀 Quick Start (recommended: prebuilt binary)
 
-Straja is distributed as:
-- a single binary (Linux, macOS)
-- official Docker images
+This is the **happy path** for most users: download the binary, configure one provider, and send a request.
 
-### Binary installation
+### 1. Download the binary
 
 ```bash
 curl -LO https://github.com/straja-ai/straja/releases/latest/download/straja
 chmod +x straja
-./straja --config straja.yaml
 ```
 
-### Docker
+### 2. Set your provider API key
+
+The provider key never appears in your application code. Straja reads it from an environment variable.
 
 ```bash
-docker run -p 8080:8080   -v $(pwd)/straja.yaml:/straja.yaml   -e OPENAI_API_KEY=your-real-openai-key   somanole/straja:latest
+export OPENAI_API_KEY="sk-..."   # your real OpenAI key
 ```
 
----
+> In production you typically set this in a systemd unit, container env, or a secrets manager.
 
-# 🔐 Provider API Keys (`.env` support)
+### 3. Create `straja.yaml`
 
-Straja loads upstream API keys from a local `.env` file.
-
-### Create `.env`
-
-```
-OPENAI_API_KEY=sk-123...
-AZURE_OPENAI_KEY=xyz...
-```
-
-### Ensure `.env` is ignored by Git
-
-```
-# .gitignore
-.env
-*.env
-.env.*
-```
-
-### Makefile auto-loads `.env`
-
-You can run Straja locally without exporting any keys globally:
-
-```bash
-make run
-```
-
-Equivalent to:
-
-```
-env $(cat .env | xargs) go run ./cmd/straja --config=straja.yaml
-```
-
----
-
-# ⚙️ Configuration (`straja.yaml`)
+Minimal single-provider config:
 
 ```yaml
 server:
@@ -81,34 +47,49 @@ providers:
   openai_default:
     type: "openai"
     base_url: "https://api.openai.com/v1"
-    api_key_env: "OPENAI_API_KEY"  # Loaded from .env
+    api_key_env: "OPENAI_API_KEY"  # Straja reads this from the environment
 
 projects:
-  - id: "customer-chat-prod"
+  - id: "default"
     provider: "openai_default"
     api_keys:
-      - "proj-chat-key-123"
+      - "local-dev-key-123"
 ```
 
-📝 **Application code never sees provider secrets** — Straja injects them internally.
+### 4. Run Straja
+
+```bash
+./straja --config straja.yaml
+```
+
+### 5. Test a request
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions   -H "Content-Type: application/json"   -H "Authorization: Bearer local-dev-key-123"   -d '{
+    "model": "gpt-4.1-mini",
+    "messages": [{ "role": "user", "content": "Hello from Straja!" }]
+  }'
+```
+
+You should see an OpenAI-compatible JSON response.
 
 ---
 
-# 🔑 Key Model
+## 🐳 Docker
 
-### Application / project key  
-Sent by applications calling Straja:
+Run Straja in a container, mounting your config and injecting the provider key as an env var:
 
+```bash
+docker run   -p 8080:8080   -v $(pwd)/straja.yaml:/straja.yaml   -e OPENAI_API_KEY="sk-..."   straja-ai/straja:latest   ./straja --config /straja.yaml
 ```
-Authorization: Bearer proj-chat-key-123
-```
 
-### Provider key (in `.env`)  
-Used internally by Straja to call upstream LLMs.
+Your apps still talk to `http://host:8080/v1` and use **project keys**, not provider keys.
 
 ---
 
-# 🧪 Quick Start (5 minutes)
+## 💻 Running from source (Go dev flow)
+
+For contributors or teams who want to run Straja from source.
 
 ### 1. Clone the repo
 
@@ -117,200 +98,361 @@ git clone https://github.com/straja-ai/straja.git
 cd straja
 ```
 
-### 2. Create `.env`
+### 2. Create a `.env` file (not committed)
 
-```
-OPENAI_API_KEY=your-real-openai-key
+`.env` is gitignored. Put provider keys and other local-only settings here:
+
+```bash
+# if you have an example, otherwise just create .env
+cp .env.example .env  # optional
 ```
 
-### 3. Create `straja.yaml`
+Edit `.env`:
+
+```env
+OPENAI_API_KEY=sk-...
+# add other provider keys later as needed
+```
+
+### 3. Create `straja.yaml` (same as in Quick Start)
 
 ```yaml
 server:
   addr: ":8080"
-default_provider: "openai"
+
+default_provider: "openai_default"
+
 providers:
-  openai:
+  openai_default:
     type: "openai"
     base_url: "https://api.openai.com/v1"
     api_key_env: "OPENAI_API_KEY"
+
 projects:
-  - id: "local-test"
-    provider: "openai"
-    api_keys: ["test-key"]
+  - id: "default"
+    provider: "openai_default"
+    api_keys:
+      - "local-dev-key-123"
 ```
 
-### 4. Run Straja
+### 4. Use the Makefile
 
 ```bash
+# Build the binary into ./bin/straja
+make build
+
+# Run Straja with config
 make run
+
+# Run tests
+make test
+
+# Basic lint (go vet)
+make lint
+
+# Format Go files
+make fmt
+
+# Tidy Go modules
+make tidy
 ```
 
-### 5. Send your first request
+If you prefer, you can also run the binary with `.env` in one shot:
 
 ```bash
-curl -X POST http://localhost:8080/v1/chat/completions   -H "Content-Type: application/json"   -H "Authorization: Bearer test-key"   -d '{
-    "model": "gpt-4.1-mini",
-    "messages": [{"role": "user", "content": "Hello Straja"}]
-  }'
+env $(cat .env | xargs) ./bin/straja --config straja.yaml
 ```
-
-🎉 You now have a working AI gateway.
 
 ---
 
-# 🚀 Drop-in Integration
+## ⚙️ Configuration Reference (`straja.yaml`)
 
-Replace your OpenAI client:
+Full example:
 
-```ts
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: "https://api.openai.com/v1",
-});
+```yaml
+server:
+  addr: ":8080"
+
+default_provider: "openai_default"
+
+providers:
+  openai_default:
+    type: "openai"
+    base_url: "https://api.openai.com/v1"
+    api_key_env: "OPENAI_API_KEY"
+
+projects:
+  - id: "default"
+    provider: "openai_default"
+    api_keys:
+      - "local-dev-key-123"
+
+logging:
+  activation_level: "redacted"  # "metadata" | "redacted" | "full"
+
+policy:
+  banned_words: "block"         # block | log | ignore | redact
+  pii: "block"
+  injection: "block"
+  prompt_injection: "block"
+  jailbreak: "block"
+  toxicity: "log"
+  banned_words_list:
+    - "blocked_test"
+    - "forbidden"
+  pii_entities:
+    email: true
+    phone: true
+    credit_card: true
+    iban: true
+    tokens: true
 ```
 
-With Straja:
+### Providers
 
-```ts
-const client = new OpenAI({
-  apiKey: process.env.STRAJA_API_KEY, 
-  baseURL: "http://localhost:8080/v1",
-});
+Each provider entry defines:
+
+- `type` – e.g. `"openai"`  
+- `base_url` – upstream endpoint  
+- `api_key_env` – name of the env var holding the provider key (e.g. `OPENAI_API_KEY`)  
+
+Straja **never** stores provider keys in the config file itself.
+
+### Projects
+
+Projects map *application keys* to providers:
+
+```yaml
+projects:
+  - id: "customer-chat-prod"
+    provider: "openai_default"
+    api_keys:
+      - "proj-chat-key-123"
+      - "proj-chat-key-456"
 ```
 
-Everything else stays the same.
+Your applications use `proj-chat-key-123` as their API key when calling Straja.
 
 ---
 
-# 🔄 Request Lifecycle
+## 🔐 Key Model
 
-```
+### Application key (per project)
+
+- Example: `"proj-chat-key-123"`  
+- Sent by your apps: `Authorization: Bearer proj-chat-key-123`  
+- Selects a project → provider → policy config
+
+### Provider key (private inside Straja)
+
+- Example: `OPENAI_API_KEY=sk-...`  
+- Only exists in env / secret store  
+- Used by Straja for upstream API calls  
+- Never returned to or visible by applications
+
+---
+
+## 🔄 Request Flow
+
+```text
 Application
-  → Straja (BeforeModel policy)
-    → Provider routing
-    → Upstream LLM
-  ← Straja (AfterModel policy)
-  ← Activation event logged
+  → Authorization: Bearer <project_key>
+  → Straja Gateway
+    → Policy check (before model)
+    → Provider routing (e.g. openai_default)
+    → Upstream LLM (OpenAI)
+    ← Straja
+      → Policy check (after model)
+      → Activation event (JSON)
+    ← Application (OpenAI-compatible response)
 ```
 
-Decisions include:
-
-- `allow`
-- `blocked_before_policy`
-- `blocked_after_policy`
-- `redacted`
+The HTTP surface is intentionally OpenAI-shaped (`/v1/chat/completions`, `model`, `messages`, etc.).
 
 ---
 
-# 🛡️ Policies
+## 🛡️ Policies (before/after model)
 
-### BeforeModel
-- PII detection (email, phone, CC, IBAN, tokens)
-- Banned words
-- SQL/command injection
-- Prompt injection
-- Jailbreak patterns
-- Toxicity
+Straja runs heuristics in two stages via the policy engine.
 
-### AfterModel
-- Output redaction
-- Sensitive token masking
-- Completion sanitization
+### BeforeModel (request side)
+
+Runs on the last user message, with separate categories:
+
+- **Banned words** – simple blocklist (configurable via `policy.banned_words_list`)  
+- **PII / secrets** – regex heuristics for:  
+  - emails  
+  - phone numbers  
+  - credit cards  
+  - IBANs  
+  - long tokens / API keys  
+- **Injection** – SQL / command-injection-like patterns  
+- **Prompt injection** – phrases like “ignore previous instructions”, “forget all previous instructions”  
+- **Jailbreak** – “do anything now”, “no restrictions”, etc.  
+- **Toxicity** – simple abusive language patterns  
+
+Each category can be configured with an action:
+
+- `"block"` – reject the request before the model  
+- `"log"` – allow but log the hit  
+- `"ignore"` – do nothing  
+- `"redact"` – mutate the prompt (e.g. replace PII with `[REDACTED_EMAIL]`) and continue  
+
+Multiple categories can fire at once. Straja:
+
+- Collects all categories in `policy_hits`  
+- Redacts in-place where the action is `"redact"` (PII, injection, etc.)  
+- Blocks if **any** blocking category fires
+
+### AfterModel (response side)
+
+Runs on the model output:
+
+- Redacts obvious secrets/PII in the completion body using a conservative regex  
+- Marks the request with an `output_redaction` policy hit when something was actually redacted  
+
+Defaults are conservative: many safety checks are enabled and blocking, toxicity is `log` by default.
 
 ---
 
-# 🔥 Activation Events
+## 🔥 Activation Events
 
-Sent for every request via:
-- stdout  
-- file  
-- webhook  
-- Kafka  
-- OTEL (coming soon)
+For every request Straja emits a structured activation event (currently to stdout and a response header):
 
-Event includes:
+Example:
 
 ```json
 {
-  "timestamp": "...",
-  "project_id": "local-test",
-  "provider": "openai",
+  "timestamp": "2025-11-22T19:47:47.321304Z",
+  "project_id": "default",
+  "provider": "openai_default",
   "model": "gpt-4.1-mini",
   "decision": "allow",
-  "policy_hits": ["pii"],
-  "prompt_preview": "Hello...",
-  "completion_preview": "Hi there..."
+  "prompt_preview": "please use [REDACTED_EMAIL] in a sentence",
+  "completion_preview": "Sure! Here's a sentence using "[REDACTED_EMAIL]"...",
+  "policy_hits": ["pii"]
 }
 ```
 
+Key fields:
+
+- `decision` – `allow`, `blocked_before_policy`, `blocked_after_policy`, or `error_provider`  
+- `policy_hits` – categories that fired (`pii`, `injection`, `prompt_injection`, `jailbreak`, `toxicity`, `output_redaction`, `banned_words`)  
+- `prompt_preview` / `completion_preview` – respect `logging.activation_level`  
+  - `"metadata"` – short previews  
+  - `"redacted"` – PII masked in previews  
+  - `"full"` – full prompt/response (for internal use only)
+
+The activation event is also exposed in the **`X-Straja-Activation`** response header as a JSON string.
+
 ---
 
-# 🧱 Repository Structure
+## 💻 Using Straja from SDKs
 
+Example with the official OpenAI Node SDK, pointing it at Straja instead of OpenAI directly:
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "local-dev-key-123",           // project key from straja.yaml
+  baseURL: "http://localhost:8080/v1",   // Straja instead of api.openai.com
+});
+
+const res = await client.chat.completions.create({
+  model: "gpt-4.1-mini",
+  messages: [{ role: "user", content: "Hello" }],
+});
 ```
+
+Because Straja returns an OpenAI-compatible JSON shape, your existing client code should “just work”.
+
+---
+
+## 🧭 Straja Console (built-in UI)
+
+When the gateway is running, a lightweight console UI is served at:
+
+```text
+/console
+```
+
+Features:
+
+- Select project (based on your `straja.yaml` config)  
+- Send test prompts from the browser  
+- View the raw OpenAI-compatible response  
+- Inspect the activation event from the `X-Straja-Activation` header  
+- See the final decision (`allow`, `blocked_before_policy`, etc.) as a status badge  
+
+This console is meant as a local debugging and exploration tool, not a production dashboard.
+
+---
+
+## 🧱 Directory Structure
+
+```text
 straja/
-  cmd/straja/          → CLI entrypoint
+  cmd/straja/        → CLI entrypoint
   internal/
-    server/            → HTTP server + routing
-    provider/          → OpenAI, Azure, others
-    policy/            → Safety filters
-    activation/        → Activation event sinks
-    inference/         → Internal request shapes
-    auth/              → Project-key authentication
-    config/            → YAML + env loader
-  console/             → HTML developer console
+    server/          → HTTP server and routing
+    provider/        → Upstream providers (e.g. OpenAI)
+    policy/          → Policy engine (heuristics, actions)
+    inference/       → Internal normalized request/response model
+    auth/            → Project ↔ API key mapping
+    config/          → YAML config loader + defaults
+    activation/      → Activation event emitter(s)
 ```
 
 ---
 
-# 🧪 Development
+## 🧪 Local Testing & Development
 
-### Test
+Common commands:
 
 ```bash
+# Run all tests
 make test
-```
 
-### Format
-
-```bash
-make fmt
-```
-
-### Lint
-
-```bash
+# Basic lint (go vet)
 make lint
-```
 
-### Build binary
+# Format Go files
+make fmt
 
-```bash
+# Tidy Go modules
+make tidy
+
+# Build binary
 make build
 ```
 
----
-
-# 🗺 Roadmap
-
-- Streaming support  
-- Local ONNX inference  
-- Multi-provider orchestration  
-- Signed intelligence bundles  
-- Enterprise policy packs  
-- Activation dashboard  
-- License key system  
+If you change configuration or policy logic, add/update tests in `internal/policy` and keep `make test` green.
 
 ---
 
-# 📝 License
+## 🗺 Future Roadmap (High-Level)
+
+Planned directions (subject to change):
+
+- Multiple upstream providers per project (smart routing)  
+- Streaming support for chat completions  
+- Local ONNX / WebGPU inference backends  
+- Richer classifiers (ML-based PII, prompt injection, jailbreaks)  
+- Signed intelligence bundles, versioned and updatable  
+- More activation sinks (file, webhook, Kafka, OTEL)  
+- Web console evolution into a proper activation dashboard  
+- License-key validation and telemetry-aware distribution  
+
+---
+
+## 📝 License
 
 MIT
 
 ---
 
-# 💬 Contact
+## 💬 Contact
 
-hello@straja.ai  
-https://straja.ai
+- Email: **hello@straja.ai**  
+- Website: **https://straja.ai**
