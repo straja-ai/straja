@@ -145,11 +145,16 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux := http.NewServeMux()
 
-	licenseKey := cfg.Intelligence.LicenseKey
-	if licenseKey == "" && cfg.Intelligence.LicenseKeyEnv != "" {
-		licenseKey = os.Getenv(cfg.Intelligence.LicenseKeyEnv)
+	// Resolve license key with env override (env wins; placeholder treated as empty).
+	licenseKey := strings.TrimSpace(cfg.Intelligence.LicenseKey)
+	envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv)
+	envVal := ""
+	if envName != "" {
+		envVal = strings.TrimSpace(os.Getenv(envName))
 	}
-	licenseKey = strings.TrimSpace(licenseKey)
+	if envVal != "" {
+		licenseKey = envVal
+	}
 	if isPlaceholderLicenseKey(licenseKey) {
 		licenseKey = ""
 	}
