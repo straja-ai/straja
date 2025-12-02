@@ -48,6 +48,8 @@ policy:
 
 intelligence:
   enabled: true
+  license_key: "STRAJA-FREE-eyJpc3MiOiJzdHJhamEuYWkiLCJzdWIiOiJsaWNlbnNlIiwidGllciI6ImZyZWUiLCJlbWFpbCI6InNvbWFub2xlQGdtYWlsLmNvbSIsImlhdCI6MTc2NDY5NDM3OCwianRpIjoiNzQyNjJlNzgtZWJhNS00ZmMwLWJhYzYtZTZhNWFkNjAzMjk1In15DgShOWL-5JGtb-S4985QdAM6eSyUoGbt5zX9lB7mCAI8AWqx3xKxtqJxP3_0qKuEQTHyqfVtmI6Qk6BQ1qIA"
+  license_server_url: "https://straja.ai/api/license/validate"
   bundle_cache_dir: "~/.straja/bundles"
   license_key_env: "STRAJA_LICENSE_KEY"
   auto_update: true

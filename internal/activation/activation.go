@@ -29,6 +29,8 @@ type Event struct {
 	// PolicyHits contains all policy categories that triggered for this request,
 	// e.g. ["pii", "injection", "prompt_injection", "output_redaction"].
 	PolicyHits []string `json:"policy_hits"`
+	// IntelStatus reports whether intelligence/policy was enabled for this request.
+	IntelStatus string `json:"intel_status,omitempty"`
 }
 
 // Emitter sends activation events to some sink (stdout, file, webhook, etc.).

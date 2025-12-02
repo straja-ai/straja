@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/straja-ai/straja/internal/console"
 	"github.com/straja-ai/straja/internal/inference"
 	"github.com/straja-ai/straja/internal/intel"
+	"github.com/straja-ai/straja/internal/license"
 	"github.com/straja-ai/straja/internal/policy"
 	"github.com/straja-ai/straja/internal/provider"
 )
@@ -33,6 +35,11 @@ type Server struct {
 	activation       activation.Emitter
 	loggingLevel     string
 	projectProviders map[string]string // project ID -> provider name
+	licenseClaims    *license.LicenseClaims
+	intelEnabled     bool
+	licenseKey       string
+	intelStatus      string
+	httpClient       *http.Client
 }
 
 type consoleProject struct {
@@ -138,13 +145,54 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux := http.NewServeMux()
 
-	// Build intelligence engine (bundle-backed regex or noop)
-	var intelEngine intel.Engine
-	if cfg.Intelligence.Enabled {
-		intelEngine = intel.NewRegexBundle(cfg.Policy)
-	} else {
+	licenseKey := cfg.Intelligence.LicenseKey
+	if licenseKey == "" && cfg.Intelligence.LicenseKeyEnv != "" {
+		licenseKey = os.Getenv(cfg.Intelligence.LicenseKeyEnv)
+	}
+	licenseKey = strings.TrimSpace(licenseKey)
+	if isPlaceholderLicenseKey(licenseKey) {
+		licenseKey = ""
+	}
+
+	// Build intelligence engine (bundle-backed regex or noop) with offline license verification.
+	var (
+		intelEngine   intel.Engine
+		licenseClaims *license.LicenseClaims
+		intelEnabled  = cfg.Intelligence.Enabled
+		intelStatus   = "enabled"
+	)
+
+	if !intelEnabled {
 		log.Printf("intelligence disabled via config; running in routing-only mode")
 		intelEngine = intel.NewNoop()
+		intelStatus = "disabled_config"
+	} else {
+		if strings.TrimSpace(licenseKey) == "" {
+			log.Printf("license key not provided; disabling intelligence (routing-only mode)")
+			intelEngine = intel.NewNoop()
+			intelEnabled = false
+			intelStatus = "disabled_missing_license"
+		} else {
+			pubKey, err := license.DefaultPublicKey()
+			if err != nil {
+				log.Printf("license public key unavailable: %v; disabling intelligence (routing-only mode)", err)
+				intelEngine = intel.NewNoop()
+				intelEnabled = false
+				intelStatus = "disabled_missing_public_key"
+			} else {
+				claims, err := license.VerifyLicenseKey(licenseKey, pubKey)
+				if err != nil {
+					log.Printf("license verification failed: %v; disabling intelligence (routing-only mode)", err)
+					intelEngine = intel.NewNoop()
+					intelEnabled = false
+					intelStatus = "disabled_invalid_license"
+				} else {
+					licenseClaims = claims
+					intelEngine = intel.NewRegexBundle(cfg.Policy)
+					intelStatus = "enabled"
+				}
+			}
+		}
 	}
 
 	// Build policy engine (consumes intelEngine)
@@ -183,6 +231,11 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		activation:       activation.NewStdout(),
 		loggingLevel:     strings.ToLower(cfg.Logging.ActivationLevel),
 		projectProviders: projectProviders,
+		licenseClaims:    licenseClaims,
+		intelEnabled:     intelEnabled,
+		licenseKey:       licenseKey,
+		intelStatus:      intelStatus,
+		httpClient:       http.DefaultClient,
 	}
 
 	// Routes
@@ -195,7 +248,90 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux.HandleFunc("/console/api/projects", s.handleConsoleProjects)
 	mux.HandleFunc("/console/api/chat", s.handleConsoleChat)
 
+	if s.intelEnabled {
+		if err := s.ValidateLicenseOnline(context.Background()); err != nil {
+			log.Printf("license online validation failed (continuing with offline-verified license): %v", err)
+		}
+	}
+
 	return s
+}
+
+// ValidateLicenseOnline optionally validates the license key once at startup.
+func (s *Server) ValidateLicenseOnline(ctx context.Context) error {
+	url := strings.TrimSpace(s.cfg.Intelligence.LicenseServerURL)
+	if url == "" || strings.TrimSpace(s.licenseKey) == "" {
+		return nil
+	}
+
+	payload := struct {
+		LicenseKey     string `json:"license_key"`
+		GatewayVersion string `json:"gateway_version,omitempty"`
+	}{
+		LicenseKey:     s.licenseKey,
+		GatewayVersion: os.Getenv("STRAJA_VERSION"),
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal license payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build license request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := s.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("license online validation warning: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	var res struct {
+		Status  string `json:"status"`
+		Tier    string `json:"tier"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		log.Printf("license online validation decode error: %v", err)
+		return err
+	}
+
+	status := strings.ToLower(strings.TrimSpace(res.Status))
+	if status == "ok" || status == "active" {
+		if res.Tier != "" && s.licenseClaims != nil {
+			s.licenseClaims.Tier = res.Tier
+		}
+		s.intelStatus = "enabled"
+		return nil
+	}
+
+	// Any non-ok status disables intelligence for this run.
+	reason := res.Message
+	if reason == "" {
+		reason = fmt.Sprintf("license status=%s", res.Status)
+	}
+	s.disableIntelligence(reason)
+	return nil
+}
+
+func (s *Server) disableIntelligence(reason string) {
+	if !s.intelEnabled {
+		return
+	}
+	log.Printf("disabling intelligence: %s", reason)
+	s.intelEnabled = false
+	s.licenseClaims = nil
+	s.policy = policy.NewBasic(s.cfg.Policy, intel.NewNoop())
+	s.intelStatus = "disabled_license_invalid"
 }
 
 // buildProviderRegistry constructs all configured providers.
@@ -454,6 +590,7 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 		PromptPreview:     promptPreview,
 		CompletionPreview: completionPreview,
 		PolicyHits:        append([]string(nil), req.PolicyHits...),
+		IntelStatus:       s.intelStatus,
 	}
 
 	// Emit via configured emitter (stdout, later webhooks, etc.)
@@ -515,4 +652,22 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
+}
+
+func isPlaceholderLicenseKey(k string) bool {
+	k = strings.TrimSpace(strings.ToUpper(k))
+	if k == "" {
+		return true
+	}
+	samples := []string{
+		"STRAJA-FREE-XXXX",
+		"STRAJA-FREE-XXXX…",
+		"STRAJA-FREE-XXXX-PLACEHOLDER",
+	}
+	for _, s := range samples {
+		if k == s {
+			return true
+		}
+	}
+	return false
 }
