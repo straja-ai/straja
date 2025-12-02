@@ -14,6 +14,7 @@ type Config struct {
 	Projects        []ProjectConfig           `yaml:"projects"`
 	Logging         LoggingConfig             `yaml:"logging"`
 	Policy          PolicyConfig              `yaml:"policy"`
+	Intelligence    IntelligenceConfig        `yaml:"intelligence"`
 }
 
 type ServerConfig struct {
@@ -57,6 +58,29 @@ type PolicyConfig struct {
 	Toxicity        string `yaml:"toxicity"`
 }
 
+type IntelligenceConfig struct {
+    // Enabled controls whether Straja runs the intelligence / policy engine
+    // at all. When false, Straja becomes a pure routing + activation proxy.
+    Enabled bool `yaml:"enabled"`
+
+    // These fields are placeholders for Phase 2 and later
+    // (bundle download, license, updates).
+    BundleCacheDir      string `yaml:"bundle_cache_dir"`
+    LicenseKeyEnv       string `yaml:"license_key_env"`
+    AutoUpdate          bool   `yaml:"auto_update"`
+    UpdateCheckInterval string `yaml:"update_check_interval"`
+}
+
+// IsZero reports whether the struct was effectively omitted from the YAML.
+// This mirrors the PIIEntities pattern so we can apply sensible defaults.
+func (c IntelligenceConfig) IsZero() bool {
+    return !c.Enabled &&
+        c.BundleCacheDir == "" &&
+        c.LicenseKeyEnv == "" &&
+        !c.AutoUpdate &&
+        c.UpdateCheckInterval == ""
+}
+
 // Load reads configuration from a YAML file.
 // If the file doesn't exist, it returns a default config and no error.
 func Load(path string) (*Config, error) {
@@ -80,25 +104,32 @@ func Load(path string) (*Config, error) {
 }
 
 func defaultConfig() *Config {
-	return &Config{
-		Server: ServerConfig{
-			Addr: ":8080",
-		},
-		Providers:       map[string]ProviderConfig{},
-		DefaultProvider: "",
-		Projects:        []ProjectConfig{},
-		Logging: LoggingConfig{
-			ActivationLevel: "metadata",
-		},
-		Policy: PolicyConfig{
-			BannedWords:     "block",
-			PII:             "block",
-			Injection:       "block",
-			PromptInjection: "block",
-			Jailbreak:       "block",
-			Toxicity:        "log",
-		},
-	}
+    return &Config{
+        Server: ServerConfig{
+            Addr: ":8080",
+        },
+        Providers:       map[string]ProviderConfig{},
+        DefaultProvider: "",
+        Projects:        []ProjectConfig{},
+        Logging: LoggingConfig{
+            ActivationLevel: "metadata",
+        },
+        Policy: PolicyConfig{
+            BannedWords:     "block",
+            PII:             "block",
+            Injection:       "block",
+            PromptInjection: "block",
+            Jailbreak:       "block",
+            Toxicity:        "log",
+        },
+        Intelligence: IntelligenceConfig{
+            Enabled:             true,
+            BundleCacheDir:      "~/.straja/bundles",
+            LicenseKeyEnv:       "STRAJA_LICENSE_KEY",
+            AutoUpdate:          true,
+            UpdateCheckInterval: "6h",
+        },
+    }
 }
 
 func (c PIIEntitiesConfig) IsZero() bool {
@@ -155,4 +186,25 @@ func applyDefaults(cfg *Config) {
 			Tokens:     true,
 		}
 	}
+
+	// Intelligence defaults
+    if cfg.Intelligence.IsZero() {
+        cfg.Intelligence = IntelligenceConfig{
+            Enabled:             true,
+            BundleCacheDir:      "~/.straja/bundles",
+            LicenseKeyEnv:       "STRAJA_LICENSE_KEY",
+            AutoUpdate:          true,
+            UpdateCheckInterval: "6h",
+        }
+    } else {
+        if cfg.Intelligence.BundleCacheDir == "" {
+            cfg.Intelligence.BundleCacheDir = "~/.straja/bundles"
+        }
+        if cfg.Intelligence.LicenseKeyEnv == "" {
+            cfg.Intelligence.LicenseKeyEnv = "STRAJA_LICENSE_KEY"
+        }
+        if cfg.Intelligence.UpdateCheckInterval == "" {
+            cfg.Intelligence.UpdateCheckInterval = "6h"
+        }
+    }
 }

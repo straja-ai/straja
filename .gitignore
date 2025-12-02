@@ -3,3 +3,4 @@ bin/
 .env.*
 *.env
 .DS_Store
+.cache/

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"log"
-	"regexp"
 	"strings"
 
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja/internal/intel"
 )
 
 type Engine interface {
@@ -49,36 +49,7 @@ func parseAction(v string, def action) action {
 // ------------------------------
 
 type Basic struct {
-	// Simple keyword blocklist (demo knob)
-	bannedWords []string
-
-	// PII / secrets
-	emailRegex *regexp.Regexp
-	phoneRegex *regexp.Regexp
-	ccRegex    *regexp.Regexp
-	ibanRegex  *regexp.Regexp
-	tokenRegex *regexp.Regexp
-
-	// PII entity toggles
-	piiEmail      bool
-	piiPhone      bool
-	piiCreditCard bool
-	piiIBAN       bool
-	piiTokens     bool
-
-	// Injection patterns
-	sqlInjectionRegex *regexp.Regexp
-	cmdInjectionRegex *regexp.Regexp
-
-	// Prompt injection / jailbreak
-	promptInjectionRegex *regexp.Regexp
-	jailbreakRegex       *regexp.Regexp
-
-	// Toxicity heuristics
-	toxicRegex *regexp.Regexp
-
-	// Output redaction (for completions)
-	outputRedactRegex *regexp.Regexp
+	intel intel.Engine
 
 	// actions per category
 	bannedWordsAction     action
@@ -90,58 +61,9 @@ type Basic struct {
 }
 
 // NewBasic builds the Basic policy engine using config.PolicyConfig.
-func NewBasic(pc config.PolicyConfig) Engine {
-	// PII entity toggles come directly from config (defaults are applied in config.applyDefaults).
-	entities := pc.PIIEntities
-
+func NewBasic(pc config.PolicyConfig, eng intel.Engine) Engine {
 	return &Basic{
-		bannedWords: normalizeBannedWords(pc.BannedWordsList),
-
-		emailRegex: regexp.MustCompile(
-			`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`,
-		),
-		phoneRegex: regexp.MustCompile(
-			`\+?\d[\d\s\-]{7,}\d`,
-		),
-		ccRegex: regexp.MustCompile(
-			`\b(?:\d[ -]*?){13,16}\b`,
-		),
-		ibanRegex: regexp.MustCompile(
-			`\b[A-Z]{2}[0-9A-Z]{13,34}\b`,
-		),
-		tokenRegex: regexp.MustCompile(
-			`[A-Za-z0-9_\-]{20,}`,
-		),
-
-		piiEmail:      entities.Email,
-		piiPhone:      entities.Phone,
-		piiCreditCard: entities.CreditCard,
-		piiIBAN:       entities.IBAN,
-		piiTokens:     entities.Tokens,
-
-		sqlInjectionRegex: regexp.MustCompile(
-			`(?i)(union\s+select|or\s+1=1|drop\s+table|information_schema|xp_cmdshell|sleep$begin:math:text$\\d+$end:math:text$)`,
-		),
-		cmdInjectionRegex: regexp.MustCompile(
-			`(?i)(rm\s+-rf|chmod\s+777|wget\s+http|curl\s+http|bash\s+-c|powershell\s+-command)`,
-		),
-
-		promptInjectionRegex: regexp.MustCompile(
-			`(?i)(ignore\s+previous\s+instructions|forget(\s+all)?\s+previous\s+instructions|as\s+an?\s+ai\s+language\s+model|you\s+are\s+no\s+longer\s+bound\s+by|bypass\s+safety)`,
-		),
-		jailbreakRegex: regexp.MustCompile(
-			`(?i)(do\s+anything\s+now|jailbreak|uncensored|no\s+restrictions|no\s+safety\s+rules)`,
-		),
-
-		toxicRegex: regexp.MustCompile(
-			`(?i)(\bidiot\b|\bstupid\b|\bkill\s+you\b|\bhate\s+you\b)`,
-		),
-
-		outputRedactRegex: regexp.MustCompile(
-			`(?i)\b(password|secret|token)\b|` +
-				`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}|` +
-				`[A-Za-z0-9_\-]{20,}`,
-		),
+		intel: eng,
 
 		bannedWordsAction:     parseAction(pc.BannedWords, actionBlock),
 		piiAction:             parseAction(pc.PII, actionBlock),
@@ -153,8 +75,7 @@ func NewBasic(pc config.PolicyConfig) Engine {
 }
 
 // BeforeModel runs heuristics on the *last* user message before calling the model.
-// IMPORTANT: it now evaluates ALL categories, collecting multiple hits,
-// and only then decides whether to block (if any category wants to block).
+// It evaluates all categories via the intelligence bundle and then applies block/log/redact/ignore.
 func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 	if len(req.Messages) == 0 {
 		return nil
@@ -162,17 +83,15 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 
 	lastIdx := len(req.Messages) - 1
 	content := req.Messages[lastIdx].Content
-	lc := strings.ToLower(content)
 
 	var shouldBlock bool
 	var blockReason string
 
-	// Helper to process one category without early-return.
-	handle := func(condition bool, act action, category, reason string, redactor redactorFunc) {
-		if !condition {
+	// NOTE: redaction itself is delegated to the intel bundle (no regex here).
+	handle := func(hit bool, act action, category, reason string) {
+		if !hit {
 			return
 		}
-		// Record category hit
 		addPolicyHit(req, category)
 
 		switch act {
@@ -181,93 +100,61 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 				shouldBlock = true
 				blockReason = reason
 			}
-		case actionLog:
-			log.Printf("policy hit [%s] project=%s content_preview=%q",
-				category, req.ProjectID, truncatePreview(content))
 		case actionRedact:
-			if redactor != nil {
-				sanitized := redactor(content)
-				req.Messages[lastIdx].Content = sanitized
-				log.Printf("policy redaction [%s] project=%s before=%q after=%q",
-					category, req.ProjectID, truncatePreview(content), truncatePreview(sanitized))
-				// update content/lc for subsequent checks
-				content = sanitized
-				lc = strings.ToLower(sanitized)
+			// Ask the intel engine (bundle) to perform redaction if it supports it.
+			if bundle, ok := p.intel.(interface {
+				RedactInput(category, text string) (string, bool)
+			}); ok {
+				sanitized, changed := bundle.RedactInput(category, content)
+				if changed {
+					req.Messages[lastIdx].Content = sanitized
+					log.Printf("policy redaction [%s] project=%s before=%q after=%q",
+						category, req.ProjectID, truncatePreview(content), truncatePreview(sanitized))
+					content = sanitized
+				}
+			} else {
+				log.Printf("policy: redaction requested for category=%s but intel engine does not support RedactInput; leaving content unchanged", category)
 			}
+		case actionLog:
+			log.Printf("policy hit [%s] project=%s content=%q",
+				category, req.ProjectID, truncatePreview(content))
 		case actionIgnore:
-			// do nothing
+			// nothing
 		}
 	}
 
-	// 1) Banned words
-	for _, banned := range p.bannedWords {
-		if strings.Contains(lc, strings.ToLower(banned)) {
-			handle(true, p.bannedWordsAction, "banned_words",
-				"prompt blocked due to banned content",
-				p.redactBannedWords)
-			break // no need to check other banned words
-		}
+	// Get detection results from bundle
+	result, err := p.intel.AnalyzeInput(ctx, content)
+	if err != nil {
+		// conservative behaviour: log and continue without blocking
+		log.Printf("intel analyze input error: %v", err)
+		return nil
 	}
 
-	// 2) PII / secrets
-	piiHit := false
-	if p.piiEmail && p.emailRegex.MatchString(content) {
-		piiHit = true
-	}
-	if p.piiPhone && p.phoneRegex.MatchString(content) {
-		piiHit = true
-	}
-	if p.piiCreditCard && p.ccRegex.MatchString(content) {
-		piiHit = true
-	}
-	if p.piiIBAN && p.ibanRegex.MatchString(content) {
-		piiHit = true
-	}
-	if p.piiTokens && p.tokenRegex.MatchString(content) {
-		piiHit = true
-	}
+	cats := result.Categories
 
-	handle(
-		piiHit,
-		p.piiAction,
-		"pii",
-		"prompt blocked due to possible PII or secrets",
-		p.redactPII,
+	handle(cats["banned_words"].Hit, p.bannedWordsAction, "banned_words",
+		"prompt blocked due to banned content",
 	)
 
-	// 3) Injection (SQL + command)
-	handle(
-		p.sqlInjectionRegex.MatchString(lc) || p.cmdInjectionRegex.MatchString(lc),
-		p.injectionAction,
-		"injection",
-		"prompt blocked due to possible injection attempt",
-		p.redactInjection,
+	handle(cats["pii"].Hit, p.piiAction, "pii",
+		"prompt blocked or redacted due to PII/secrets",
 	)
 
-	// 4) Prompt injection / jailbreak-like
-	handle(
-		p.promptInjectionRegex.MatchString(lc),
-		p.promptInjectionAction,
-		"prompt_injection",
+	handle(cats["injection"].Hit, p.injectionAction, "injection",
+		"prompt blocked or redacted due to possible injection",
+	)
+
+	handle(cats["prompt_injection"].Hit, p.promptInjectionAction, "prompt_injection",
 		"prompt blocked or redacted due to possible prompt injection attempt",
-		p.redactPromptInjection,
 	)
 
-	handle(
-		p.jailbreakRegex.MatchString(lc),
-		p.jailbreakAction,
-		"jailbreak",
+	handle(cats["jailbreak"].Hit, p.jailbreakAction, "jailbreak",
 		"prompt blocked or redacted due to possible jailbreak attempt",
-		p.redactJailbreak,
 	)
 
-	// 5) Toxicity heuristics
-	handle(
-		p.toxicRegex.MatchString(lc),
-		p.toxicityAction,
-		"toxicity",
+	handle(cats["toxicity"].Hit, p.toxicityAction, "toxicity",
 		"prompt blocked or redacted due to toxic or abusive language",
-		p.redactToxicity,
 	)
 
 	if shouldBlock {
@@ -276,30 +163,45 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 	return nil
 }
 
-// AfterModel redacts obviously sensitive tokens in the model output.
-// This is always applied; it's safe and conservative.
+// AfterModel can redact sensitive tokens in the model output using the bundle.
+// This is conservative and only applies if the intel engine signals "output_redaction".
 func (p *Basic) AfterModel(ctx context.Context, req *inference.Request, resp *inference.Response) error {
 	if resp == nil {
 		return nil
 	}
 
 	original := resp.Message.Content
-	redacted := p.outputRedactRegex.ReplaceAllString(original, "[REDACTED]")
 
-	// Only record a hit if something actually changed
-	if redacted != original {
-		addPolicyHit(req, "output_redaction")
-		resp.Message.Content = redacted
+	result, err := p.intel.AnalyzeOutput(ctx, original)
+	if err != nil {
+		log.Printf("intel analyze output error: %v", err)
+		return nil
+	}
+
+	cat, ok := result.Categories["output_redaction"]
+	if !ok || !cat.Hit {
+		return nil
+	}
+
+	// Ask the bundle to perform redaction (regex lives inside bundle).
+	if bundle, ok := p.intel.(interface {
+		RedactOutput(text string) (string, bool)
+	}); ok {
+		redacted, changed := bundle.RedactOutput(original)
+		if changed {
+			addPolicyHit(req, "output_redaction")
+			resp.Message.Content = redacted
+		}
+	} else {
+		log.Printf("policy: output redaction requested but intel engine does not support RedactOutput; leaving output unchanged")
 	}
 
 	return nil
 }
 
 // ------------------------------
-// Redactors
+// Helpers
 // ------------------------------
-
-type redactorFunc func(string) string
 
 func truncatePreview(s string) string {
 	const max = 120
@@ -309,75 +211,7 @@ func truncatePreview(s string) string {
 	return s[:max] + "…"
 }
 
-func (p *Basic) redactPII(s string) string {
-	// IMPORTANT: order matters.
-	// We run more specific types first to avoid generic patterns
-	// (phone, IBAN) “stealing” matches.
-
-	// 1) Tokens (very generic, so do them first)
-	if p.piiTokens {
-		s = p.tokenRegex.ReplaceAllString(s, "[REDACTED_TOKEN]")
-	}
-
-	// 2) Credit cards
-	if p.piiCreditCard {
-		s = p.ccRegex.ReplaceAllString(s, "[REDACTED_CC]")
-	}
-
-	// 3) IBANs
-	if p.piiIBAN {
-		s = p.ibanRegex.ReplaceAllString(s, "[REDACTED_IBAN]")
-	}
-
-	// 4) Emails
-	if p.piiEmail {
-		s = p.emailRegex.ReplaceAllString(s, "[REDACTED_EMAIL]")
-	}
-
-	// 5) Phone numbers (very broad, do last)
-	if p.piiPhone {
-		s = p.phoneRegex.ReplaceAllString(s, "[REDACTED_PHONE]")
-	}
-
-	return s
-}
-
-func (p *Basic) redactInjection(s string) string {
-	s = p.sqlInjectionRegex.ReplaceAllString(s, "[REDACTED_INJECTION]")
-	s = p.cmdInjectionRegex.ReplaceAllString(s, "[REDACTED_INJECTION]")
-	return s
-}
-
-func (p *Basic) redactPromptInjection(s string) string {
-	s = p.promptInjectionRegex.ReplaceAllString(s, "[REDACTED_PROMPT_INJECTION]")
-	return s
-}
-
-func (p *Basic) redactJailbreak(s string) string {
-	s = p.jailbreakRegex.ReplaceAllString(s, "[REDACTED_JAILBREAK]")
-	return s
-}
-
-func (p *Basic) redactToxicity(s string) string {
-	s = p.toxicRegex.ReplaceAllString(s, "[REDACTED_TOXICITY]")
-	return s
-}
-
-func (p *Basic) redactBannedWords(s string) string {
-	lc := strings.ToLower(s)
-	out := s
-	for _, w := range p.bannedWords {
-		if strings.Contains(lc, strings.ToLower(w)) {
-			out = strings.ReplaceAll(out, w, "[REDACTED_BANNED]")
-		}
-	}
-	return out
-}
-
-// ------------------------------
 // Policy hits helper
-// ------------------------------
-
 func addPolicyHit(req *inference.Request, category string) {
 	if req == nil || category == "" {
 		return
@@ -388,28 +222,4 @@ func addPolicyHit(req *inference.Request, category string) {
 		}
 	}
 	req.PolicyHits = append(req.PolicyHits, category)
-}
-
-// ------------------------------
-// Banned words helper
-// ------------------------------
-
-func normalizeBannedWords(words []string) []string {
-	m := make(map[string]struct{})
-	out := make([]string, 0, len(words))
-
-	for _, w := range words {
-		trimmed := strings.TrimSpace(w)
-		if trimmed == "" {
-			continue
-		}
-		lw := strings.ToLower(trimmed)
-		if _, exists := m[lw]; exists {
-			continue
-		}
-		m[lw] = struct{}{}
-		out = append(out, trimmed)
-	}
-
-	return out
 }

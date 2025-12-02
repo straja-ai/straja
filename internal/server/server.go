@@ -17,6 +17,7 @@ import (
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/console"
 	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja/internal/intel"
 	"github.com/straja-ai/straja/internal/policy"
 	"github.com/straja-ai/straja/internal/provider"
 )
@@ -137,8 +138,17 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux := http.NewServeMux()
 
-	// Build policy engine
-	pol := policy.NewBasic(cfg.Policy)
+	// Build intelligence engine (bundle-backed regex or noop)
+	var intelEngine intel.Engine
+	if cfg.Intelligence.Enabled {
+		intelEngine = intel.NewRegexBundle(cfg.Policy)
+	} else {
+		log.Printf("intelligence disabled via config; running in routing-only mode")
+		intelEngine = intel.NewNoop()
+	}
+
+	// Build policy engine (consumes intelEngine)
+	pol := policy.NewBasic(cfg.Policy, intelEngine)
 
 	// Build providers
 	provs, provErr := buildProviderRegistry(cfg)

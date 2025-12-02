@@ -7,6 +7,7 @@ import (
 
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja/internal/intel"
 )
 
 func newTestPolicy() Engine {
@@ -14,7 +15,7 @@ func newTestPolicy() Engine {
 	// - some banned words
 	// - PII blocking enabled
 	// - all PII entities turned on
-	return NewBasic(config.PolicyConfig{
+	pc := config.PolicyConfig{
 		BannedWordsList: []string{"blocked_test", "forbidden"},
 		PII:             "block",
 		PIIEntities: config.PIIEntitiesConfig{
@@ -24,7 +25,10 @@ func newTestPolicy() Engine {
 			IBAN:       true,
 			Tokens:     true,
 		},
-	})
+	}
+
+	eng := intel.NewRegexBundle(pc)
+	return NewBasic(pc, eng)
 }
 
 func hasHit(req *inference.Request, category string) bool {
@@ -228,6 +232,81 @@ func TestBasicPolicy_BeforeModel_MultiHit_PromptInjection_PII_Toxicity(t *testin
 	}
 }
 
+func TestBasicPolicy_BeforeModel_RedactsBannedWords(t *testing.T) {
+	pc := config.PolicyConfig{
+		BannedWords:     "redact",
+		BannedWordsList: []string{"forbidden", "foo_bar"},
+		PII:             "ignore",
+		Injection:       "ignore",
+	}
+	eng := intel.NewRegexBundle(pc)
+	p := NewBasic(pc, eng)
+
+	req := &inference.Request{
+		ProjectID: "test",
+		Model:     "gpt-4.1-mini",
+		Messages: []inference.Message{
+			{Role: "user", Content: "This contains forbidden text and foo_bar mixed in."},
+		},
+	}
+
+	err := p.BeforeModel(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected redaction without blocking, got: %v", err)
+	}
+
+	updated := req.Messages[0].Content
+	if strings.Contains(updated, "forbidden") || strings.Contains(updated, "foo_bar") {
+		t.Fatalf("expected banned words to be redacted, got: %q", updated)
+	}
+	if !strings.Contains(updated, "[REDACTED_BANNED]") {
+		t.Fatalf("expected placeholder for redacted banned words, got: %q", updated)
+	}
+	if !hasHit(req, "banned_words") {
+		t.Fatalf("expected 'banned_words' hit for redaction, got: %+v", req.PolicyHits)
+	}
+}
+
+func TestBasicPolicy_BeforeModel_RedactsPII(t *testing.T) {
+	pc := config.PolicyConfig{
+		PII:       "redact",
+		Injection: "ignore",
+		PIIEntities: config.PIIEntitiesConfig{
+			Email:      true,
+			Phone:      true,
+			CreditCard: true,
+			IBAN:       true,
+			Tokens:     true,
+		},
+	}
+	eng := intel.NewRegexBundle(pc)
+	p := NewBasic(pc, eng)
+
+	req := &inference.Request{
+		ProjectID: "test",
+		Model:     "gpt-4.1-mini",
+		Messages: []inference.Message{
+			{Role: "user", Content: "Contact me at john.doe@example.com and token ABCDEFGHIJKLMNOPQRST."},
+		},
+	}
+
+	err := p.BeforeModel(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected redaction without blocking, got: %v", err)
+	}
+
+	updated := req.Messages[0].Content
+	if strings.Contains(updated, "john.doe@example.com") || strings.Contains(updated, "ABCDEFGHIJKLMNOPQRST") {
+		t.Fatalf("expected PII/token redacted, got: %q", updated)
+	}
+	if !strings.Contains(updated, "[REDACTED_EMAIL]") || !strings.Contains(updated, "[REDACTED_TOKEN]") {
+		t.Fatalf("expected email and token placeholders, got: %q", updated)
+	}
+	if !hasHit(req, "pii") {
+		t.Fatalf("expected 'pii' hit for redaction, got: %+v", req.PolicyHits)
+	}
+}
+
 //
 // ---- PII ENTITIES TESTS ----
 //
@@ -243,7 +322,8 @@ func TestBasicPolicy_PIIEntities_EmailDisabledDoesNotTrigger(t *testing.T) {
 			Tokens:     false,
 		},
 	}
-	p := NewBasic(pc)
+	eng := intel.NewRegexBundle(pc)
+	p := NewBasic(pc, eng)
 
 	req := &inference.Request{
 		ProjectID: "test",
@@ -273,7 +353,8 @@ func TestBasicPolicy_PIIEntities_IBANEnabledTriggers(t *testing.T) {
 			Tokens:     false,
 		},
 	}
-	p := NewBasic(pc)
+	eng := intel.NewRegexBundle(pc)
+	p := NewBasic(pc, eng)
 
 	req := &inference.Request{
 		ProjectID: "test",

@@ -24,7 +24,7 @@ projects:
       - "local-dev-key-124"
 
 logging:
-  activation_level: "full"   # metadata | redacted | full
+  activation_level: "redacted"   # metadata | redacted | full
 
 policy:
   banned_words: "redact" #  | redact| ignore | block | log
@@ -45,3 +45,10 @@ policy:
   prompt_injection: "block"
   jailbreak: "block"
   toxicity: "log"
+
+intelligence:
+  enabled: true
+  bundle_cache_dir: "~/.straja/bundles"
+  license_key_env: "STRAJA_LICENSE_KEY"
+  auto_update: true
+  update_check_interval: "6h"
