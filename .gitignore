@@ -4,3 +4,4 @@ bin/
 *.env
 .DS_Store
 .cache/
+STRAJA_STATUS.md
