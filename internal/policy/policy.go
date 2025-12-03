@@ -9,6 +9,8 @@ import (
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/inference"
 	"github.com/straja-ai/straja/internal/intel"
+	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja/internal/strajaguard"
 )
 
 type Engine interface {
@@ -50,6 +52,9 @@ func parseAction(v string, def action) action {
 
 type Basic struct {
 	intel intel.Engine
+	sg    *strajaguard.StrajaGuardModel
+
+	securityCfg config.SecurityConfig
 
 	// actions per category
 	bannedWordsAction     action
@@ -61,9 +66,12 @@ type Basic struct {
 }
 
 // NewBasic builds the Basic policy engine using config.PolicyConfig.
-func NewBasic(pc config.PolicyConfig, eng intel.Engine) Engine {
+func NewBasic(pc config.PolicyConfig, sc config.SecurityConfig, eng intel.Engine, sg *strajaguard.StrajaGuardModel) Engine {
 	return &Basic{
 		intel: eng,
+		sg:    sg,
+
+		securityCfg: sc,
 
 		bannedWordsAction:     parseAction(pc.BannedWords, actionBlock),
 		piiAction:             parseAction(pc.PII, actionBlock),
@@ -83,6 +91,7 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 
 	lastIdx := len(req.Messages) - 1
 	content := req.Messages[lastIdx].Content
+	systemPrompt := extractSystemPrompt(req.Messages)
 
 	var shouldBlock bool
 	var blockReason string
@@ -130,28 +139,74 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 		log.Printf("intel analyze input error: %v", err)
 		return nil
 	}
-
 	cats := result.Categories
 
+	// Collect regex-based detection signals for downstream merging.
+	req.DetectionSignals = append(req.DetectionSignals, detectionSignalsFromRegex(cats)...)
+
+	// Run StrajaGuard if available.
+	if p.securityCfg.Enabled && p.sg != nil {
+		if res, evalErr := p.sg.Evaluate(systemPrompt, content); evalErr != nil {
+			log.Printf("strajaguard evaluate failed: %v", evalErr)
+		} else if res != nil {
+			req.SecurityScores = res.Scores
+			req.SecurityFlags = res.Flags
+			req.DetectionSignals = append(req.DetectionSignals, detectionSignalsFromML(res, p.securityCfg)...)
+		}
+	}
+
+	// Merge signals into per-category policy hits.
+	if p.securityCfg.Enabled {
+		req.PolicyDecisions = safety.EvaluateAllCategories(req.DetectionSignals, p.securityCfg)
+		for _, hit := range req.PolicyDecisions {
+			addPolicyHit(req, hit.Category)
+			switch strings.ToLower(hit.Action) {
+			case "block", "block_and_redact":
+				if !shouldBlock {
+					shouldBlock = true
+					blockReason = "prompt blocked due to " + hit.Category
+				}
+				if hit.Action == "block_and_redact" || hit.Action == "redact" {
+					if redacted := p.tryRedact(req, hit.Category, content); redacted != "" {
+						content = redacted
+						req.Messages[lastIdx].Content = redacted
+					}
+				}
+			case "redact":
+				if redacted := p.tryRedact(req, hit.Category, content); redacted != "" {
+					content = redacted
+					req.Messages[lastIdx].Content = redacted
+				}
+			case "warn":
+				log.Printf("policy warn [%s] project=%s confidence=%.2f content=%q sources=%v",
+					hit.Category, req.ProjectID, hit.Confidence, truncatePreview(content), hit.Sources)
+			case "log":
+				log.Printf("policy log [%s] project=%s confidence=%.2f content=%q sources=%v",
+					hit.Category, req.ProjectID, hit.Confidence, truncatePreview(content), hit.Sources)
+			}
+		}
+	}
+
+	// Legacy regex-only handling for categories not yet migrated (or when security is disabled).
 	handle(cats["banned_words"].Hit, p.bannedWordsAction, "banned_words",
 		"prompt blocked due to banned content",
-	)
-
-	handle(cats["pii"].Hit, p.piiAction, "pii",
-		"prompt blocked or redacted due to PII/secrets",
 	)
 
 	handle(cats["injection"].Hit, p.injectionAction, "injection",
 		"prompt blocked or redacted due to possible injection",
 	)
 
-	handle(cats["prompt_injection"].Hit, p.promptInjectionAction, "prompt_injection",
-		"prompt blocked or redacted due to possible prompt injection attempt",
-	)
-
-	handle(cats["jailbreak"].Hit, p.jailbreakAction, "jailbreak",
-		"prompt blocked or redacted due to possible jailbreak attempt",
-	)
+	if !p.securityCfg.Enabled {
+		handle(cats["pii"].Hit, p.piiAction, "pii",
+			"prompt blocked or redacted due to PII/secrets",
+		)
+		handle(cats["prompt_injection"].Hit, p.promptInjectionAction, "prompt_injection",
+			"prompt blocked or redacted due to possible prompt injection attempt",
+		)
+		handle(cats["jailbreak"].Hit, p.jailbreakAction, "jailbreak",
+			"prompt blocked or redacted due to possible jailbreak attempt",
+		)
+	}
 
 	handle(cats["toxicity"].Hit, p.toxicityAction, "toxicity",
 		"prompt blocked or redacted due to toxic or abusive language",
@@ -222,4 +277,112 @@ func addPolicyHit(req *inference.Request, category string) {
 		}
 	}
 	req.PolicyHits = append(req.PolicyHits, category)
+}
+
+func detectionSignalsFromRegex(cats map[string]intel.CategoryResult) []safety.DetectionSignal {
+	signals := []safety.DetectionSignal{}
+	for cat, res := range cats {
+		if !res.Hit {
+			continue
+		}
+		switch cat {
+		case "prompt_injection", "jailbreak", "data_exfil":
+			signals = append(signals, safety.DetectionSignal{
+				Category:   cat,
+				Source:     "regex",
+				Confidence: 1.0,
+			})
+		case "pii":
+			for _, lbl := range res.Labels {
+				category := "pii"
+				if strings.Contains(lbl, "token") {
+					category = "secrets"
+				}
+				signals = append(signals, safety.DetectionSignal{
+					Category:   category,
+					Source:     "regex",
+					Confidence: 1.0,
+					Evidence:   lbl,
+				})
+			}
+		case "secrets":
+			signals = append(signals, safety.DetectionSignal{
+				Category:   "secrets",
+				Source:     "regex",
+				Confidence: 1.0,
+			})
+		case "injection":
+			signals = append(signals, safety.DetectionSignal{
+				Category:   "injection",
+				Source:     "regex",
+				Confidence: 1.0,
+			})
+		}
+	}
+	return signals
+}
+
+func detectionSignalsFromML(res *strajaguard.StrajaGuardResult, cfg config.SecurityConfig) []safety.DetectionSignal {
+	signals := []safety.DetectionSignal{}
+	if res == nil || res.Scores == nil {
+		return signals
+	}
+
+	type entry struct {
+		category string
+		warn     float32
+	}
+
+	mapping := map[string]entry{
+		"prompt_injection":       {category: "prompt_injection", warn: cfg.PromptInj.MLWarnThreshold},
+		"jailbreak":              {category: "jailbreak", warn: cfg.Jailbreak.MLWarnThreshold},
+		"data_exfil_attempt":     {category: "data_exfil_attempt", warn: cfg.DataExfil.MLWarnThreshold},
+		"contains_personal_data": {category: "contains_personal_data", warn: cfg.PII.MLWarnThreshold},
+		"contains_secrets_maybe": {category: "contains_secrets_maybe", warn: cfg.Secrets.MLWarnThreshold},
+	}
+
+	for label, score := range res.Scores {
+		if entry, ok := mapping[label]; ok {
+			if entry.warn == 0 || score >= entry.warn {
+				signals = append(signals, safety.DetectionSignal{
+					Category:   entry.category,
+					Source:     "ml_strajaguard_v1",
+					Confidence: score,
+				})
+			}
+		}
+	}
+	return signals
+}
+
+func extractSystemPrompt(msgs []inference.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		if m.Role == "system" {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(m.Content)
+		}
+	}
+	return b.String()
+}
+
+func (p *Basic) tryRedact(req *inference.Request, category, content string) string {
+	if req == nil || content == "" || p.intel == nil {
+		return ""
+	}
+	bundle, ok := p.intel.(interface {
+		RedactInput(category, text string) (string, bool)
+	})
+	if !ok {
+		return ""
+	}
+	sanitized, changed := bundle.RedactInput(category, content)
+	if changed {
+		log.Printf("policy redaction [%s] project=%s before=%q after=%q",
+			category, req.ProjectID, truncatePreview(content), truncatePreview(sanitized))
+		return sanitized
+	}
+	return ""
 }

@@ -1,12 +1,14 @@
 # =========================
 # 1) Builder image
 # =========================
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25-bookworm AS builder
 
 WORKDIR /app
 
-# Install build dependencies (if needed later)
-RUN apk add --no-cache git
+# Install build dependencies (gcc for CGO + onnxruntime headers/runtime)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git build-essential pkg-config onnxruntime && \
+    rm -rf /var/lib/apt/lists/*
 
 # Go module files first (better layer caching)
 COPY go.mod go.sum ./
@@ -15,16 +17,21 @@ RUN go mod download
 # Copy the rest of the source
 COPY . .
 
-# Build Straja (static-ish binary, linux/amd64)
-RUN CGO_DISABLED=1 GOOS=linux GOARCH=amd64 go build -o /app/straja ./cmd/straja
+# Build Straja (CGO-enabled for ONNX Runtime)
+RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -o /app/straja ./cmd/straja
 
 # =========================
 # 2) Runtime image
 # =========================
-FROM alpine:3.20
+FROM debian:bookworm-slim
+
+# Install ONNX Runtime shared library for StrajaGuard ML
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates onnxruntime && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN adduser -D -g '' straja
+RUN useradd -m -s /bin/bash straja
 
 USER straja
 WORKDIR /app

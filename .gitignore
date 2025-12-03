@@ -1,3 +1,4 @@
+# ---- Binaries ----
 bin/
 .env
 .env.*
@@ -5,3 +6,30 @@ bin/
 .DS_Store
 .cache/
 STRAJA_STATUS.md
+
+# ---- Go build artifacts ----
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+coverage.out
+dist/
+
+# ---- IDE / editor junk ----
+.vscode/
+.idea/
+*.swp
+*.tmp
+*.log
+
+# ---- Model bundles (keep folder, ignore contents) ----
+intel/*
+!intel/.gitkeep
+
+# ---- Docker / container artifacts ----
+*.tar
+*.img
+
+# ---- License keys (never commit) ----
+license.key

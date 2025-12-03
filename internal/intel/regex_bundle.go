@@ -155,6 +155,7 @@ func (b *RegexBundle) AnalyzeInput(ctx context.Context, text string) (*Result, e
 
 	// 2) PII / secrets
 	piiLabels := []string{}
+	var secretHit bool
 	if entities.Email && b.emailRegex.MatchString(text) {
 		piiLabels = append(piiLabels, "pii.email")
 	}
@@ -169,12 +170,20 @@ func (b *RegexBundle) AnalyzeInput(ctx context.Context, text string) (*Result, e
 	}
 	if entities.Tokens && b.tokenRegex.MatchString(text) {
 		piiLabels = append(piiLabels, "pii.token")
+		secretHit = true
 	}
 	if len(piiLabels) > 0 {
 		res.Categories["pii"] = CategoryResult{
 			Hit:    true,
 			Score:  1.0,
 			Labels: piiLabels,
+		}
+	}
+	if secretHit {
+		res.Categories["secrets"] = CategoryResult{
+			Hit:    true,
+			Score:  1.0,
+			Labels: []string{"secrets.token"},
 		}
 	}
 
@@ -243,6 +252,10 @@ func (b *RegexBundle) RedactInput(category, text string) (string, bool) {
 		if b.piiEntities.IBAN {
 			redacted = b.ibanRegex.ReplaceAllString(redacted, "[REDACTED_IBAN]")
 		}
+		if b.piiEntities.Tokens {
+			redacted = b.tokenRegex.ReplaceAllString(redacted, "[REDACTED_TOKEN]")
+		}
+	case "secrets":
 		if b.piiEntities.Tokens {
 			redacted = b.tokenRegex.ReplaceAllString(redacted, "[REDACTED_TOKEN]")
 		}

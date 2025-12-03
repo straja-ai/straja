@@ -31,11 +31,30 @@ type Event struct {
 	PolicyHits []string `json:"policy_hits"`
 	// IntelStatus reports whether intelligence/policy was enabled for this request.
 	IntelStatus string `json:"intel_status,omitempty"`
+	// StrajaGuard contains raw scores and flags from the ML classifier.
+	StrajaGuard *StrajaGuardPayload `json:"strajaguard,omitempty"`
+	// PolicyDecisions are the merged per-category decisions (regex + ML).
+	PolicyDecisions []PolicyDecision `json:"policy_decisions,omitempty"`
 }
 
 // Emitter sends activation events to some sink (stdout, file, webhook, etc.).
 type Emitter interface {
 	Emit(ctx context.Context, ev *Event)
+}
+
+// StrajaGuardPayload is attached when the local ONNX model runs.
+type StrajaGuardPayload struct {
+	Model  string             `json:"model"`
+	Scores map[string]float32 `json:"scores,omitempty"`
+	Flags  []string           `json:"flags,omitempty"`
+}
+
+// PolicyDecision mirrors the per-category action that was taken.
+type PolicyDecision struct {
+	Category   string   `json:"category"`
+	Action     string   `json:"action"`
+	Confidence float32  `json:"confidence,omitempty"`
+	Sources    []string `json:"sources,omitempty"`
 }
 
 // stdoutEmitter prints JSON events to stdout.

@@ -91,6 +91,23 @@ Your apps still talk to `http://host:8080/v1` and use **project keys**, not prov
 
 For contributors or teams who want to run Straja from source.
 
+### StrajaGuard ML dependency
+
+The optional StrajaGuard v1 classifier runs locally via ONNX Runtime. Without the ONNX Runtime shared library, Straja falls back to regex-only detection and logs:
+
+```
+StrajaGuard ML disabled: ONNX Runtime not found (running regex-only).
+To enable, install ONNX Runtime and restart. See README -> "StrajaGuard ML dependency".
+```
+
+Install ONNX Runtime:
+- macOS (Homebrew): `brew install onnxruntime`
+- Ubuntu/Debian: `sudo apt-get update && sudo apt-get install onnxruntime`
+- Fedora/RHEL/CentOS: `sudo dnf install onnxruntime` or `sudo yum install onnxruntime`
+- Windows (winget): `winget install onnxruntime`
+
+If you install to a non-standard path, set `ONNXRUNTIME_SHARED_LIBRARY_PATH` to the full path of the shared library (e.g., `/opt/homebrew/lib/libonnxruntime.dylib` or `/usr/local/lib/libonnxruntime.so`) and restart Straja.
+
 ### 1. Clone the repo
 
 ```bash

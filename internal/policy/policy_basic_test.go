@@ -28,7 +28,7 @@ func newTestPolicy() Engine {
 	}
 
 	eng := intel.NewRegexBundle(pc)
-	return NewBasic(pc, eng)
+	return NewBasic(pc, config.SecurityConfig{}, eng, nil)
 }
 
 func hasHit(req *inference.Request, category string) bool {
@@ -240,7 +240,7 @@ func TestBasicPolicy_BeforeModel_RedactsBannedWords(t *testing.T) {
 		Injection:       "ignore",
 	}
 	eng := intel.NewRegexBundle(pc)
-	p := NewBasic(pc, eng)
+	p := NewBasic(pc, config.SecurityConfig{}, eng, nil)
 
 	req := &inference.Request{
 		ProjectID: "test",
@@ -280,7 +280,7 @@ func TestBasicPolicy_BeforeModel_RedactsPII(t *testing.T) {
 		},
 	}
 	eng := intel.NewRegexBundle(pc)
-	p := NewBasic(pc, eng)
+	p := NewBasic(pc, config.SecurityConfig{}, eng, nil)
 
 	req := &inference.Request{
 		ProjectID: "test",
@@ -323,7 +323,7 @@ func TestBasicPolicy_PIIEntities_EmailDisabledDoesNotTrigger(t *testing.T) {
 		},
 	}
 	eng := intel.NewRegexBundle(pc)
-	p := NewBasic(pc, eng)
+	p := NewBasic(pc, config.SecurityConfig{}, eng, nil)
 
 	req := &inference.Request{
 		ProjectID: "test",
@@ -354,7 +354,7 @@ func TestBasicPolicy_PIIEntities_IBANEnabledTriggers(t *testing.T) {
 		},
 	}
 	eng := intel.NewRegexBundle(pc)
-	p := NewBasic(pc, eng)
+	p := NewBasic(pc, config.SecurityConfig{}, eng, nil)
 
 	req := &inference.Request{
 		ProjectID: "test",

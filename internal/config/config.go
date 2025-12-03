@@ -15,6 +15,7 @@ type Config struct {
 	Logging         LoggingConfig             `yaml:"logging"`
 	Policy          PolicyConfig              `yaml:"policy"`
 	Intelligence    IntelligenceConfig        `yaml:"intelligence"`
+	Security        SecurityConfig            `yaml:"security"`
 }
 
 type ServerConfig struct {
@@ -89,6 +90,165 @@ func (c IntelligenceConfig) IsZero() bool {
 		c.UpdateCheckInterval == ""
 }
 
+func (c SecurityConfig) isZero() bool {
+	return c == (SecurityConfig{})
+}
+
+func defaultSecurityConfig() SecurityConfig {
+	return SecurityConfig{
+		Enabled:   true,
+		BundleDir: "./intel/strajaguard_v1",
+		SeqLen:    256,
+		PromptInj: SecurityCategoryConfig{
+			RegexEnabled:     true,
+			MLEnabled:        true,
+			MLWarnThreshold:  0.60,
+			MLBlockThreshold: 0.80,
+			ActionOnBlock:    "block",
+		},
+		Jailbreak: SecurityCategoryConfig{
+			RegexEnabled:     true,
+			MLEnabled:        true,
+			MLWarnThreshold:  0.60,
+			MLBlockThreshold: 0.80,
+			ActionOnBlock:    "block",
+		},
+		DataExfil: SecurityCategoryConfig{
+			RegexEnabled:     true,
+			MLEnabled:        true,
+			MLWarnThreshold:  0.55,
+			MLBlockThreshold: 0.75,
+			ActionOnBlock:    "block",
+		},
+		PII: PIICategoryConfig{
+			RegexEnabled:     true,
+			MLEnabled:        true,
+			MLWarnThreshold:  0.50,
+			ActionOnRegexHit: "redact",
+			ActionOnMLOnly:   "log",
+		},
+		Secrets: SecretsCategoryConfig{
+			RegexEnabled:     true,
+			MLEnabled:        true,
+			MLWarnThreshold:  0.50,
+			MLBlockThreshold: 0.85,
+			ActionOnRegexHit: "block_and_redact",
+			ActionOnMLOnly:   "log",
+		},
+	}
+}
+
+func (c *SecurityConfig) applyDefaults() {
+	def := defaultSecurityConfig()
+
+	if c.BundleDir == "" {
+		c.BundleDir = def.BundleDir
+	}
+	if c.SeqLen == 0 {
+		c.SeqLen = def.SeqLen
+	}
+	if c.PromptInj == (SecurityCategoryConfig{}) {
+		c.PromptInj = def.PromptInj
+	} else {
+		applyCategoryDefaults(&c.PromptInj, def.PromptInj)
+	}
+	if c.Jailbreak == (SecurityCategoryConfig{}) {
+		c.Jailbreak = def.Jailbreak
+	} else {
+		applyCategoryDefaults(&c.Jailbreak, def.Jailbreak)
+	}
+	if c.DataExfil == (SecurityCategoryConfig{}) {
+		c.DataExfil = def.DataExfil
+	} else {
+		applyCategoryDefaults(&c.DataExfil, def.DataExfil)
+	}
+	if c.PII == (PIICategoryConfig{}) {
+		c.PII = def.PII
+	} else {
+		if c.PII.MLWarnThreshold == 0 {
+			c.PII.MLWarnThreshold = def.PII.MLWarnThreshold
+		}
+		if c.PII.ActionOnRegexHit == "" {
+			c.PII.ActionOnRegexHit = def.PII.ActionOnRegexHit
+		}
+		if c.PII.ActionOnMLOnly == "" {
+			c.PII.ActionOnMLOnly = def.PII.ActionOnMLOnly
+		}
+	}
+	if c.Secrets == (SecretsCategoryConfig{}) {
+		c.Secrets = def.Secrets
+	} else {
+		if c.Secrets.MLWarnThreshold == 0 {
+			c.Secrets.MLWarnThreshold = def.Secrets.MLWarnThreshold
+		}
+		if c.Secrets.MLBlockThreshold == 0 {
+			c.Secrets.MLBlockThreshold = def.Secrets.MLBlockThreshold
+		}
+		if c.Secrets.ActionOnRegexHit == "" {
+			c.Secrets.ActionOnRegexHit = def.Secrets.ActionOnRegexHit
+		}
+		if c.Secrets.ActionOnMLOnly == "" {
+			c.Secrets.ActionOnMLOnly = def.Secrets.ActionOnMLOnly
+		}
+	}
+}
+
+func applyCategoryDefaults(cfg *SecurityCategoryConfig, def SecurityCategoryConfig) {
+	if cfg.MLWarnThreshold == 0 {
+		cfg.MLWarnThreshold = def.MLWarnThreshold
+	}
+	if cfg.MLBlockThreshold == 0 {
+		cfg.MLBlockThreshold = def.MLBlockThreshold
+	}
+	if cfg.ActionOnBlock == "" {
+		cfg.ActionOnBlock = def.ActionOnBlock
+	}
+	if cfg.ActionOnRegexHit == "" {
+		cfg.ActionOnRegexHit = def.ActionOnRegexHit
+	}
+}
+
+// SecurityConfig configures the ML + regex security layers.
+type SecurityConfig struct {
+	Enabled   bool                   `yaml:"enabled"`
+	BundleDir string                 `yaml:"bundle_dir"`
+	SeqLen    int                    `yaml:"seq_len"`
+	PromptInj SecurityCategoryConfig `yaml:"prompt_injection"`
+	Jailbreak SecurityCategoryConfig `yaml:"jailbreak"`
+	DataExfil SecurityCategoryConfig `yaml:"data_exfil"`
+	PII       PIICategoryConfig      `yaml:"pii"`
+	Secrets   SecretsCategoryConfig  `yaml:"secrets"`
+}
+
+// SecurityCategoryConfig is used for threat-style categories (prompt injection, jailbreak, exfil).
+type SecurityCategoryConfig struct {
+	RegexEnabled     bool    `yaml:"regex_enabled"`
+	MLEnabled        bool    `yaml:"ml_enabled"`
+	MLWarnThreshold  float32 `yaml:"ml_warn_threshold"`
+	MLBlockThreshold float32 `yaml:"ml_block_threshold"`
+	ActionOnBlock    string  `yaml:"action_on_block"`
+	ActionOnRegexHit string  `yaml:"action_on_regex_hit,omitempty"`
+}
+
+// PIICategoryConfig controls how PII signals are handled.
+type PIICategoryConfig struct {
+	RegexEnabled     bool    `yaml:"regex_enabled"`
+	MLEnabled        bool    `yaml:"ml_enabled"`
+	MLWarnThreshold  float32 `yaml:"ml_warn_threshold"`
+	ActionOnRegexHit string  `yaml:"action_on_regex_hit"`
+	ActionOnMLOnly   string  `yaml:"action_on_ml_only"`
+}
+
+// SecretsCategoryConfig controls secret-related signals.
+type SecretsCategoryConfig struct {
+	RegexEnabled     bool    `yaml:"regex_enabled"`
+	MLEnabled        bool    `yaml:"ml_enabled"`
+	MLWarnThreshold  float32 `yaml:"ml_warn_threshold"`
+	MLBlockThreshold float32 `yaml:"ml_block_threshold"`
+	ActionOnRegexHit string  `yaml:"action_on_regex_hit"`
+	ActionOnMLOnly   string  `yaml:"action_on_ml_only"`
+}
+
 // Load reads configuration from a YAML file.
 // If the file doesn't exist, it returns a default config and no error.
 func Load(path string) (*Config, error) {
@@ -137,6 +297,7 @@ func defaultConfig() *Config {
 			AutoUpdate:          true,
 			UpdateCheckInterval: "6h",
 		},
+		Security: defaultSecurityConfig(),
 	}
 }
 
@@ -214,5 +375,12 @@ func applyDefaults(cfg *Config) {
 		if cfg.Intelligence.UpdateCheckInterval == "" {
 			cfg.Intelligence.UpdateCheckInterval = "6h"
 		}
+	}
+
+	// Security defaults
+	if cfg.Security.isZero() {
+		cfg.Security = defaultSecurityConfig()
+	} else {
+		cfg.Security.applyDefaults()
 	}
 }

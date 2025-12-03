@@ -54,3 +54,39 @@ intelligence:
   license_key_env: "STRAJA_LICENSE_KEY"
   auto_update: true
   update_check_interval: "6h"
+
+security:
+  enabled: true
+  bundle_dir: "./intel/strajaguard_v1"
+  seq_len: 256
+  prompt_injection:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.6
+    ml_block_threshold: 0.8
+    action_on_block: "block"
+  jailbreak:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.6
+    ml_block_threshold: 0.8
+    action_on_block: "block"
+  data_exfil:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.55
+    ml_block_threshold: 0.75
+    action_on_block: "block"
+  pii:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.5
+    action_on_regex_hit: "redact"
+    action_on_ml_only: "log"
+  secrets:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.5
+    ml_block_threshold: 0.85
+    action_on_regex_hit: "block_and_redact"
+    action_on_ml_only: "log"

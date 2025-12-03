@@ -56,7 +56,7 @@ func TestValidateLicenseOnline_NonOKDisablesIntel(t *testing.T) {
 		licenseClaims: &license.LicenseClaims{},
 		intelStatus:   "enabled",
 		intelEnabled:  true,
-		policy:        policy.NewBasic(config.PolicyConfig{}, intel.NewNoop()),
+		policy:        policy.NewBasic(config.PolicyConfig{}, config.SecurityConfig{}, intel.NewNoop(), nil),
 		httpClient:    fakeHTTPClient(`{"status":"revoked","message":"Revoked"}`),
 	}
 

@@ -22,6 +22,7 @@ import (
 	"github.com/straja-ai/straja/internal/license"
 	"github.com/straja-ai/straja/internal/policy"
 	"github.com/straja-ai/straja/internal/provider"
+	"github.com/straja-ai/straja/internal/strajaguard"
 )
 
 // Server wraps the HTTP server components for Straja.
@@ -200,8 +201,19 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		}
 	}
 
+	// Build StrajaGuard model (optional)
+	var sgModel *strajaguard.StrajaGuardModel
+	if cfg.Security.Enabled {
+		model, err := strajaguard.LoadModel(cfg.Security.BundleDir, cfg.Security.SeqLen)
+		if err != nil {
+			log.Printf("strajaguard load failed: %v; StrajaGuard ML disabled (running regex-only). To enable, ensure ONNX Runtime is installed and the model exists at %s/strajaguard_v1.onnx[.data]. See README -> \"StrajaGuard ML dependency\".", err, cfg.Security.BundleDir)
+		} else {
+			sgModel = model
+		}
+	}
+
 	// Build policy engine (consumes intelEngine)
-	pol := policy.NewBasic(cfg.Policy, intelEngine)
+	pol := policy.NewBasic(cfg.Policy, cfg.Security, intelEngine, sgModel)
 
 	// Build providers
 	provs, provErr := buildProviderRegistry(cfg)
@@ -335,7 +347,7 @@ func (s *Server) disableIntelligence(reason string) {
 	log.Printf("disabling intelligence: %s", reason)
 	s.intelEnabled = false
 	s.licenseClaims = nil
-	s.policy = policy.NewBasic(s.cfg.Policy, intel.NewNoop())
+	s.policy = policy.NewBasic(s.cfg.Policy, s.cfg.Security, intel.NewNoop(), nil)
 	s.intelStatus = "disabled_license_invalid"
 }
 
@@ -586,6 +598,29 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 
 	promptPreview, completionPreview := s.buildPreviews(req, resp)
 
+	var policyDecisions []activation.PolicyDecision
+	for _, hit := range req.PolicyDecisions {
+		policyDecisions = append(policyDecisions, activation.PolicyDecision{
+			Category:   hit.Category,
+			Action:     hit.Action,
+			Confidence: hit.Confidence,
+			Sources:    append([]string(nil), hit.Sources...),
+		})
+	}
+
+	var sgPayload *activation.StrajaGuardPayload
+	if len(req.SecurityScores) > 0 || len(req.SecurityFlags) > 0 {
+		scores := make(map[string]float32, len(req.SecurityScores))
+		for k, v := range req.SecurityScores {
+			scores[k] = v
+		}
+		sgPayload = &activation.StrajaGuardPayload{
+			Model:  "strajaguard_v1",
+			Scores: scores,
+			Flags:  append([]string(nil), req.SecurityFlags...),
+		}
+	}
+
 	ev := &activation.Event{
 		Timestamp:         time.Now().UTC(),
 		ProjectID:         req.ProjectID,
@@ -596,6 +631,8 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 		CompletionPreview: completionPreview,
 		PolicyHits:        append([]string(nil), req.PolicyHits...),
 		IntelStatus:       s.intelStatus,
+		PolicyDecisions:   policyDecisions,
+		StrajaGuard:       sgPayload,
 	}
 
 	// Emit via configured emitter (stdout, later webhooks, etc.)
