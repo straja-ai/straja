@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,6 +17,22 @@ type Config struct {
 	Policy          PolicyConfig              `yaml:"policy"`
 	Intelligence    IntelligenceConfig        `yaml:"intelligence"`
 	Security        SecurityConfig            `yaml:"security"`
+	Intel           IntelConfig               `yaml:"intel"`
+}
+
+// IntelConfig holds ML bundle + license settings.
+type IntelConfig struct {
+	StrajaGuardV1 StrajaGuardV1Config `yaml:"strajaguard_v1"`
+}
+
+// StrajaGuardV1Config controls StrajaGuard bundle fetching + validation.
+type StrajaGuardV1Config struct {
+	Enabled               bool   `yaml:"enabled"`
+	LicenseServerBaseURL  string `yaml:"license_server_base_url"`
+	LicenseKey            string `yaml:"license_key"`
+	RequestTimeoutSeconds int    `yaml:"request_timeout_seconds"`
+	IntelDir              string `yaml:"intel_dir"`
+	VersionFile           string `yaml:"version_file"`
 }
 
 type ServerConfig struct {
@@ -261,14 +278,14 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	cfg := defaultConfig()
+	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
 
-	applyDefaults(&cfg)
+	applyDefaults(cfg)
 
-	return &cfg, nil
+	return cfg, nil
 }
 
 func defaultConfig() *Config {
@@ -297,6 +314,7 @@ func defaultConfig() *Config {
 			AutoUpdate:          true,
 			UpdateCheckInterval: "6h",
 		},
+		Intel:    defaultIntelConfig(),
 		Security: defaultSecurityConfig(),
 	}
 }
@@ -382,5 +400,51 @@ func applyDefaults(cfg *Config) {
 		cfg.Security = defaultSecurityConfig()
 	} else {
 		cfg.Security.applyDefaults()
+	}
+
+	// Intel defaults (bundle + license flow)
+	if cfg.Intel == (IntelConfig{}) {
+		cfg.Intel = defaultIntelConfig()
+	} else {
+		cfg.Intel.applyDefaults()
+	}
+
+	// Align bundle dir with intel dir if user omitted bundle_dir.
+	if cfg.Security.BundleDir == "" && cfg.Intel.StrajaGuardV1.IntelDir != "" {
+		cfg.Security.BundleDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, "strajaguard_v1")
+	}
+}
+
+func defaultIntelConfig() IntelConfig {
+	return IntelConfig{
+		StrajaGuardV1: StrajaGuardV1Config{
+			Enabled:               true,
+			LicenseServerBaseURL:  "https://straja.ai",
+			RequestTimeoutSeconds: 60,
+			IntelDir:              "./intel",
+			VersionFile:           "version",
+		},
+	}
+}
+
+func (c *IntelConfig) applyDefaults() {
+	def := defaultIntelConfig()
+
+	if c.StrajaGuardV1 == (StrajaGuardV1Config{}) {
+		c.StrajaGuardV1 = def.StrajaGuardV1
+		return
+	}
+
+	if c.StrajaGuardV1.LicenseServerBaseURL == "" {
+		c.StrajaGuardV1.LicenseServerBaseURL = def.StrajaGuardV1.LicenseServerBaseURL
+	}
+	if c.StrajaGuardV1.RequestTimeoutSeconds == 0 {
+		c.StrajaGuardV1.RequestTimeoutSeconds = def.StrajaGuardV1.RequestTimeoutSeconds
+	}
+	if c.StrajaGuardV1.IntelDir == "" {
+		c.StrajaGuardV1.IntelDir = def.StrajaGuardV1.IntelDir
+	}
+	if c.StrajaGuardV1.VersionFile == "" {
+		c.StrajaGuardV1.VersionFile = def.StrajaGuardV1.VersionFile
 	}
 }
