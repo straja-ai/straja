@@ -203,7 +203,10 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	}
 
 	// Build StrajaGuard model (optional)
-	var sgModel *strajaguard.StrajaGuardModel
+	var (
+		sgModel             *strajaguard.StrajaGuardModel
+		activeBundleVersion string
+	)
 	strajaGuardDir := cfg.Security.BundleDir
 	if cfg.Intel.StrajaGuardV1.IntelDir != "" {
 		strajaGuardDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, "strajaguard_v1")
@@ -215,6 +218,8 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	} else if !cfg.Intel.StrajaGuardV1.Enabled {
 		log.Printf("strajaguard disabled via intel config; running regex-only")
 	} else {
+		allowRegexOnly := cfg.Intel.StrajaGuardV1.AllowRegexOnly
+		updateOnStart := cfg.Intel.StrajaGuardV1.UpdateOnStart
 		sgLicenseKey := strings.TrimSpace(cfg.Intel.StrajaGuardV1.LicenseKey)
 		if envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv); envName != "" {
 			if envVal := strings.TrimSpace(os.Getenv(envName)); envVal != "" {
@@ -229,45 +234,107 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 			log.Printf("strajaguard license key not provided; running regex-only")
 		} else {
 			ctx := context.Background()
-			currentVersion, err := strajaguard.ReadLocalBundleVersion(strajaGuardDir, cfg.Intel.StrajaGuardV1.VersionFile)
-			hasBundle := false
-			if err == nil {
-				hasBundle = strajaguard.BundleFilesPresent(strajaGuardDir)
-				log.Printf("strajaguard local bundle version=%s present=%t", currentVersion, hasBundle)
-			} else if !os.IsNotExist(err) {
-				log.Printf("strajaguard read local version failed: %v", err)
-				hasBundle = strajaguard.BundleFilesPresent(strajaGuardDir)
-			}
-
-			valRes, err := strajaguard.ValidateLicense(ctx, cfg.Intel.StrajaGuardV1.LicenseServerBaseURL, sgLicenseKey, currentVersion, cfg.Intel.StrajaGuardV1.RequestTimeoutSeconds)
-			if err != nil {
-				log.Printf("strajaguard license validation failed: %v; StrajaGuard ML disabled (running regex-only)", err)
-			} else {
-				log.Printf("strajaguard license validation succeeded: latest=%s bundle.version=%s manifest=%s", valRes.LatestVersion, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL)
-				needDownload := valRes.BundleInfo.Version != currentVersion || !hasBundle
-				if !needDownload {
-					log.Printf("strajaguard bundle up-to-date; skipping download (version=%s)", currentVersion)
+			if err := os.MkdirAll(strajaGuardDir, 0o755); err != nil {
+				if allowRegexOnly {
+					log.Printf("strajaguard: cannot create bundle dir %s: %v; running regex-only", strajaGuardDir, err)
+				} else {
+					log.Fatalf("strajaguard: cannot create bundle dir %s: %v", strajaGuardDir, err)
 				}
-				if needDownload {
-					if err := strajaguard.DownloadAndInstallStrajaGuardBundle(ctx, strajaGuardDir, valRes.BundleInfo, valRes.BundleToken, cfg.Intel.StrajaGuardV1.VersionFile, cfg.Intel.StrajaGuardV1.RequestTimeoutSeconds); err != nil {
-						if hasBundle {
-							log.Printf("strajaguard bundle update failed (continuing with existing bundle %s): %v", currentVersion, err)
+			} else {
+				state := strajaguard.BundleState{}
+				skipLicense := false
+
+				loadedState, err := strajaguard.LoadBundleState(strajaGuardDir)
+				if err == nil {
+					state = loadedState
+					if strings.TrimSpace(state.CurrentVersion) != "" {
+						versionDir := filepath.Join(strajaGuardDir, state.CurrentVersion)
+						if _, statErr := os.Stat(versionDir); statErr == nil {
+							log.Printf("strajaguard: loading existing bundle current_version=%s", state.CurrentVersion)
+							model, loadErr := strajaguard.LoadModel(versionDir, cfg.Security.SeqLen)
+							if loadErr != nil {
+								if allowRegexOnly {
+									log.Printf("strajaguard: failed to load existing bundle version=%s: %v; running regex-only (skipping startup download)", state.CurrentVersion, loadErr)
+									skipLicense = true
+								} else {
+									log.Fatalf("strajaguard: failed to load existing bundle version=%s: %v", state.CurrentVersion, loadErr)
+								}
+							} else {
+								sgModel = model
+								activeBundleVersion = state.CurrentVersion
+							}
 						} else {
-							log.Printf("strajaguard bundle download failed: %v; StrajaGuard ML disabled (running regex-only)", err)
+							log.Printf("strajaguard: state current_version=%s but directory missing; will fetch version from license server", state.CurrentVersion)
 						}
 					} else {
-						hasBundle = true
-						currentVersion = valRes.BundleInfo.Version
-						log.Printf("strajaguard bundle %s installed", currentVersion)
+						log.Printf("strajaguard: no current_version in state; will fetch version from license server")
 					}
+				} else if errors.Is(err, strajaguard.ErrBundleStateNotFound) {
+					log.Printf("strajaguard: no existing bundle; will fetch version from license server")
+				} else {
+					log.Printf("strajaguard: load bundle state failed: %v; treating as fresh install", err)
 				}
 
-				if hasBundle {
-					model, err := strajaguard.LoadModel(strajaGuardDir, cfg.Security.SeqLen)
+				if !skipLicense {
+					valRes, err := strajaguard.ValidateLicense(ctx, cfg.Intel.StrajaGuardV1.LicenseServerBaseURL, sgLicenseKey, state.CurrentVersion, cfg.Intel.StrajaGuardV1.RequestTimeoutSeconds)
 					if err != nil {
-						log.Printf("strajaguard load failed: %v; StrajaGuard ML disabled (running regex-only). To enable, ensure ONNX Runtime is installed and the model exists at %s/strajaguard_v1.onnx[.data].", err, strajaGuardDir)
+						if sgModel != nil {
+							log.Printf("strajaguard: license validate failed: %v; continuing with existing bundle current_version=%s", err, activeBundleVersion)
+						} else if allowRegexOnly {
+							log.Printf("strajaguard: license validate failed and no active bundle: %v; running regex-only", err)
+						} else {
+							log.Fatalf("strajaguard: license validate failed and no active bundle: %v", err)
+						}
 					} else {
-						sgModel = model
+						log.Printf("strajaguard: license validate returned version=%s update_available=%t", valRes.BundleInfo.Version, valRes.BundleInfo.UpdateAvailable)
+						currentVersion := strings.TrimSpace(state.CurrentVersion)
+
+						// Fresh install: no current bundle on disk.
+						if currentVersion == "" {
+							dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.RequestTimeoutSeconds)
+							if err != nil {
+								if allowRegexOnly {
+									log.Printf("strajaguard: bundle version=%s verification failed: %v; running regex-only", valRes.BundleInfo.Version, err)
+								} else {
+									log.Fatalf("strajaguard: bundle version=%s verification failed: %v", valRes.BundleInfo.Version, err)
+								}
+							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen); loadErr != nil {
+								if allowRegexOnly {
+									log.Printf("strajaguard: bundle version=%s downloaded but failed to load: %v; running regex-only", valRes.BundleInfo.Version, loadErr)
+								} else {
+									log.Fatalf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
+								}
+							} else {
+								state.PreviousVersion = ""
+								state.CurrentVersion = valRes.BundleInfo.Version
+								if err := strajaguard.SaveBundleState(strajaGuardDir, state); err != nil {
+									log.Printf("strajaguard: failed to save bundle state for version=%s: %v", state.CurrentVersion, err)
+								} else {
+									sgModel = model
+									activeBundleVersion = state.CurrentVersion
+									log.Printf("strajaguard: bundle version=%s verified and activated; previous_version=%s", state.CurrentVersion, state.PreviousVersion)
+								}
+							}
+						} else if updateOnStart && valRes.BundleInfo.UpdateAvailable && valRes.BundleInfo.Version != currentVersion {
+							dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.RequestTimeoutSeconds)
+							if err != nil {
+								log.Printf("strajaguard: bundle version=%s verification failed: %v; keeping current_version=%s", valRes.BundleInfo.Version, err, currentVersion)
+							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen); loadErr != nil {
+								log.Printf("strajaguard: bundle version=%s installed but failed to load: %v; keeping current_version=%s", valRes.BundleInfo.Version, loadErr, currentVersion)
+							} else {
+								state.PreviousVersion = currentVersion
+								state.CurrentVersion = valRes.BundleInfo.Version
+								if err := strajaguard.SaveBundleState(strajaGuardDir, state); err != nil {
+									log.Printf("strajaguard: failed to save bundle state for version=%s: %v; keeping current_version=%s", state.CurrentVersion, err, currentVersion)
+								} else {
+									sgModel = model
+									activeBundleVersion = state.CurrentVersion
+									log.Printf("strajaguard: bundle version=%s verified and activated; previous_version=%s", state.CurrentVersion, state.PreviousVersion)
+								}
+							}
+						} else if valRes.BundleInfo.UpdateAvailable && !updateOnStart {
+							log.Printf("strajaguard: update available version=%s but STRAJA_UPDATE_ON_START is disabled; continuing with current_version=%s", valRes.BundleInfo.Version, currentVersion)
+						}
 					}
 				}
 			}

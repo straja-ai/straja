@@ -25,10 +25,11 @@ const manifestPublicKeyBase64 = "dVGYro4CAM0jPHlI/4p8y+7Azmf7h0NNpxTsEvPnVC4="
 
 // BundleInfo contains download URLs for a StrajaGuard bundle.
 type BundleInfo struct {
-	Version      string `json:"version"`
-	ManifestURL  string `json:"manifest_url"`
-	SignatureURL string `json:"signature_url"`
-	FileBaseURL  string `json:"file_base_url"`
+	Version         string `json:"version"`
+	ManifestURL     string `json:"manifest_url"`
+	SignatureURL    string `json:"signature_url"`
+	FileBaseURL     string `json:"file_base_url"`
+	UpdateAvailable bool   `json:"update_available"`
 }
 
 // ManifestFile describes one file entry in manifest.json.

@@ -1,0 +1,5 @@
+./server.go
+./auth_header_test.go
+./chat_handler_test.go
+./normalize_test.go
+./server_license_test.go

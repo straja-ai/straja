@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,6 +35,8 @@ type StrajaGuardV1Config struct {
 	RequestTimeoutSeconds int    `yaml:"request_timeout_seconds"`
 	IntelDir              string `yaml:"intel_dir"`
 	VersionFile           string `yaml:"version_file"`
+	AllowRegexOnly        bool   `yaml:"allow_regex_only"`
+	UpdateOnStart         bool   `yaml:"update_on_start"`
 }
 
 type ServerConfig struct {
@@ -423,6 +427,8 @@ func defaultIntelConfig() IntelConfig {
 			RequestTimeoutSeconds: 60,
 			IntelDir:              "./intel",
 			VersionFile:           "version",
+			AllowRegexOnly:        false,
+			UpdateOnStart:         true,
 		},
 	}
 }
@@ -447,4 +453,22 @@ func (c *IntelConfig) applyDefaults() {
 	if c.StrajaGuardV1.VersionFile == "" {
 		c.StrajaGuardV1.VersionFile = def.StrajaGuardV1.VersionFile
 	}
+	if envVal, ok := envBool("STRAJA_ALLOW_REGEX_ONLY"); ok {
+		c.StrajaGuardV1.AllowRegexOnly = envVal
+	}
+	if envVal, ok := envBool("STRAJA_UPDATE_ON_START"); ok {
+		c.StrajaGuardV1.UpdateOnStart = envVal
+	}
+}
+
+func envBool(name string) (bool, bool) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return false, false
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, false
+	}
+	return v, true
 }

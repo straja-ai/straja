@@ -1,0 +1,125 @@
+package strajaguard
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+func bundleDirLooksValid(dir string) bool {
+	required := []string{
+		"manifest.json",
+		"manifest.sig",
+		"strajaguard_v1.onnx",
+		"label_map.json",
+		"thresholds.yaml",
+		filepath.Join("tokenizer", "vocab.txt"),
+	}
+	for _, p := range required {
+		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// EnsureStrajaGuardVersion downloads, verifies, and activates a version under baseDir/version.
+func EnsureStrajaGuardVersion(ctx context.Context, baseDir, version, manifestURL, signatureURL, fileBaseURL, token string, timeoutSeconds int) (string, error) {
+	baseDir = strings.TrimSpace(baseDir)
+	version = strings.TrimSpace(version)
+	if baseDir == "" {
+		return "", errors.New("baseDir is empty")
+	}
+	if version == "" {
+		return "", errors.New("version is empty")
+	}
+	if token = strings.TrimSpace(token); token == "" {
+		return "", errors.New("bundle token is empty")
+	}
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 60
+	}
+
+	finalDir := filepath.Join(baseDir, version)
+	if bundleDirLooksValid(finalDir) {
+		return finalDir, nil
+	}
+
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return "", fmt.Errorf("create bundle base dir: %w", err)
+	}
+
+	tmpDir, err := os.MkdirTemp(baseDir, version+".tmp-*")
+	if err != nil {
+		return "", fmt.Errorf("create temp dir: %w", err)
+	}
+
+	success := false
+	defer func() {
+		if !success {
+			os.RemoveAll(tmpDir)
+		}
+	}()
+
+	log.Printf("strajaguard: downloading bundle version=%s into tempDir=%s", version, tmpDir)
+
+	client := &http.Client{Timeout: time.Duration(timeoutSeconds) * time.Second}
+	pk, err := manifestPublicKey()
+	if err != nil {
+		return "", fmt.Errorf("load manifest public key: %w", err)
+	}
+
+	manifestBytes, manifest, err := downloadManifest(ctx, client, strings.TrimSpace(manifestURL), token)
+	if err != nil {
+		return "", err
+	}
+
+	sigEncoded, sigAlgorithm, sigRawBytes, err := downloadSignature(ctx, client, strings.TrimSpace(signatureURL), token)
+	if err != nil {
+		return "", err
+	}
+
+	if err := verifyManifest(manifestBytes, manifest.Version, manifestURL, sigEncoded, sigAlgorithm, pk); err != nil {
+		return "", err
+	}
+
+	if manifest.Version != version {
+		return "", fmt.Errorf("manifest version mismatch: expected %s, got %s", version, manifest.Version)
+	}
+
+	if err := downloadBundleFiles(ctx, client, tmpDir, manifest.Files, strings.TrimSpace(fileBaseURL), token); err != nil {
+		return "", err
+	}
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "manifest.json"), manifestBytes, 0o644); err != nil {
+		return "", fmt.Errorf("write manifest: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "manifest.sig"), sigRawBytes, 0o644); err != nil {
+		return "", fmt.Errorf("write manifest signature: %w", err)
+	}
+
+	backupDir := finalDir + ".bak"
+	if _, err := os.Stat(finalDir); err == nil {
+		_ = os.RemoveAll(backupDir)
+		if err := os.Rename(finalDir, backupDir); err != nil {
+			return "", fmt.Errorf("prepare existing bundle for replacement: %w", err)
+		}
+	}
+
+	if err := os.Rename(tmpDir, finalDir); err != nil {
+		if _, statErr := os.Stat(backupDir); statErr == nil {
+			_ = os.Rename(backupDir, finalDir)
+		}
+		return "", fmt.Errorf("activate bundle: %w", err)
+	}
+
+	_ = os.RemoveAll(backupDir)
+	success = true
+	return finalDir, nil
+}

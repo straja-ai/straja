@@ -1,0 +1,6 @@
+_cgo_gotypes.go
+legacy_code.cgo1.go
+onnxruntime_go.cgo1.go
+setup_env.cgo1.go
+tensor_type_constraints.cgo1.go
+_cgo_import.go
