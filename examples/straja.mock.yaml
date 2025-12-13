@@ -1,0 +1,73 @@
+server:
+  addr: ":8080"
+  upstream_timeout: "30s"
+
+default_provider: "mock_provider"
+
+providers:
+  mock_provider:
+    type: "mock"
+    base_url: "http://127.0.0.1:18080"
+    # Mock server env knobs:
+    MOCK_DELAY_MS: 0
+    MOCK_PROVIDER_PORT: 18080
+
+projects:
+  - id: "mock"
+    provider: "mock_provider"
+    api_keys:
+      - "mock-api-key"
+
+logging:
+  activation_level: "metadata"
+
+policy:
+  banned_words: "log"
+  pii: "log"
+  injection: "block"
+  prompt_injection: "block"
+  jailbreak: "block"
+  toxicity: "log"
+
+intel:
+  strajaguard_v1:
+    enabled: true
+    allow_regex_only: true
+    require_ml: false
+
+security:
+  enabled: true
+  bundle_dir: "./intel/strajaguard_v1"
+  seq_len: 256
+  prompt_injection:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.6
+    ml_block_threshold: 0.8
+    action_on_block: "block"
+  jailbreak:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.6
+    ml_block_threshold: 0.8
+    action_on_block: "block"
+  data_exfil:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.55
+    ml_block_threshold: 0.75
+    action_on_block: "block"
+  pii:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.5
+    action_on_regex_hit: "redact"
+    action_on_ml_only: "log"
+  secrets:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.5
+    ml_block_threshold: 0.85
+    action_on_regex_hit: "block_and_redact"
+    action_on_ml_only: "log"
+

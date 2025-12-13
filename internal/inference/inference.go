@@ -1,6 +1,10 @@
 package inference
 
-import "github.com/straja-ai/straja/internal/safety"
+import (
+	"time"
+
+	"github.com/straja-ai/straja/internal/safety"
+)
 
 // Message is a normalized representation of a chat message.
 type Message struct {
@@ -14,6 +18,8 @@ type Request struct {
 	Model     string
 	UserID    string
 	Messages  []Message
+	// Timings captures per-stage latency for debugging/observability.
+	Timings *Timings
 	// PolicyHits captures which policy categories triggered for this request,
 	// e.g. ["pii", "injection", "prompt_injection", "output_redaction"].
 	PolicyHits []string
@@ -39,4 +45,12 @@ type Usage struct {
 type Response struct {
 	Message Message
 	Usage   Usage
+}
+
+// Timings holds latency measurements for key stages of request processing.
+type Timings struct {
+	PrePolicy   time.Duration
+	Provider    time.Duration
+	PostPolicy  time.Duration
+	StrajaGuard time.Duration
 }

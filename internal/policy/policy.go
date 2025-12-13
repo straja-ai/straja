@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/inference"
@@ -146,12 +147,23 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 
 	// Run StrajaGuard if available.
 	if p.securityCfg.Enabled && p.sg != nil {
+		sgStart := time.Now()
 		if res, evalErr := p.sg.Evaluate(systemPrompt, content); evalErr != nil {
-			log.Printf("strajaguard evaluate failed: %v", evalErr)
+			sgElapsed := time.Since(sgStart)
+			if req.Timings != nil {
+				req.Timings.StrajaGuard += sgElapsed
+			}
+			log.Printf("strajaguard evaluate failed after %s: %v", sgElapsed, evalErr)
 		} else if res != nil {
+			sgElapsed := time.Since(sgStart)
 			req.SecurityScores = res.Scores
 			req.SecurityFlags = res.Flags
 			req.DetectionSignals = append(req.DetectionSignals, detectionSignalsFromML(res, p.securityCfg)...)
+			if req.Timings != nil {
+				req.Timings.StrajaGuard += sgElapsed
+			}
+			log.Printf("debug: strajaguard_inference_ms=%.2f project=%s",
+				float64(sgElapsed.Microseconds())/1000, req.ProjectID)
 		}
 	}
 

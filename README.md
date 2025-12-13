@@ -448,6 +448,18 @@ If you change configuration or policy logic, add/update tests in `internal/polic
 
 ---
 
+## 📈 Load Testing
+
+- Prerequisites: run the gateway locally with a valid `straja.yaml` and API key; enable StrajaGuard ML + bundle for ML runs or set `STRAJA_ALLOW_REGEX_ONLY=true` to force regex-only.
+- Install k6 (e.g., `brew install k6`) and ensure `$PATH` can find it.
+- Run `make loadtest` (uses `tools/loadtest/chat_completion.js`, defaults: `STRAJA_BASE_URL=http://localhost:8080`, `STRAJA_QPS=20`, `STRAJA_DURATION=60s`, `STRAJA_CONCURRENCY=10`); adjust env vars as needed.
+- `make loadtest-ml` reminds you to keep ML enabled; `make loadtest-regex` reminds you to disable ML for comparison.
+- `make loadtest-mock` starts Straja with `examples/straja.mock.yaml` (mock upstream) and runs k6 so you can measure Straja overhead without OpenAI latency; logs go to `/tmp/straja_mock_gateway.log` (set `STRAJA_API_KEY=mock-api-key` for the mock project). Mock latency is configurable via `MOCK_DELAY_MS` (default 50ms).
+- `make loadtest-mock-delay` runs the mock server with a 50ms artificial delay if you want to emulate upstream latency while keeping responses local.
+- Interpret the k6 summary (req/s, latency percentiles, error rate). Compare regex-only vs ML-enabled runs, and mock vs real upstream, to understand the overhead of local inference and provider latency.
+
+---
+
 ## 🗺 Future Roadmap (High-Level)
 
 Planned directions (subject to change):

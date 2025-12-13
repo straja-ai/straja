@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,7 @@ import (
 	"github.com/straja-ai/straja/internal/inference"
 	"github.com/straja-ai/straja/internal/intel"
 	"github.com/straja-ai/straja/internal/license"
+	"github.com/straja-ai/straja/internal/mockprovider"
 	"github.com/straja-ai/straja/internal/policy"
 	"github.com/straja-ai/straja/internal/provider"
 	"github.com/straja-ai/straja/internal/strajaguard"
@@ -117,6 +119,9 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		Model:    reqBody.Model,
 		Messages: reqBody.Messages,
 	})
+	infReq.Timings = &inference.Timings{}
+	decision := "allow"
+	defer logTimingDebug(reqBody.ProjectID, providerName, decision, infReq.Timings)
 
 	ctx := r.Context()
 	if s.cfg.Server.UpstreamTimeout > 0 {
@@ -127,24 +132,45 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Policy + provider + activation, same flow as handleChatCompletions:
 
+	prePolicyStart := time.Now()
 	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
+		if infReq.Timings != nil {
+			infReq.Timings.PrePolicy = time.Since(prePolicyStart)
+		}
+		decision = "blocked_before"
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
 	}
+	if infReq.Timings != nil {
+		infReq.Timings.PrePolicy = time.Since(prePolicyStart)
+	}
 
+	providerStart := time.Now()
 	infResp, err := prov.ChatCompletion(ctx, infReq)
+	if infReq.Timings != nil {
+		infReq.Timings.Provider = time.Since(providerStart)
+	}
 	if err != nil {
 		log.Printf("provider %q error (console): %v", providerName, err)
+		decision = "error_provider"
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
 
+	postPolicyStart := time.Now()
 	if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
+		if infReq.Timings != nil {
+			infReq.Timings.PostPolicy = time.Since(postPolicyStart)
+		}
+		decision = "blocked_after"
 		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
+	}
+	if infReq.Timings != nil {
+		infReq.Timings.PostPolicy = time.Since(postPolicyStart)
 	}
 
 	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
@@ -353,6 +379,19 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 					}
 				}
 			}
+
+			if sgModel != nil {
+				if dur, err := sgModel.Warmup("hello"); err != nil {
+					if mustExit {
+						log.Fatalf("strajaguard: warmup inference failed: %v", err)
+					}
+					log.Printf("strajaguard: warmup inference failed: %v; running regex-only", err)
+					sgModel = nil
+					activeBundleVersion = ""
+				} else {
+					log.Printf("strajaguard: warmup inference ok duration_ms=%.2f", float64(dur.Microseconds())/1000)
+				}
+			}
 		}
 	}
 
@@ -557,6 +596,20 @@ func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, er
 				return nil, fmt.Errorf("provider %q: environment variable %s is empty", name, pcfg.APIKeyEnv)
 			}
 			reg[name] = provider.NewOpenAI(pcfg.BaseURL, apiKey, cfg.Server.UpstreamTimeout, cfg.Server.MaxNonStreamResponseBytes)
+		case "mock":
+			addr := mockHostPortFromBaseURL(pcfg.BaseURL)
+			_, baseURL, err := mockprovider.StartMockProvider(addr)
+			if err != nil {
+				return nil, fmt.Errorf("provider %q: start mock provider: %w", name, err)
+			}
+			if baseURL == "" {
+				baseURL = strings.TrimSpace(pcfg.BaseURL)
+			}
+			if baseURL == "" {
+				baseURL = "http://127.0.0.1:18080"
+			}
+			reg[name] = provider.NewOpenAI(baseURL, os.Getenv(pcfg.APIKeyEnv), cfg.Server.UpstreamTimeout, cfg.Server.MaxNonStreamResponseBytes)
+			log.Printf("provider %q using mock upstream at %s", name, baseURL)
 		default:
 			return nil, fmt.Errorf("provider %q: unsupported type %q", name, pcfg.Type)
 		}
@@ -570,6 +623,22 @@ func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, er
 	}
 
 	return reg, nil
+}
+
+func mockHostPortFromBaseURL(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	if u.Host != "" {
+		return u.Host
+	}
+	return ""
 }
 
 type handlerOptions struct {
@@ -774,28 +843,52 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// 1) Normalize HTTP/OpenAI request → internal inference.Request
 	infReq := normalizeToInferenceRequest(project.ID, &reqBody)
+	infReq.Timings = &inference.Timings{}
+	decision := "allow"
+	defer logTimingDebug(project.ID, providerName, decision, infReq.Timings)
 
 	// 2) Before-model block
+	prePolicyStart := time.Now()
 	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
+		if infReq.Timings != nil {
+			infReq.Timings.PrePolicy = time.Since(prePolicyStart)
+		}
+		decision = "blocked_before"
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
 	}
+	if infReq.Timings != nil {
+		infReq.Timings.PrePolicy = time.Since(prePolicyStart)
+	}
 
 	// 3) Provider error
+	providerStart := time.Now()
 	infResp, err := prov.ChatCompletion(ctx, infReq)
+	if infReq.Timings != nil {
+		infReq.Timings.Provider = time.Since(providerStart)
+	}
 	if err != nil {
 		log.Printf("provider %q error: %v", providerName, err)
+		decision = "error_provider"
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
 
 	// 4) After-model block
+	postPolicyStart := time.Now()
 	if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
+		if infReq.Timings != nil {
+			infReq.Timings.PostPolicy = time.Since(postPolicyStart)
+		}
+		decision = "blocked_after"
 		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
+	}
+	if infReq.Timings != nil {
+		infReq.Timings.PostPolicy = time.Since(postPolicyStart)
 	}
 
 	// 5) Success
@@ -852,6 +945,29 @@ func buildChatCompletionResponse(req *inference.Request, resp *inference.Respons
 		},
 		// SystemFingerprint: nil for now
 	}
+}
+
+func logTimingDebug(projectID, providerName, decision string, t *inference.Timings) {
+	if t == nil {
+		return
+	}
+
+	log.Printf("debug: timings project=%s provider=%s decision=%s pre_policy_ms=%.2f provider_ms=%.2f post_policy_ms=%.2f strajaguard_ms=%.2f",
+		projectID,
+		providerName,
+		decision,
+		durationMs(t.PrePolicy),
+		durationMs(t.Provider),
+		durationMs(t.PostPolicy),
+		durationMs(t.StrajaGuard),
+	)
+}
+
+func durationMs(d time.Duration) float64 {
+	if d <= 0 {
+		return 0
+	}
+	return float64(d.Microseconds()) / 1000
 }
 
 // parseBearerToken extracts the token from an Authorization: Bearer header.

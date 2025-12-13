@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"sync"
+	"time"
 
 	ort "github.com/yalue/onnxruntime_go"
 	"gopkg.in/yaml.v3"
@@ -27,19 +29,22 @@ type StrajaGuardResult struct {
 	Flags  []string           `json:"flags"`
 }
 
-// StrajaGuardModel wraps the ONNX session and tokenizer.
+type sgSession struct {
+	session       *ort.AdvancedSession
+	inputIDs      *ort.Tensor[int64]
+	attentionMask *ort.Tensor[int64]
+	output        *ort.Tensor[float32]
+}
+
+// StrajaGuardModel wraps the ONNX session pool and tokenizer.
 type StrajaGuardModel struct {
-	session    *ort.AdvancedSession
 	tokenizer  *WordPieceTokenizer
 	labels     []string
 	thresholds map[string]LabelThresholds
 	seqLen     int
 
-	inputIDs      *ort.Tensor[int64]
-	attentionMask *ort.Tensor[int64]
-	output        *ort.Tensor[float32]
-
-	mu sync.Mutex
+	sessions chan *sgSession
+	poolSize int
 }
 
 // LoadModel initializes the ONNX session, tokenizer, and thresholds.
@@ -91,65 +96,52 @@ func LoadModel(bundleDir string, seqLen int) (*StrajaGuardModel, error) {
 		return nil, fmt.Errorf("load tokenizer: %w", err)
 	}
 
-	inputShape := ort.NewShape(1, int64(seqLen))
-	inputIDs, err := ort.NewEmptyTensor[int64](inputShape)
-	if err != nil {
-		return nil, fmt.Errorf("allocate input_ids tensor: %w", err)
-	}
-	attnMask, err := ort.NewEmptyTensor[int64](inputShape)
-	if err != nil {
-		return nil, fmt.Errorf("allocate attention_mask tensor: %w", err)
-	}
-	outputShape := ort.NewShape(1, int64(len(labels)))
-	output, err := ort.NewEmptyTensor[float32](outputShape)
-	if err != nil {
-		return nil, fmt.Errorf("allocate output tensor: %w", err)
-	}
-
-	session, err := ort.NewAdvancedSession(
-		modelPath,
-		[]string{"input_ids", "attention_mask"},
-		[]string{"logits"},
-		[]ort.Value{inputIDs, attnMask},
-		[]ort.Value{output},
-		nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create onnx session: %w", err)
+	poolSize := maxSessionsFromEnv()
+	sessions := make(chan *sgSession, poolSize)
+	for i := 0; i < poolSize; i++ {
+		ss, err := newSession(modelPath, seqLen, len(labels))
+		if err != nil {
+			return nil, fmt.Errorf("create onnx session %d/%d: %w", i+1, poolSize, err)
+		}
+		sessions <- ss
 	}
 
 	return &StrajaGuardModel{
-		session:       session,
-		tokenizer:     tokenizer,
-		labels:        labels,
-		thresholds:    th,
-		seqLen:        seqLen,
-		inputIDs:      inputIDs,
-		attentionMask: attnMask,
-		output:        output,
+		tokenizer:  tokenizer,
+		labels:     labels,
+		thresholds: th,
+		seqLen:     seqLen,
+		sessions:   sessions,
+		poolSize:   poolSize,
 	}, nil
 }
 
 // Evaluate runs inference on the combined system + user text.
 func (m *StrajaGuardModel) Evaluate(systemPrompt, userText string) (*StrajaGuardResult, error) {
-	if m == nil || m.session == nil || m.tokenizer == nil {
+	if m == nil || m.tokenizer == nil || m.sessions == nil {
 		return nil, errors.New("straja guard model not initialized")
 	}
+
+	waitStart := time.Now()
+	ss := <-m.sessions
+	waitDur := time.Since(waitStart)
+	defer func() { m.sessions <- ss }()
 
 	combined := buildInputText(systemPrompt, userText)
 	inputIDs, attn := m.tokenizer.Encode(combined, m.seqLen)
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	copy(ss.inputIDs.GetData(), inputIDs)
+	copy(ss.attentionMask.GetData(), attn)
 
-	copy(m.inputIDs.GetData(), inputIDs)
-	copy(m.attentionMask.GetData(), attn)
-
-	if err := m.session.Run(); err != nil {
+	computeStart := time.Now()
+	if err := ss.session.Run(); err != nil {
 		return nil, fmt.Errorf("onnx run: %w", err)
 	}
+	computeDur := time.Since(computeStart)
+	log.Printf("debug: strajaguard_inference wait_ms=%.2f compute_ms=%.2f pool_size=%d",
+		durationMs(waitDur), durationMs(computeDur), m.poolSize)
 
-	raw := m.output.GetData()
+	raw := ss.output.GetData()
 	scores := make(map[string]float32, len(m.labels))
 	flags := []string{}
 
@@ -174,6 +166,19 @@ func (m *StrajaGuardModel) Evaluate(systemPrompt, userText string) (*StrajaGuard
 		Scores: scores,
 		Flags:  flags,
 	}, nil
+}
+
+// Warmup runs a lightweight inference to prime the ONNX runtime and caches.
+func (m *StrajaGuardModel) Warmup(sample string) (time.Duration, error) {
+	if sample == "" {
+		sample = "hello"
+	}
+
+	start := time.Now()
+	if _, err := m.Evaluate("", sample); err != nil {
+		return 0, err
+	}
+	return time.Since(start), nil
 }
 
 func buildInputText(systemPrompt, userText string) string {
@@ -263,4 +268,67 @@ func resolveSharedLibraryPath(bundleDir string) string {
 		}
 	}
 	return ""
+}
+
+func newSession(modelPath string, seqLen, numLabels int) (*sgSession, error) {
+	inputShape := ort.NewShape(1, int64(seqLen))
+	inputIDs, err := ort.NewEmptyTensor[int64](inputShape)
+	if err != nil {
+		return nil, fmt.Errorf("allocate input_ids tensor: %w", err)
+	}
+	attnMask, err := ort.NewEmptyTensor[int64](inputShape)
+	if err != nil {
+		return nil, fmt.Errorf("allocate attention_mask tensor: %w", err)
+	}
+	outputShape := ort.NewShape(1, int64(numLabels))
+	output, err := ort.NewEmptyTensor[float32](outputShape)
+	if err != nil {
+		return nil, fmt.Errorf("allocate output tensor: %w", err)
+	}
+
+	session, err := ort.NewAdvancedSession(
+		modelPath,
+		[]string{"input_ids", "attention_mask"},
+		[]string{"logits"},
+		[]ort.Value{inputIDs, attnMask},
+		[]ort.Value{output},
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create onnx session: %w", err)
+	}
+
+	return &sgSession{
+		session:       session,
+		inputIDs:      inputIDs,
+		attentionMask: attnMask,
+		output:        output,
+	}, nil
+}
+
+func maxSessionsFromEnv() int {
+	def := runtime.NumCPU()
+	if def < 1 {
+		def = 1
+	}
+	if def > 8 {
+		def = 8
+	}
+
+	if val := strings.TrimSpace(os.Getenv("STRAJA_GUARD_MAX_SESSIONS")); val != "" {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			if n > 8 {
+				n = 8
+			}
+			return n
+		}
+	}
+	return def
+}
+
+func durationMs(d time.Duration) float64 {
+	if d <= 0 {
+		return 0
+	}
+	return float64(d.Microseconds()) / 1000
 }
