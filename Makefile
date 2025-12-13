@@ -15,8 +15,10 @@ K6_SCRIPT := tools/loadtest/chat_completion.js
 STRAJA_BASE_URL ?= http://localhost:8080
 MOCK_GATEWAY_LOG := /tmp/straja_mock_gateway.log
 MOCK_GATEWAY_PID := /tmp/straja_mock_gateway.pid
+STRAJAGUARD_ONNX ?= intel/strajaguard_v1/strajaguard_v1.onnx
+BENCH_CONFIG ?= examples/straja.mock.yaml
 
-.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay
+.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard
 
 all: build
 
@@ -82,7 +84,7 @@ loadtest-regex:
 ## Run load test against mock upstream to isolate Straja overhead
 loadtest-mock: build
 	@echo ">> Starting Straja gateway with mock provider (config=examples/straja.mock.yaml)..."
-	@MOCK_DELAY_MS=0 ./bin/straja --config=examples/straja.mock.yaml > $(MOCK_GATEWAY_LOG) 2>&1 & echo $$! > $(MOCK_GATEWAY_PID)
+	@MOCK_DELAY_MS=0 STRAJA_GUARD_MAX_SESSIONS=2 STRAJA_GUARD_INTRA_THREADS=4 STRAJA_GUARD_INTER_THREADS=1 ./bin/straja --config=examples/straja.mock.yaml > $(MOCK_GATEWAY_LOG) 2>&1 & echo $$! > $(MOCK_GATEWAY_PID)
 	@echo ">> Waiting for gateway readiness (logs: $(MOCK_GATEWAY_LOG))..."
 	@attempts=0; \
 	while [ $$attempts -lt 10 ]; do \
@@ -106,7 +108,7 @@ loadtest-mock: build
 ## Run load test against mock upstream with 50ms artificial delay
 loadtest-mock-delay: build
 	@echo ">> Starting Straja gateway with mock provider (delay=50ms, config=examples/straja.mock.yaml)..."
-	@MOCK_DELAY_MS=50 ./bin/straja --config=examples/straja.mock.yaml > $(MOCK_GATEWAY_LOG) 2>&1 & echo $$! > $(MOCK_GATEWAY_PID)
+	@MOCK_DELAY_MS=50 STRAJA_GUARD_MAX_SESSIONS=2 STRAJA_GUARD_INTRA_THREADS=4 STRAJA_GUARD_INTER_THREADS=1 ./bin/straja --config=examples/straja.mock.yaml > $(MOCK_GATEWAY_LOG) 2>&1 & echo $$! > $(MOCK_GATEWAY_PID)
 	@echo ">> Waiting for gateway readiness (logs: $(MOCK_GATEWAY_LOG))..."
 	@attempts=0; \
 	while [ $$attempts -lt 10 ]; do \
@@ -126,3 +128,10 @@ loadtest-mock-delay: build
 	status=$$?; \
 	kill $$(cat $(MOCK_GATEWAY_PID)) >/dev/null 2>&1 || true; \
 	exit $$status
+
+## Build and run StrajaGuard microbenchmark
+bench-strajaguard: build
+	@echo ">> Building StrajaGuard benchmark..."
+	@go build -o bin/straja-bench ./cmd/straja-bench
+	@echo ">> Running StrajaGuard benchmark ($(BENCH_CONFIG))..."
+	@MOCK_DELAY_MS=0 STRAJA_GUARD_MAX_SESSIONS=2 STRAJA_GUARD_INTRA_THREADS=4 STRAJA_GUARD_INTER_THREADS=1 ./bin/straja-bench --config=$(BENCH_CONFIG) --n=200

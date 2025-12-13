@@ -71,3 +71,7 @@ security:
     action_on_regex_hit: "block_and_redact"
     action_on_ml_only: "log"
 
+strajaguard:
+  max_sessions: 2
+  intra_threads: 4
+  inter_threads: 1

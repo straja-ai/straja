@@ -258,6 +258,14 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	} else if !cfg.Intel.StrajaGuardV1.Enabled {
 		log.Printf("strajaguard disabled via intel config; running regex-only")
 	} else {
+		rt := strajaguard.ResolveRuntime(strajaguard.RuntimeConfig{
+			MaxSessions:  cfg.StrajaGuard.MaxSessions,
+			IntraThreads: cfg.StrajaGuard.IntraThreads,
+			InterThreads: cfg.StrajaGuard.InterThreads,
+		})
+		log.Printf("strajaguard runtime: max_sessions=%d intra_threads=%d inter_threads=%d source=max_sessions=%s intra=%s inter=%s",
+			rt.MaxSessions, rt.IntraThreads, rt.InterThreads,
+			rt.MaxSessionsSource, rt.IntraSource, rt.InterSource)
 		allowRegexOnly := cfg.Intel.StrajaGuardV1.AllowRegexOnly
 		updateOnStart := cfg.Intel.StrajaGuardV1.UpdateOnStart
 		requireML := cfg.Intel.StrajaGuardV1.RequireML
@@ -295,7 +303,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 						versionDir := filepath.Join(strajaGuardDir, state.CurrentVersion)
 						if _, statErr := os.Stat(versionDir); statErr == nil {
 							log.Printf("strajaguard: loading existing bundle current_version=%s", state.CurrentVersion)
-							model, loadErr := strajaguard.LoadModel(versionDir, cfg.Security.SeqLen)
+							model, loadErr := strajaguard.LoadModel(versionDir, cfg.Security.SeqLen, rt)
 							if loadErr != nil {
 								if mustExit {
 									log.Fatalf("strajaguard: failed to load existing bundle version=%s: %v", state.CurrentVersion, loadErr)
@@ -340,7 +348,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 									log.Fatalf("strajaguard: bundle version=%s verification failed: %v", valRes.BundleInfo.Version, err)
 								}
 								log.Printf("strajaguard: bundle version=%s verification failed: %v; running regex-only", valRes.BundleInfo.Version, err)
-							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen); loadErr != nil {
+							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt); loadErr != nil {
 								if mustExit {
 									log.Fatalf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
 								}
@@ -354,13 +362,15 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 									sgModel = model
 									activeBundleVersion = state.CurrentVersion
 									log.Printf("strajaguard: bundle version=%s verified and activated; previous_version=%s", state.CurrentVersion, state.PreviousVersion)
+									log.Printf("strajaguard: pool_size=%d intra_threads=%d inter_threads=%d seq_len=%d",
+										sgModel.PoolSize(), sgModel.IntraThreads(), sgModel.InterThreads(), cfg.Security.SeqLen)
 								}
 							}
 						} else if updateOnStart && valRes.BundleInfo.UpdateAvailable && valRes.BundleInfo.Version != currentVersion {
 							dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
 							if err != nil {
 								log.Printf("strajaguard: bundle version=%s verification failed: %v; keeping current_version=%s", valRes.BundleInfo.Version, err, currentVersion)
-							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen); loadErr != nil {
+							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt); loadErr != nil {
 								log.Printf("strajaguard: bundle version=%s installed but failed to load: %v; keeping current_version=%s", valRes.BundleInfo.Version, loadErr, currentVersion)
 							} else {
 								state.PreviousVersion = currentVersion
@@ -371,6 +381,8 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 									sgModel = model
 									activeBundleVersion = state.CurrentVersion
 									log.Printf("strajaguard: bundle version=%s verified and activated; previous_version=%s", state.CurrentVersion, state.PreviousVersion)
+									log.Printf("strajaguard: pool_size=%d intra_threads=%d inter_threads=%d seq_len=%d",
+										sgModel.PoolSize(), sgModel.IntraThreads(), sgModel.InterThreads(), cfg.Security.SeqLen)
 								}
 							}
 						} else if valRes.BundleInfo.UpdateAvailable && !updateOnStart {

@@ -448,6 +448,18 @@ If you change configuration or policy logic, add/update tests in `internal/polic
 
 ---
 
+## ⚡️ StrajaGuard Performance Tuning
+
+- **STRAJA_GUARD_MAX_SESSIONS** – caps concurrent StrajaGuard inference sessions (pool size). More sessions increase concurrency but also CPU/memory contention; too many can hurt p95 latency.
+- **STRAJA_GUARD_INTRA_THREADS** – CPU threads a single inference can use. Higher can reduce single-request latency but reduces how many requests run smoothly in parallel.
+- **STRAJA_GUARD_INTER_THREADS** – inter-op parallelism inside ONNX Runtime. For low-latency, small-batch inference, keep at 1 for stability.
+- **Defaults (balanced start):** `MAX_SESSIONS=2`, `INTRA_THREADS=4`, `INTER_THREADS=1`.
+- **How to tune:** start with defaults → run `make loadtest-mock` to isolate gateway + StrajaGuard → increase `MAX_SESSIONS` slowly until throughput stops improving or p95 worsens → if single-request latency is high, raise `INTRA_THREADS` (expect more contention) → keep `INTER_THREADS=1` unless you have measured reason to change → tune against p95/dropped iterations, not just averages.
+- **Example profiles:** small box (2–4 cores): `MAX_SESSIONS=1–2`, `INTRA_THREADS=2–4`, `INTER_THREADS=1`; mid box (8 cores): `MAX_SESSIONS=2–4`, `INTRA_THREADS=4`, `INTER_THREADS=1`; big box (16–32 cores): `MAX_SESSIONS=4–8`, `INTRA_THREADS=4–8`, `INTER_THREADS=1`. Measure and adjust; if p95 rises, reduce `MAX_SESSIONS` or `INTRA_THREADS`.
+- **Warning:** higher isn’t always better; over-tuning can increase contention and worsen latency under load. Always measure with realistic traffic.
+
+---
+
 ## 📈 Load Testing
 
 - Prerequisites: run the gateway locally with a valid `straja.yaml` and API key; enable StrajaGuard ML + bundle for ML runs or set `STRAJA_ALLOW_REGEX_ONLY=true` to force regex-only.
@@ -456,22 +468,7 @@ If you change configuration or policy logic, add/update tests in `internal/polic
 - `make loadtest-ml` reminds you to keep ML enabled; `make loadtest-regex` reminds you to disable ML for comparison.
 - `make loadtest-mock` starts Straja with `examples/straja.mock.yaml` (mock upstream) and runs k6 so you can measure Straja overhead without OpenAI latency; logs go to `/tmp/straja_mock_gateway.log` (set `STRAJA_API_KEY=mock-api-key` for the mock project). Mock latency is configurable via `MOCK_DELAY_MS` (default 50ms).
 - `make loadtest-mock-delay` runs the mock server with a 50ms artificial delay if you want to emulate upstream latency while keeping responses local.
-- Interpret the k6 summary (req/s, latency percentiles, error rate). Compare regex-only vs ML-enabled runs, and mock vs real upstream, to understand the overhead of local inference and provider latency.
-
----
-
-## 🗺 Future Roadmap (High-Level)
-
-Planned directions (subject to change):
-
-- Multiple upstream providers per project (smart routing)  
-- Streaming support for chat completions  
-- Local ONNX / WebGPU inference backends  
-- Richer classifiers (ML-based PII, prompt injection, jailbreaks)  
-- Signed intelligence bundles, versioned and updatable  
-- More activation sinks (file, webhook, Kafka, OTEL)  
-- Web console evolution into a proper activation dashboard  
-- License-key validation and telemetry-aware distribution  
+- Interpret the k6 summary (req/s, latency percentiles, error rate). Compare regex-only vs ML-enabled runs, and mock vs real upstream, to understand the overhead of local inference and provider latency.  
 
 ---
 

@@ -69,6 +69,7 @@ intel:
     license_server_base_url: "https://straja.ai"
     license_key: "YOUR_LICENSE_KEY"
     request_timeout_seconds: 300
+    bundle_download_timeout_seconds: 300
     intel_dir: "./intel"
     version_file: "version"
 
@@ -107,3 +108,8 @@ security:
     ml_block_threshold: 0.85
     action_on_regex_hit: "block_and_redact"
     action_on_ml_only: "log"
+
+strajaguard:
+  max_sessions: 2
+  intra_threads: 4
+  inter_threads: 1

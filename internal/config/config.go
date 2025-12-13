@@ -21,6 +21,7 @@ type Config struct {
 	Intelligence    IntelligenceConfig        `yaml:"intelligence"`
 	Security        SecurityConfig            `yaml:"security"`
 	Intel           IntelConfig               `yaml:"intel"`
+	StrajaGuard     StrajaGuardConfig         `yaml:"strajaguard"`
 }
 
 // IntelConfig holds ML bundle + license settings.
@@ -41,6 +42,13 @@ type StrajaGuardV1Config struct {
 	AllowRegexOnly                bool   `yaml:"allow_regex_only"`
 	UpdateOnStart                 bool   `yaml:"update_on_start"`
 	RequireML                     bool   `yaml:"require_ml"`
+}
+
+// StrajaGuardConfig controls runtime settings for StrajaGuard inference.
+type StrajaGuardConfig struct {
+	MaxSessions  int `yaml:"max_sessions"`
+	IntraThreads int `yaml:"intra_threads"`
+	InterThreads int `yaml:"inter_threads"`
 }
 
 type ServerConfig struct {
@@ -340,6 +348,11 @@ func defaultConfig() *Config {
 		},
 		Intel:    defaultIntelConfig(),
 		Security: defaultSecurityConfig(),
+		StrajaGuard: StrajaGuardConfig{
+			MaxSessions:  0,
+			IntraThreads: 0,
+			InterThreads: 0,
+		},
 	}
 }
 
