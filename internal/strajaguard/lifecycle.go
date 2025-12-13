@@ -43,8 +43,15 @@ func EnsureStrajaGuardVersion(ctx context.Context, baseDir, version, manifestURL
 		return "", errors.New("bundle token is empty")
 	}
 	if timeoutSeconds <= 0 {
-		timeoutSeconds = 60
+		timeoutSeconds = 30
 	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	finalDir := filepath.Join(baseDir, version)
 	if bundleDirLooksValid(finalDir) {

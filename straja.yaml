@@ -1,5 +1,13 @@
 server:
   addr: ":8080"
+  read_header_timeout: "5s"
+  read_timeout: "30s"
+  write_timeout: "120s"
+  idle_timeout: "60s"
+  max_request_body_bytes: 2097152        # 2 * 1024 * 1024
+  max_non_stream_response_bytes: 4194304 # 4 * 1024 * 1024
+  max_in_flight_requests: 200
+  upstream_timeout: "60s"
 
 default_provider: "openai_default"
 

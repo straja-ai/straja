@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -29,18 +30,29 @@ type IntelConfig struct {
 
 // StrajaGuardV1Config controls StrajaGuard bundle fetching + validation.
 type StrajaGuardV1Config struct {
-	Enabled               bool   `yaml:"enabled"`
-	LicenseServerBaseURL  string `yaml:"license_server_base_url"`
-	LicenseKey            string `yaml:"license_key"`
-	RequestTimeoutSeconds int    `yaml:"request_timeout_seconds"`
-	IntelDir              string `yaml:"intel_dir"`
-	VersionFile           string `yaml:"version_file"`
-	AllowRegexOnly        bool   `yaml:"allow_regex_only"`
-	UpdateOnStart         bool   `yaml:"update_on_start"`
+	Enabled                       bool   `yaml:"enabled"`
+	LicenseServerBaseURL          string `yaml:"license_server_base_url"`
+	LicenseKey                    string `yaml:"license_key"`
+	RequestTimeoutSeconds         int    `yaml:"request_timeout_seconds"` // legacy fallback
+	LicenseValidateTimeoutSeconds int    `yaml:"license_validate_timeout_seconds"`
+	BundleDownloadTimeoutSeconds  int    `yaml:"bundle_download_timeout_seconds"`
+	IntelDir                      string `yaml:"intel_dir"`
+	VersionFile                   string `yaml:"version_file"`
+	AllowRegexOnly                bool   `yaml:"allow_regex_only"`
+	UpdateOnStart                 bool   `yaml:"update_on_start"`
+	RequireML                     bool   `yaml:"require_ml"`
 }
 
 type ServerConfig struct {
-	Addr string `yaml:"addr"` // HTTP listen address, e.g. ":8080"
+	Addr                      string        `yaml:"addr"` // HTTP listen address, e.g. ":8080"
+	ReadHeaderTimeout         time.Duration `yaml:"read_header_timeout"`
+	ReadTimeout               time.Duration `yaml:"read_timeout"`
+	WriteTimeout              time.Duration `yaml:"write_timeout"`
+	IdleTimeout               time.Duration `yaml:"idle_timeout"`
+	MaxRequestBodyBytes       int64         `yaml:"max_request_body_bytes"`
+	MaxNonStreamResponseBytes int64         `yaml:"max_non_stream_response_bytes"`
+	MaxInFlightRequests       int           `yaml:"max_in_flight_requests"`
+	UpstreamTimeout           time.Duration `yaml:"upstream_timeout"`
 }
 
 type ProviderConfig struct {
@@ -295,7 +307,15 @@ func Load(path string) (*Config, error) {
 func defaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Addr: ":8080",
+			Addr:                      ":8080",
+			ReadHeaderTimeout:         5 * time.Second,
+			ReadTimeout:               30 * time.Second,
+			WriteTimeout:              120 * time.Second,
+			IdleTimeout:               60 * time.Second,
+			MaxRequestBodyBytes:       2 * 1024 * 1024,
+			MaxNonStreamResponseBytes: 4 * 1024 * 1024,
+			MaxInFlightRequests:       200,
+			UpstreamTimeout:           60 * time.Second,
 		},
 		Providers:       map[string]ProviderConfig{},
 		DefaultProvider: "",
@@ -331,6 +351,56 @@ func applyDefaults(cfg *Config) {
 	// Default server address
 	if cfg.Server.Addr == "" {
 		cfg.Server.Addr = ":8080"
+	}
+	if cfg.Server.ReadHeaderTimeout == 0 {
+		cfg.Server.ReadHeaderTimeout = 5 * time.Second
+	}
+	if cfg.Server.ReadTimeout == 0 {
+		cfg.Server.ReadTimeout = 30 * time.Second
+	}
+	if cfg.Server.WriteTimeout == 0 {
+		cfg.Server.WriteTimeout = 120 * time.Second
+	}
+	if cfg.Server.IdleTimeout == 0 {
+		cfg.Server.IdleTimeout = 60 * time.Second
+	}
+	if cfg.Server.MaxRequestBodyBytes <= 0 {
+		cfg.Server.MaxRequestBodyBytes = 2 * 1024 * 1024
+	}
+	if cfg.Server.MaxNonStreamResponseBytes <= 0 {
+		cfg.Server.MaxNonStreamResponseBytes = 4 * 1024 * 1024
+	}
+	if cfg.Server.MaxInFlightRequests <= 0 {
+		cfg.Server.MaxInFlightRequests = 200
+	}
+	if cfg.Server.UpstreamTimeout == 0 {
+		cfg.Server.UpstreamTimeout = 60 * time.Second
+	}
+
+	// Server env overrides
+	if d, ok := envDuration("STRAJA_READ_HEADER_TIMEOUT"); ok {
+		cfg.Server.ReadHeaderTimeout = d
+	}
+	if d, ok := envDuration("STRAJA_READ_TIMEOUT"); ok {
+		cfg.Server.ReadTimeout = d
+	}
+	if d, ok := envDuration("STRAJA_WRITE_TIMEOUT"); ok {
+		cfg.Server.WriteTimeout = d
+	}
+	if d, ok := envDuration("STRAJA_IDLE_TIMEOUT"); ok {
+		cfg.Server.IdleTimeout = d
+	}
+	if v, ok := envInt64("STRAJA_MAX_REQUEST_BODY_BYTES"); ok && v > 0 {
+		cfg.Server.MaxRequestBodyBytes = v
+	}
+	if v, ok := envInt64("STRAJA_MAX_NON_STREAM_RESPONSE_BYTES"); ok && v > 0 {
+		cfg.Server.MaxNonStreamResponseBytes = v
+	}
+	if v, ok := envInt("STRAJA_MAX_IN_FLIGHT_REQUESTS"); ok && v > 0 {
+		cfg.Server.MaxInFlightRequests = v
+	}
+	if d, ok := envDuration("STRAJA_UPSTREAM_TIMEOUT"); ok {
+		cfg.Server.UpstreamTimeout = d
 	}
 
 	// Default provider logic: if only one provider exists, use it
@@ -422,13 +492,16 @@ func applyDefaults(cfg *Config) {
 func defaultIntelConfig() IntelConfig {
 	return IntelConfig{
 		StrajaGuardV1: StrajaGuardV1Config{
-			Enabled:               true,
-			LicenseServerBaseURL:  "https://straja.ai",
-			RequestTimeoutSeconds: 60,
-			IntelDir:              "./intel",
-			VersionFile:           "version",
-			AllowRegexOnly:        false,
-			UpdateOnStart:         true,
+			Enabled:                       true,
+			LicenseServerBaseURL:          "https://straja.ai",
+			RequestTimeoutSeconds:         60,
+			LicenseValidateTimeoutSeconds: 10,
+			BundleDownloadTimeoutSeconds:  30,
+			IntelDir:                      "./intel",
+			VersionFile:                   "version",
+			AllowRegexOnly:                false,
+			UpdateOnStart:                 true,
+			RequireML:                     true,
 		},
 	}
 }
@@ -447,6 +520,20 @@ func (c *IntelConfig) applyDefaults() {
 	if c.StrajaGuardV1.RequestTimeoutSeconds == 0 {
 		c.StrajaGuardV1.RequestTimeoutSeconds = def.StrajaGuardV1.RequestTimeoutSeconds
 	}
+	if c.StrajaGuardV1.LicenseValidateTimeoutSeconds == 0 {
+		if c.StrajaGuardV1.RequestTimeoutSeconds > 0 {
+			c.StrajaGuardV1.LicenseValidateTimeoutSeconds = c.StrajaGuardV1.RequestTimeoutSeconds
+		} else {
+			c.StrajaGuardV1.LicenseValidateTimeoutSeconds = def.StrajaGuardV1.LicenseValidateTimeoutSeconds
+		}
+	}
+	if c.StrajaGuardV1.BundleDownloadTimeoutSeconds == 0 {
+		if c.StrajaGuardV1.RequestTimeoutSeconds > 0 {
+			c.StrajaGuardV1.BundleDownloadTimeoutSeconds = c.StrajaGuardV1.RequestTimeoutSeconds
+		} else {
+			c.StrajaGuardV1.BundleDownloadTimeoutSeconds = def.StrajaGuardV1.BundleDownloadTimeoutSeconds
+		}
+	}
 	if c.StrajaGuardV1.IntelDir == "" {
 		c.StrajaGuardV1.IntelDir = def.StrajaGuardV1.IntelDir
 	}
@@ -458,6 +545,15 @@ func (c *IntelConfig) applyDefaults() {
 	}
 	if envVal, ok := envBool("STRAJA_UPDATE_ON_START"); ok {
 		c.StrajaGuardV1.UpdateOnStart = envVal
+	}
+	if envVal, ok := envBool("STRAJA_REQUIRE_ML"); ok {
+		c.StrajaGuardV1.RequireML = envVal
+	}
+	if v, ok := envInt("STRAJA_LICENSE_VALIDATE_TIMEOUT_SECONDS"); ok && v > 0 {
+		c.StrajaGuardV1.LicenseValidateTimeoutSeconds = v
+	}
+	if v, ok := envInt("STRAJA_BUNDLE_DOWNLOAD_TIMEOUT_SECONDS"); ok && v > 0 {
+		c.StrajaGuardV1.BundleDownloadTimeoutSeconds = v
 	}
 }
 
@@ -471,4 +567,46 @@ func envBool(name string) (bool, bool) {
 		return false, false
 	}
 	return v, true
+}
+
+func envInt(name string) (int, bool) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+func envInt64(name string) (int64, bool) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+func envDuration(name string) (time.Duration, bool) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, false
+	}
+
+	if dur, err := time.ParseDuration(raw); err == nil {
+		return dur, true
+	}
+
+	// Fallback: treat raw as seconds.
+	if v, err := strconv.Atoi(raw); err == nil {
+		return time.Duration(v) * time.Second, true
+	}
+
+	return 0, false
 }

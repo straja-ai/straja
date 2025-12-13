@@ -70,7 +70,7 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 		return nil, errors.New("license key is empty")
 	}
 	if timeoutSeconds <= 0 {
-		timeoutSeconds = 60
+		timeoutSeconds = 10
 	}
 
 	validateURL := baseURL + "/api/license/validate"
@@ -79,6 +79,13 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 		cv := strings.TrimSpace(currentVersion)
 		current = &cv
 	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	body := struct {
 		LicenseKey string `json:"license_key"`
@@ -101,7 +108,7 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 		return nil, fmt.Errorf("marshal license payload: %w", err)
 	}
 
-	client := &http.Client{Timeout: time.Duration(timeoutSeconds) * time.Second}
+	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, validateURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("build license request: %w", err)
@@ -164,10 +171,17 @@ func DownloadAndInstallStrajaGuardBundle(ctx context.Context, destDir string, in
 		return errors.New("bundle token is empty")
 	}
 	if timeoutSeconds <= 0 {
-		timeoutSeconds = 60
+		timeoutSeconds = 30
 	}
 
-	client := &http.Client{Timeout: time.Duration(timeoutSeconds) * time.Second}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	client := &http.Client{Timeout: timeout}
 	pk, err := manifestPublicKey()
 	if err != nil {
 		return fmt.Errorf("load manifest public key: %w", err)

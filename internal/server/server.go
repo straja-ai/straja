@@ -42,6 +42,11 @@ type Server struct {
 	licenseKey       string
 	intelStatus      string
 	httpClient       *http.Client
+	inFlightLimiter  chan struct{}
+	strajaGuardModel *strajaguard.StrajaGuardModel
+	activeBundleVer  string
+	requireML        bool
+	allowRegexOnly   bool
 }
 
 type consoleProject struct {
@@ -83,6 +88,10 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 
 	var reqBody consoleChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		if isRequestTooLarge(err) {
+			writeOpenAIError(w, http.StatusRequestEntityTooLarge, "Request body too large", "invalid_request_error")
+			return
+		}
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
@@ -110,6 +119,11 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	})
 
 	ctx := r.Context()
+	if s.cfg.Server.UpstreamTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.cfg.Server.UpstreamTimeout)
+		defer cancel()
+	}
 
 	// Policy + provider + activation, same flow as handleChatCompletions:
 
@@ -220,6 +234,14 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	} else {
 		allowRegexOnly := cfg.Intel.StrajaGuardV1.AllowRegexOnly
 		updateOnStart := cfg.Intel.StrajaGuardV1.UpdateOnStart
+		requireML := cfg.Intel.StrajaGuardV1.RequireML
+		mustExit := requireML && !allowRegexOnly
+		fail := func(format string, args ...interface{}) {
+			if mustExit {
+				log.Fatalf(format, args...)
+			}
+			log.Printf(format, args...)
+		}
 		sgLicenseKey := strings.TrimSpace(cfg.Intel.StrajaGuardV1.LicenseKey)
 		if envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv); envName != "" {
 			if envVal := strings.TrimSpace(os.Getenv(envName)); envVal != "" {
@@ -235,11 +257,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		} else {
 			ctx := context.Background()
 			if err := os.MkdirAll(strajaGuardDir, 0o755); err != nil {
-				if allowRegexOnly {
-					log.Printf("strajaguard: cannot create bundle dir %s: %v; running regex-only", strajaGuardDir, err)
-				} else {
-					log.Fatalf("strajaguard: cannot create bundle dir %s: %v", strajaGuardDir, err)
-				}
+				fail("strajaguard: cannot create bundle dir %s: %v; running regex-only", strajaGuardDir, err)
 			} else {
 				state := strajaguard.BundleState{}
 				skipLicense := false
@@ -253,12 +271,11 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 							log.Printf("strajaguard: loading existing bundle current_version=%s", state.CurrentVersion)
 							model, loadErr := strajaguard.LoadModel(versionDir, cfg.Security.SeqLen)
 							if loadErr != nil {
-								if allowRegexOnly {
-									log.Printf("strajaguard: failed to load existing bundle version=%s: %v; running regex-only (skipping startup download)", state.CurrentVersion, loadErr)
-									skipLicense = true
-								} else {
+								if mustExit {
 									log.Fatalf("strajaguard: failed to load existing bundle version=%s: %v", state.CurrentVersion, loadErr)
 								}
+								log.Printf("strajaguard: failed to load existing bundle version=%s: %v; running regex-only (skipping startup download)", state.CurrentVersion, loadErr)
+								skipLicense = true
 							} else {
 								sgModel = model
 								activeBundleVersion = state.CurrentVersion
@@ -276,14 +293,14 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 				}
 
 				if !skipLicense {
-					valRes, err := strajaguard.ValidateLicense(ctx, cfg.Intel.StrajaGuardV1.LicenseServerBaseURL, sgLicenseKey, state.CurrentVersion, cfg.Intel.StrajaGuardV1.RequestTimeoutSeconds)
+					valRes, err := strajaguard.ValidateLicense(ctx, cfg.Intel.StrajaGuardV1.LicenseServerBaseURL, sgLicenseKey, state.CurrentVersion, cfg.Intel.StrajaGuardV1.LicenseValidateTimeoutSeconds)
 					if err != nil {
 						if sgModel != nil {
 							log.Printf("strajaguard: license validate failed: %v; continuing with existing bundle current_version=%s", err, activeBundleVersion)
-						} else if allowRegexOnly {
-							log.Printf("strajaguard: license validate failed and no active bundle: %v; running regex-only", err)
-						} else {
+						} else if mustExit {
 							log.Fatalf("strajaguard: license validate failed and no active bundle: %v", err)
+						} else {
+							log.Printf("strajaguard: license validate failed and no active bundle: %v; running regex-only", err)
 						}
 					} else {
 						log.Printf("strajaguard: license validate returned version=%s update_available=%t", valRes.BundleInfo.Version, valRes.BundleInfo.UpdateAvailable)
@@ -291,19 +308,17 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 
 						// Fresh install: no current bundle on disk.
 						if currentVersion == "" {
-							dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.RequestTimeoutSeconds)
+							dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
 							if err != nil {
-								if allowRegexOnly {
-									log.Printf("strajaguard: bundle version=%s verification failed: %v; running regex-only", valRes.BundleInfo.Version, err)
-								} else {
+								if mustExit {
 									log.Fatalf("strajaguard: bundle version=%s verification failed: %v", valRes.BundleInfo.Version, err)
 								}
+								log.Printf("strajaguard: bundle version=%s verification failed: %v; running regex-only", valRes.BundleInfo.Version, err)
 							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen); loadErr != nil {
-								if allowRegexOnly {
-									log.Printf("strajaguard: bundle version=%s downloaded but failed to load: %v; running regex-only", valRes.BundleInfo.Version, loadErr)
-								} else {
+								if mustExit {
 									log.Fatalf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
 								}
+								log.Printf("strajaguard: bundle version=%s downloaded but failed to load: %v; running regex-only", valRes.BundleInfo.Version, loadErr)
 							} else {
 								state.PreviousVersion = ""
 								state.CurrentVersion = valRes.BundleInfo.Version
@@ -316,7 +331,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 								}
 							}
 						} else if updateOnStart && valRes.BundleInfo.UpdateAvailable && valRes.BundleInfo.Version != currentVersion {
-							dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.RequestTimeoutSeconds)
+							dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
 							if err != nil {
 								log.Printf("strajaguard: bundle version=%s verification failed: %v; keeping current_version=%s", valRes.BundleInfo.Version, err, currentVersion)
 							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen); loadErr != nil {
@@ -367,6 +382,16 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		projectProviders[p.ID] = providerName
 	}
 
+	var limiter chan struct{}
+	if cfg.Server.MaxInFlightRequests > 0 {
+		limiter = make(chan struct{}, cfg.Server.MaxInFlightRequests)
+	}
+
+	licenseHTTPTimeout := time.Duration(cfg.Intel.StrajaGuardV1.LicenseValidateTimeoutSeconds) * time.Second
+	if licenseHTTPTimeout <= 0 {
+		licenseHTTPTimeout = 10 * time.Second
+	}
+
 	s := &Server{
 		mux:              mux,
 		cfg:              cfg,
@@ -381,18 +406,44 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		intelEnabled:     intelEnabled,
 		licenseKey:       licenseKey,
 		intelStatus:      intelStatus,
-		httpClient:       http.DefaultClient,
+		httpClient:       &http.Client{Timeout: licenseHTTPTimeout},
+		inFlightLimiter:  limiter,
+		strajaGuardModel: sgModel,
+		activeBundleVer:  activeBundleVersion,
+		requireML:        cfg.Intel.StrajaGuardV1.RequireML,
+		allowRegexOnly:   cfg.Intel.StrajaGuardV1.AllowRegexOnly,
 	}
+
+	bundleTimeout := time.Duration(cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds) * time.Second
+	if bundleTimeout <= 0 {
+		bundleTimeout = 30 * time.Second
+	}
+
+	log.Printf("gateway hardening: read_header_timeout=%s read_timeout=%s write_timeout=%s idle_timeout=%s max_body_bytes=%d max_nonstream_response_bytes=%d max_in_flight=%d upstream_timeout=%s license_validate_timeout=%s bundle_download_timeout=%s require_ml=%t allow_regex_only=%t",
+		cfg.Server.ReadHeaderTimeout,
+		cfg.Server.ReadTimeout,
+		cfg.Server.WriteTimeout,
+		cfg.Server.IdleTimeout,
+		cfg.Server.MaxRequestBodyBytes,
+		cfg.Server.MaxNonStreamResponseBytes,
+		cfg.Server.MaxInFlightRequests,
+		cfg.Server.UpstreamTimeout,
+		licenseHTTPTimeout,
+		bundleTimeout,
+		cfg.Intel.StrajaGuardV1.RequireML,
+		cfg.Intel.StrajaGuardV1.AllowRegexOnly,
+	)
 
 	// Routes
 	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
+	mux.HandleFunc("/readyz", s.handleReady)
+	mux.HandleFunc("/v1/chat/completions", s.wrapHandler(s.handleChatCompletions, handlerOptions{limitBody: true, useLimiter: true}))
 
 	// Serve console + static
 	mux.Handle("/console/", console.Handler())
 	mux.Handle("/console", http.RedirectHandler("/console/", http.StatusMovedPermanently))
 	mux.HandleFunc("/console/api/projects", s.handleConsoleProjects)
-	mux.HandleFunc("/console/api/chat", s.handleConsoleChat)
+	mux.HandleFunc("/console/api/chat", s.wrapHandler(s.handleConsoleChat, handlerOptions{limitBody: true, useLimiter: true}))
 
 	if s.intelEnabled {
 		if err := s.ValidateLicenseOnline(context.Background()); err != nil {
@@ -405,9 +456,24 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 
 // ValidateLicenseOnline optionally validates the license key once at startup.
 func (s *Server) ValidateLicenseOnline(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	url := strings.TrimSpace(s.cfg.Intelligence.LicenseServerURL)
 	if url == "" || strings.TrimSpace(s.licenseKey) == "" {
 		return nil
+	}
+
+	client := s.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	if client.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, client.Timeout)
+		defer cancel()
 	}
 
 	payload := struct {
@@ -428,11 +494,6 @@ func (s *Server) ValidateLicenseOnline(ctx context.Context) error {
 		return fmt.Errorf("build license request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-
-	client := s.httpClient
-	if client == nil {
-		client = http.DefaultClient
-	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -495,7 +556,7 @@ func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, er
 			if apiKey == "" {
 				return nil, fmt.Errorf("provider %q: environment variable %s is empty", name, pcfg.APIKeyEnv)
 			}
-			reg[name] = provider.NewOpenAI(pcfg.BaseURL, apiKey)
+			reg[name] = provider.NewOpenAI(pcfg.BaseURL, apiKey, cfg.Server.UpstreamTimeout, cfg.Server.MaxNonStreamResponseBytes)
 		default:
 			return nil, fmt.Errorf("provider %q: unsupported type %q", name, pcfg.Type)
 		}
@@ -511,16 +572,108 @@ func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, er
 	return reg, nil
 }
 
+type handlerOptions struct {
+	limitBody  bool
+	useLimiter bool
+}
+
+func (s *Server) wrapHandler(h http.HandlerFunc, opts handlerOptions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if opts.limitBody && s.cfg.Server.MaxRequestBodyBytes > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, s.cfg.Server.MaxRequestBodyBytes)
+		}
+
+		if opts.useLimiter && s.inFlightLimiter != nil {
+			select {
+			case s.inFlightLimiter <- struct{}{}:
+				defer func() { <-s.inFlightLimiter }()
+			default:
+				writeOpenAIError(w, http.StatusTooManyRequests, "Too many requests", "rate_limit_exceeded")
+				return
+			}
+		}
+
+		h(w, r)
+	}
+}
+
 // Start runs the HTTP server on the given address.
 func (s *Server) Start(addr string) error {
-	log.Printf("Straja Gateway running on %s", addr)
-	return http.ListenAndServe(addr, s.mux)
+	if addr == "" {
+		addr = s.cfg.Server.Addr
+	}
+
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           s.mux,
+		ReadHeaderTimeout: s.cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       s.cfg.Server.ReadTimeout,
+		WriteTimeout:      s.cfg.Server.WriteTimeout,
+		IdleTimeout:       s.cfg.Server.IdleTimeout,
+	}
+
+	log.Printf("Straja Gateway running on %s (read_header_timeout=%s, read_timeout=%s, write_timeout=%s, idle_timeout=%s)", addr, s.cfg.Server.ReadHeaderTimeout, s.cfg.Server.ReadTimeout, s.cfg.Server.WriteTimeout, s.cfg.Server.IdleTimeout)
+	return server.ListenAndServe()
 }
 
 // --- Handlers ---
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "ok")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+type readinessResponse struct {
+	Status              string `json:"status"`
+	Mode                string `json:"mode"`
+	ActiveBundleVersion string `json:"active_bundle_version,omitempty"`
+	Reason              string `json:"reason,omitempty"`
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	resp, ready := s.readiness()
+	w.Header().Set("Content-Type", "application/json")
+	if !ready {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) readiness() (readinessResponse, bool) {
+	mode := "regex_only"
+	if s.strajaGuardModel != nil {
+		mode = "ml"
+	}
+
+	resp := readinessResponse{
+		Status:              "ready",
+		Mode:                mode,
+		ActiveBundleVersion: s.activeBundleVer,
+	}
+
+	if s.cfg == nil {
+		resp.Status = "not_ready"
+		resp.Reason = "config_not_loaded"
+		return resp, false
+	}
+	if len(s.providers) == 0 {
+		resp.Status = "not_ready"
+		resp.Reason = "no_providers_configured"
+		return resp, false
+	}
+	if len(s.projectProviders) == 0 {
+		resp.Status = "not_ready"
+		resp.Reason = "no_projects_configured"
+		return resp, false
+	}
+
+	if s.requireML && s.strajaGuardModel == nil {
+		resp.Status = "not_ready"
+		resp.Reason = "strajaguard_ml_inactive"
+		return resp, false
+	}
+
+	return resp, true
 }
 
 // --- OpenAI-style request/response types for the HTTP layer ---
@@ -591,11 +744,20 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	var reqBody chatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		if isRequestTooLarge(err) {
+			writeOpenAIError(w, http.StatusRequestEntityTooLarge, "Request body too large", "invalid_request_error")
+			return
+		}
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
 
 	ctx := r.Context()
+	if s.cfg.Server.UpstreamTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.cfg.Server.UpstreamTimeout)
+		defer cancel()
+	}
 
 	// Determine provider for this project
 	providerName := project.Provider
@@ -705,6 +867,17 @@ func parseBearerToken(h string) (string, bool) {
 		return "", false
 	}
 	return parts[1], true
+}
+
+func isRequestTooLarge(err error) bool {
+	if err == nil {
+		return false
+	}
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "request body too large")
 }
 
 // writeOpenAIError writes an OpenAI-style error JSON.

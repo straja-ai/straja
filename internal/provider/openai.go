@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -13,22 +14,30 @@ import (
 
 // openAIProvider implements Provider for the OpenAI Chat Completions API.
 type openAIProvider struct {
-	baseURL string
-	apiKey  string
-	client  *http.Client
+	baseURL          string
+	apiKey           string
+	client           *http.Client
+	maxResponseBytes int64
 }
 
 // NewOpenAI creates a new OpenAI provider.
-func NewOpenAI(baseURL, apiKey string) Provider {
+func NewOpenAI(baseURL, apiKey string, timeout time.Duration, maxResponseBytes int64) Provider {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	if maxResponseBytes <= 0 {
+		maxResponseBytes = 4 * 1024 * 1024
+	}
 
 	return &openAIProvider{
-		baseURL: baseURL,
-		apiKey:  apiKey,
+		baseURL:          baseURL,
+		apiKey:           apiKey,
+		maxResponseBytes: maxResponseBytes,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: timeout,
 		},
 	}
 }
@@ -112,15 +121,33 @@ func (p *openAIProvider) ChatCompletion(ctx context.Context, req *inference.Requ
 
 	// Handle error responses
 	if resp.StatusCode >= 400 {
+		limited := io.LimitReader(resp.Body, p.maxResponseBytes+1)
+		respBody, err := io.ReadAll(limited)
+		if err != nil {
+			return nil, fmt.Errorf("openai error status %d and failed to read error body: %w", resp.StatusCode, err)
+		}
+		if int64(len(respBody)) > p.maxResponseBytes {
+			return nil, fmt.Errorf("openai error body exceeded limit (%d bytes)", p.maxResponseBytes)
+		}
+
 		var errBody openAIErrorResponse
-		if err := json.NewDecoder(resp.Body).Decode(&errBody); err != nil {
+		if err := json.Unmarshal(respBody, &errBody); err != nil {
 			return nil, fmt.Errorf("openai error status %d and failed to decode error body: %w", resp.StatusCode, err)
 		}
 		return nil, fmt.Errorf("openai error: %s (type=%s)", errBody.Error.Message, errBody.Error.Type)
 	}
 
+	limited := io.LimitReader(resp.Body, p.maxResponseBytes+1)
+	respBody, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("decode openai response: %w", err)
+	}
+	if int64(len(respBody)) > p.maxResponseBytes {
+		return nil, fmt.Errorf("openai response exceeded limit (%d bytes)", p.maxResponseBytes)
+	}
+
 	var oaiResp openAIChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&oaiResp); err != nil {
+	if err := json.Unmarshal(respBody, &oaiResp); err != nil {
 		return nil, fmt.Errorf("decode openai response: %w", err)
 	}
 
