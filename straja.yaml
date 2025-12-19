@@ -67,7 +67,6 @@ intel:
   strajaguard_v1:
     enabled: true
     license_server_base_url: "https://straja.ai"
-    license_key: "YOUR_LICENSE_KEY"
     request_timeout_seconds: 300
     bundle_download_timeout_seconds: 300
     intel_dir: "./intel"

@@ -22,6 +22,8 @@ type Config struct {
 	Security        SecurityConfig            `yaml:"security"`
 	Intel           IntelConfig               `yaml:"intel"`
 	StrajaGuard     StrajaGuardConfig         `yaml:"strajaguard"`
+	// ResolvedLicenseKey is populated at runtime (env-first) for both intelligence and StrajaGuard.
+	ResolvedLicenseKey string `yaml:"-"`
 }
 
 // IntelConfig holds ML bundle + license settings.
@@ -61,18 +63,24 @@ type ServerConfig struct {
 	MaxNonStreamResponseBytes int64         `yaml:"max_non_stream_response_bytes"`
 	MaxInFlightRequests       int           `yaml:"max_in_flight_requests"`
 	UpstreamTimeout           time.Duration `yaml:"upstream_timeout"`
+	MaxMessages               int           `yaml:"max_messages"`
+	MaxTotalMessageChars      int           `yaml:"max_total_message_chars"`
 }
 
 type ProviderConfig struct {
-	Type      string `yaml:"type"`        // e.g. "openai"
-	BaseURL   string `yaml:"base_url"`    // e.g. "https://api.openai.com/v1"
-	APIKeyEnv string `yaml:"api_key_env"` // e.g. "OPENAI_API_KEY"
+	Type                 string   `yaml:"type"` // e.g. "openai"
+	BaseURL              string   `yaml:"base_url"`
+	APIKeyEnv            string   `yaml:"api_key_env"`            // e.g. "OPENAI_API_KEY"
+	APIKey               string   `yaml:"api_key"`                // optional fallback for local dev; env wins
+	AllowedModels        []string `yaml:"allowed_models"`         // optional allowlist
+	AllowPrivateNetworks bool     `yaml:"allow_private_networks"` // default false; true for dev
 }
 
 type ProjectConfig struct {
-	ID       string   `yaml:"id"`
-	Provider string   `yaml:"provider"` // provider name from Providers map
-	APIKeys  []string `yaml:"api_keys"`
+	ID            string   `yaml:"id"`
+	Provider      string   `yaml:"provider"` // provider name from Providers map
+	APIKeys       []string `yaml:"api_keys"`
+	AllowedModels []string `yaml:"allowed_models"`
 }
 
 type LoggingConfig struct {
@@ -324,6 +332,8 @@ func defaultConfig() *Config {
 			MaxNonStreamResponseBytes: 4 * 1024 * 1024,
 			MaxInFlightRequests:       200,
 			UpstreamTimeout:           60 * time.Second,
+			MaxMessages:               64,
+			MaxTotalMessageChars:      32000,
 		},
 		Providers:       map[string]ProviderConfig{},
 		DefaultProvider: "",
@@ -388,6 +398,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Server.UpstreamTimeout == 0 {
 		cfg.Server.UpstreamTimeout = 60 * time.Second
+	}
+	if cfg.Server.MaxMessages <= 0 {
+		cfg.Server.MaxMessages = 64
+	}
+	if cfg.Server.MaxTotalMessageChars <= 0 {
+		cfg.Server.MaxTotalMessageChars = 32000
 	}
 
 	// Server env overrides
@@ -500,6 +516,47 @@ func applyDefaults(cfg *Config) {
 	if cfg.Security.BundleDir == "" && cfg.Intel.StrajaGuardV1.IntelDir != "" {
 		cfg.Security.BundleDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, "strajaguard_v1")
 	}
+
+	resolveLicense(cfg)
+}
+
+func resolveLicense(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv)
+	envVal := ""
+	if envName != "" {
+		envVal = strings.TrimSpace(os.Getenv(envName))
+	}
+	// YAML value is a dev fallback; ignore placeholders.
+	fileVal := strings.TrimSpace(cfg.Intelligence.LicenseKey)
+	if isPlaceholderLicenseKey(fileVal) {
+		fileVal = ""
+	}
+	resolved := envVal
+	if resolved == "" {
+		resolved = fileVal
+	}
+	cfg.ResolvedLicenseKey = resolved
+}
+
+func isPlaceholderLicenseKey(k string) bool {
+	k = strings.TrimSpace(strings.ToUpper(k))
+	if k == "" {
+		return true
+	}
+	samples := []string{
+		"STRAJA-FREE-XXXX",
+		"STRAJA-FREE-XXX-XXX-XXXXX",
+		"YOUR_LICENSE_KEY",
+	}
+	for _, s := range samples {
+		if k == strings.ToUpper(s) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultIntelConfig() IntelConfig {

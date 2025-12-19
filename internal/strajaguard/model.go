@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/straja-ai/straja/internal/redact"
 	ort "github.com/yalue/onnxruntime_go"
 	"gopkg.in/yaml.v3"
 )
@@ -108,7 +108,7 @@ func LoadModel(bundleDir string, seqLen int, rt RuntimeSettings) (*StrajaGuardMo
 	if modelPath == "" {
 		return nil, fmt.Errorf("model file missing at %s: %w", modelCandidates[len(modelCandidates)-1], os.ErrNotExist)
 	}
-	log.Printf("strajaguard: selected_model=%s", filepath.Base(modelPath))
+	redact.Logf("strajaguard: selected_model=%s", filepath.Base(modelPath))
 	labelsPath := filepath.Join(bundleDir, "label_map.json")
 	thresholdsPath := filepath.Join(bundleDir, "thresholds.yaml")
 	vocabPath := filepath.Join(bundleDir, "tokenizer", "vocab.txt")
@@ -195,7 +195,7 @@ func (m *StrajaGuardModel) Evaluate(systemPrompt, userText string) (*StrajaGuard
 	computeDur := time.Since(computeStart)
 	totalDur := time.Since(start)
 
-	log.Printf("debug: strajaguard_breakdown wait_ms=%.2f tokenize_ms=%.2f copy_ms=%.2f onnx_ms=%.2f total_ms=%.2f pool_size=%d seq_len=%d model=%s",
+	redact.Logf("debug: strajaguard_breakdown wait_ms=%.2f tokenize_ms=%.2f copy_ms=%.2f onnx_ms=%.2f total_ms=%.2f pool_size=%d seq_len=%d model=%s",
 		durationMs(waitDur),
 		durationMs(tokenDur),
 		durationMs(copyDur),

@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/straja-ai/straja/internal/redact"
 )
 
 func bundleDirLooksValid(dir string) bool {
@@ -74,7 +75,7 @@ func EnsureStrajaGuardVersion(ctx context.Context, baseDir, version, manifestURL
 		}
 	}()
 
-	log.Printf("strajaguard: downloading bundle version=%s into tempDir=%s", version, tmpDir)
+	redact.Logf("strajaguard: downloading bundle version=%s into tempDir=%s", version, tmpDir)
 
 	client := &http.Client{Timeout: time.Duration(timeoutSeconds) * time.Second}
 	pk, err := manifestPublicKey()
@@ -129,4 +130,24 @@ func EnsureStrajaGuardVersion(ctx context.Context, baseDir, version, manifestURL
 	_ = os.RemoveAll(backupDir)
 	success = true
 	return finalDir, nil
+}
+
+// DecideFallback determines how to handle a failed bundle update/install.
+// It is pure so it can be tested without ONNX/runtime dependencies.
+func DecideFallback(currentVersion string, requireML, allowRegexOnly bool, verifyErr error) (keepVersion string, fallbackMode string, err error) {
+	if verifyErr == nil {
+		return currentVersion, "ml", nil
+	}
+	if strings.TrimSpace(currentVersion) != "" {
+		// Keep existing bundle if one is active.
+		return currentVersion, "ml", nil
+	}
+
+	if allowRegexOnly {
+		return "", "regex_only", nil
+	}
+	if requireML {
+		return "", "", fmt.Errorf("bundle verification failed and no previous bundle; require_ml=true so cannot continue")
+	}
+	return "", "disabled_ml", nil
 }

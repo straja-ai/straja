@@ -85,6 +85,32 @@ docker run   -p 8080:8080   -v $(pwd)/straja.yaml:/straja.yaml   -e OPENAI_API_K
 
 Your apps still talk to `http://host:8080/v1` and use **project keys**, not provider keys.
 
+**Do not bake API keys or license keys into the image.** Keep `straja.yaml` and secrets mounted or injected via env/secrets manager so images stay reusable and safe.
+
+---
+
+## 🔒 Hardening & production defaults
+
+- Secrets are redacted from logs/activations (bearer/API keys, license keys, bundle URLs).
+- Startup validation fails fast on missing addr/providers/projects, bad provider URLs, or private networks unless `allow_private_networks: true` for dev/mock.
+- Provider API keys: env wins (`api_key_env`); optional `api_key` is a local fallback. License keys are taken from `license_key_env` (placeholders in YAML are ignored); values are never logged.
+- Request guards: defaults cap body (2MiB), messages (64), and total content length (~32k chars). Oversized requests return 400/413 and are not forwarded upstream.
+- Model allowlists: set `allowed_models` per project or provider to block arbitrary proxying; unknown models return 400 `invalid_request_error`.
+- StrajaGuard bundles: paths are confined to the bundle dir; traversal/absolute paths are rejected. Failed updates keep the previous bundle; without a previous bundle, Straja falls back to regex-only unless `require_ml=true`.
+
+Recommended:
+- Keep provider URLs HTTPS; leave `allow_private_networks` off except for mock/local testing.
+- Store project API keys in config, but inject provider/license keys via env or secret store.
+- Tune `server.max_request_body_bytes`, `max_messages`, and `max_total_message_chars` for your traffic profile.
+
+### Offline cached bundle mode
+- One license key (`STRAJA_LICENSE_KEY`) is used for bundle validation/update. Env wins; placeholders in YAML are ignored.
+- Straja keeps a locally validated StrajaGuard bundle. If validation is temporarily unavailable (network/timeout) but the cached bundle verifies (signature + hashes), Straja runs it in `offline_cached_bundle` mode.
+- If the license is missing/invalid and a cached bundle exists, Straja still loads the cached bundle but reports `offline_cached_bundle` (reason=missing_license/invalid_license).
+- If no valid cached bundle exists: status is `disabled_missing_bundle` (or `disabled_invalid_bundle` if verification fails) and StrajaGuard ML is disabled until validation/download succeeds.
+- Status values surface in logs and activation events (`intel_status`, `intel_bundle_version`, `intel_last_validated_at`).
+- To force a refresh, delete the bundle cache directory (default `./intel/strajaguard_v1`) or bump version; Straja will re-validate and re-download on next start.
+
 ---
 
 ## 💻 Running from source (Go dev flow)

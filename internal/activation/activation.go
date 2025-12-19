@@ -3,8 +3,9 @@ package activation
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
+
+	"github.com/straja-ai/straja/internal/redact"
 )
 
 // Decision is the outcome of a request from Straja's perspective.
@@ -30,7 +31,11 @@ type Event struct {
 	// e.g. ["pii", "injection", "prompt_injection", "output_redaction"].
 	PolicyHits []string `json:"policy_hits"`
 	// IntelStatus reports whether intelligence/policy was enabled for this request.
-	IntelStatus string `json:"intel_status,omitempty"`
+	IntelStatus          string `json:"intel_status,omitempty"`
+	IntelBundleVersion   string `json:"intel_bundle_version,omitempty"`
+	IntelLastValidatedAt string `json:"intel_last_validated_at,omitempty"`
+	IntelCachePresent    bool   `json:"intel_cache_present,omitempty"`
+	StrajaGuardStatus    string `json:"strajaguard_status,omitempty"`
 	// StrajaGuard contains raw scores and flags from the ML classifier.
 	StrajaGuard *StrajaGuardPayload `json:"strajaguard,omitempty"`
 	// PolicyDecisions are the merged per-category decisions (regex + ML).
@@ -68,8 +73,8 @@ func NewStdout() Emitter {
 func (e *stdoutEmitter) Emit(ctx context.Context, ev *Event) {
 	data, err := json.Marshal(ev)
 	if err != nil {
-		log.Printf("activation: failed to marshal event: %v", err)
+		redact.Logf("activation: failed to marshal event: %v", err)
 		return
 	}
-	log.Printf("activation: %s", string(data))
+	redact.Logf("activation: %s", string(data))
 }

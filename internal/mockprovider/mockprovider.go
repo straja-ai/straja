@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/straja-ai/straja/internal/redact"
 )
 
 const (
@@ -45,7 +46,7 @@ func StartMockProvider(addr string) (func(context.Context) error, string, error)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("mock upstream request method=%s path=%s", r.Method, r.URL.Path)
+		redact.Logf("mock upstream request method=%s path=%s", r.Method, r.URL.Path)
 
 		p := r.URL.Path
 		if len(p) > 1 {
@@ -73,7 +74,7 @@ func StartMockProvider(addr string) (func(context.Context) error, string, error)
 
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("mock provider server error: %v", err)
+			redact.Logf("mock provider server error: %v", err)
 		}
 	}()
 
@@ -82,7 +83,7 @@ func StartMockProvider(addr string) (func(context.Context) error, string, error)
 	}
 
 	baseURL := "http://" + ln.Addr().String()
-	log.Printf("mock provider listening on %s (delay_ms=%d)", baseURL, delay)
+	redact.Logf("mock provider listening on %s (delay_ms=%d)", baseURL, delay)
 	return shutdown, baseURL, nil
 }
 

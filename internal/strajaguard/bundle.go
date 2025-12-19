@@ -11,13 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/straja-ai/straja/internal/redact"
 )
 
 // TODO: replace with the real base64-encoded Ed25519 public key used to sign manifests.
@@ -60,14 +61,24 @@ type ValidationResult struct {
 	BundleToken   string
 }
 
+// LicenseValidationOutcome classifies validation responses.
+type LicenseValidationOutcome string
+
+const (
+	ValidateOK             LicenseValidationOutcome = "validate_ok"
+	ValidateInvalidLicense LicenseValidationOutcome = "validate_invalid_license"
+	ValidateNetworkError   LicenseValidationOutcome = "validate_network_error"
+	ValidateOtherError     LicenseValidationOutcome = "validate_other_error"
+)
+
 // ValidateLicense contacts straja-site to validate the license and obtain bundle metadata.
-func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion string, timeoutSeconds int) (*ValidationResult, error) {
+func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion string, timeoutSeconds int) (*ValidationResult, LicenseValidationOutcome, error) {
 	baseURL = strings.TrimSuffix(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
-		return nil, errors.New("license server base url is empty")
+		return nil, ValidateOtherError, errors.New("license server base url is empty")
 	}
 	if strings.TrimSpace(licenseKey) == "" {
-		return nil, errors.New("license key is empty")
+		return nil, ValidateOtherError, errors.New("license key is empty")
 	}
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 10
@@ -105,29 +116,35 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("marshal license payload: %w", err)
+		return nil, ValidateOtherError, fmt.Errorf("marshal license payload: %w", err)
 	}
 
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, validateURL, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("build license request: %w", err)
+		return nil, ValidateOtherError, fmt.Errorf("build license request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("license validate request failed: %w", err)
+		return nil, ValidateNetworkError, fmt.Errorf("license validate request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, ValidateInvalidLicense, fmt.Errorf("license validate failed with status %s", resp.Status)
+	}
+	if resp.StatusCode >= 500 {
+		return nil, ValidateNetworkError, fmt.Errorf("license validate failed with status %s", resp.Status)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("license validate failed with status %s", resp.Status)
+		return nil, ValidateOtherError, fmt.Errorf("license validate failed with status %s", resp.Status)
 	}
 
 	var lr licenseValidateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
-		return nil, fmt.Errorf("decode license validate response: %w", err)
+		return nil, ValidateOtherError, fmt.Errorf("decode license validate response: %w", err)
 	}
 
 	if strings.ToLower(strings.TrimSpace(lr.Status)) != "ok" {
@@ -135,11 +152,11 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 		if msg == "" {
 			msg = "license status not ok"
 		}
-		return nil, errors.New(msg)
+		return nil, ValidateInvalidLicense, errors.New(msg)
 	}
 
 	if !lr.License.Models.StrajaGuardV1.Enabled {
-		return nil, errors.New("strajaguard model not enabled on license")
+		return nil, ValidateInvalidLicense, errors.New("strajaguard model not enabled on license")
 	}
 
 	info := lr.Bundles.StrajaGuardV1
@@ -149,17 +166,17 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 	info.FileBaseURL = strings.TrimSpace(info.FileBaseURL)
 
 	if info.Version == "" || info.ManifestURL == "" || info.SignatureURL == "" || info.FileBaseURL == "" {
-		return nil, errors.New("bundle info incomplete in license response")
+		return nil, ValidateOtherError, errors.New("bundle info incomplete in license response")
 	}
 	if strings.TrimSpace(lr.BundleToken) == "" {
-		return nil, errors.New("bundle token missing in license response")
+		return nil, ValidateOtherError, errors.New("bundle token missing in license response")
 	}
 
 	return &ValidationResult{
 		LatestVersion: lr.License.Models.StrajaGuardV1.LatestVersion,
 		BundleInfo:    info,
 		BundleToken:   lr.BundleToken,
-	}, nil
+	}, ValidateOK, nil
 }
 
 // DownloadAndInstallStrajaGuardBundle downloads, verifies, and atomically installs a bundle.
@@ -369,7 +386,7 @@ func downloadSignature(ctx context.Context, client *http.Client, url, token stri
 }
 
 func verifyManifest(manifestBytes []byte, manifestVersion string, manifestURL string, sigEncoded string, sigAlgorithm string, pk []byte) error {
-	log.Printf("strajaguard verifying manifest %s version=%s", manifestURL, manifestVersion)
+	redact.Logf("strajaguard verifying manifest %s version=%s", manifestURL, manifestVersion)
 
 	if len(pk) != ed25519.PublicKeySize {
 		return fmt.Errorf("invalid manifest public key length: %d", len(pk))
@@ -385,21 +402,21 @@ func verifyManifest(manifestBytes []byte, manifestVersion string, manifestURL st
 
 	sigBytes, err := decodeSignature(sigEncoded)
 	if err != nil {
-		log.Printf("strajaguard manifest signature parse failed for %s version=%s: %v", manifestURL, manifestVersion, err)
+		redact.Logf("strajaguard manifest signature parse failed for %s version=%s: %v", manifestURL, manifestVersion, err)
 		return fmt.Errorf("decode signature: %w", err)
 	}
 
 	if len(sigBytes) != ed25519.SignatureSize {
 		err := fmt.Errorf("manifest signature invalid length: got %d, want %d", len(sigBytes), ed25519.SignatureSize)
-		log.Printf("strajaguard manifest signature parse failed for %s version=%s: %v", manifestURL, manifestVersion, err)
+		redact.Logf("strajaguard manifest signature parse failed for %s version=%s: %v", manifestURL, manifestVersion, err)
 		return err
 	}
 
 	if !ed25519.Verify(pk, manifestBytes, sigBytes) {
-		log.Printf("strajaguard manifest signature verify failed for %s version=%s", manifestURL, manifestVersion)
+		redact.Logf("strajaguard manifest signature verify failed for %s version=%s", manifestURL, manifestVersion)
 		return errors.New("manifest signature verification failed")
 	}
-	log.Printf("strajaguard manifest signature verified for %s version=%s", manifestURL, manifestVersion)
+	redact.Logf("strajaguard manifest signature verified for %s version=%s", manifestURL, manifestVersion)
 	return nil
 }
 
@@ -466,8 +483,11 @@ func downloadBundleFiles(ctx context.Context, client *http.Client, baseDir strin
 	}
 	baseURL = strings.TrimSpace(baseURL)
 	for _, f := range files {
-		log.Printf("strajaguard downloading %s (%d bytes)", f.Path, f.Size)
-		localPath := filepath.Join(baseDir, filepath.FromSlash(f.Path))
+		redact.Logf("strajaguard downloading %s (%d bytes)", f.Path, f.Size)
+		localPath, err := resolveBundlePath(baseDir, filepath.FromSlash(f.Path))
+		if err != nil {
+			return fmt.Errorf("manifest path %s rejected: %w", f.Path, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 			return fmt.Errorf("create dir for %s: %w", f.Path, err)
 		}
@@ -518,6 +538,22 @@ func downloadBundleFiles(ctx context.Context, client *http.Client, baseDir strin
 		}
 	}
 	return nil
+}
+
+func resolveBundlePath(baseDir, rel string) (string, error) {
+	base := filepath.Clean(baseDir)
+	if rel == "" {
+		return "", errors.New("empty path")
+	}
+	if strings.HasPrefix(rel, "/") || strings.Contains(rel, `:\`) {
+		return "", errors.New("absolute paths not allowed")
+	}
+	target := filepath.Join(base, rel)
+	normalized := filepath.Clean(target)
+	if !strings.HasPrefix(normalized, base) {
+		return "", errors.New("path escapes bundle dir")
+	}
+	return normalized, nil
 }
 
 type licenseValidateResponse struct {
@@ -576,7 +612,7 @@ func (p *progressLogger) Write(b []byte) (int, error) {
 		if p.total > 0 {
 			percent = p.downloaded * 100 / p.total
 		}
-		log.Printf("strajaguard download progress %s: %d/%d bytes (%d%%)", p.name, p.downloaded, p.total, percent)
+		redact.Logf("strajaguard download progress %s: %d/%d bytes (%d%%)", p.name, p.downloaded, p.total, percent)
 		p.next += p.step
 	}
 	return n, nil
@@ -587,5 +623,5 @@ func (p *progressLogger) Finish() {
 		return
 	}
 	duration := time.Since(p.start).Round(time.Second)
-	log.Printf("strajaguard download complete %s: %d bytes in %s", p.name, p.downloaded, duration)
+	redact.Logf("strajaguard download complete %s: %d bytes in %s", p.name, p.downloaded, duration)
 }

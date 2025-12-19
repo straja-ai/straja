@@ -3,13 +3,13 @@ package policy
 import (
 	"context"
 	"errors"
-	"log"
 	"strings"
 	"time"
 
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/inference"
 	"github.com/straja-ai/straja/internal/intel"
+	"github.com/straja-ai/straja/internal/redact"
 	"github.com/straja-ai/straja/internal/safety"
 	"github.com/straja-ai/straja/internal/strajaguard"
 )
@@ -118,15 +118,15 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 				sanitized, changed := bundle.RedactInput(category, content)
 				if changed {
 					req.Messages[lastIdx].Content = sanitized
-					log.Printf("policy redaction [%s] project=%s before=%q after=%q",
+					redact.Logf("policy redaction [%s] project=%s before=%q after=%q",
 						category, req.ProjectID, truncatePreview(content), truncatePreview(sanitized))
 					content = sanitized
 				}
 			} else {
-				log.Printf("policy: redaction requested for category=%s but intel engine does not support RedactInput; leaving content unchanged", category)
+				redact.Logf("policy: redaction requested for category=%s but intel engine does not support RedactInput; leaving content unchanged", category)
 			}
 		case actionLog:
-			log.Printf("policy hit [%s] project=%s content=%q",
+			redact.Logf("policy hit [%s] project=%s content=%q",
 				category, req.ProjectID, truncatePreview(content))
 		case actionIgnore:
 			// nothing
@@ -137,7 +137,7 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 	result, err := p.intel.AnalyzeInput(ctx, content)
 	if err != nil {
 		// conservative behaviour: log and continue without blocking
-		log.Printf("intel analyze input error: %v", err)
+		redact.Logf("intel analyze input error: %v", err)
 		return nil
 	}
 	cats := result.Categories
@@ -153,7 +153,7 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 			if req.Timings != nil {
 				req.Timings.StrajaGuard += sgElapsed
 			}
-			log.Printf("strajaguard evaluate failed after %s: %v", sgElapsed, evalErr)
+			redact.Logf("strajaguard evaluate failed after %s: %v", sgElapsed, evalErr)
 		} else if res != nil {
 			sgElapsed := time.Since(sgStart)
 			req.SecurityScores = res.Scores
@@ -162,7 +162,7 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 			if req.Timings != nil {
 				req.Timings.StrajaGuard += sgElapsed
 			}
-			log.Printf("debug: strajaguard_inference_ms=%.2f project=%s",
+			redact.Logf("debug: strajaguard_inference_ms=%.2f project=%s",
 				float64(sgElapsed.Microseconds())/1000, req.ProjectID)
 		}
 	}
@@ -190,10 +190,10 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 					req.Messages[lastIdx].Content = redacted
 				}
 			case "warn":
-				log.Printf("policy warn [%s] project=%s confidence=%.2f content=%q sources=%v",
+				redact.Logf("policy warn [%s] project=%s confidence=%.2f content=%q sources=%v",
 					hit.Category, req.ProjectID, hit.Confidence, truncatePreview(content), hit.Sources)
 			case "log":
-				log.Printf("policy log [%s] project=%s confidence=%.2f content=%q sources=%v",
+				redact.Logf("policy log [%s] project=%s confidence=%.2f content=%q sources=%v",
 					hit.Category, req.ProjectID, hit.Confidence, truncatePreview(content), hit.Sources)
 			}
 		}
@@ -241,7 +241,7 @@ func (p *Basic) AfterModel(ctx context.Context, req *inference.Request, resp *in
 
 	result, err := p.intel.AnalyzeOutput(ctx, original)
 	if err != nil {
-		log.Printf("intel analyze output error: %v", err)
+		redact.Logf("intel analyze output error: %v", err)
 		return nil
 	}
 
@@ -260,7 +260,7 @@ func (p *Basic) AfterModel(ctx context.Context, req *inference.Request, resp *in
 			resp.Message.Content = redacted
 		}
 	} else {
-		log.Printf("policy: output redaction requested but intel engine does not support RedactOutput; leaving output unchanged")
+		redact.Logf("policy: output redaction requested but intel engine does not support RedactOutput; leaving output unchanged")
 	}
 
 	return nil
@@ -392,7 +392,7 @@ func (p *Basic) tryRedact(req *inference.Request, category, content string) stri
 	}
 	sanitized, changed := bundle.RedactInput(category, content)
 	if changed {
-		log.Printf("policy redaction [%s] project=%s before=%q after=%q",
+		redact.Logf("policy redaction [%s] project=%s before=%q after=%q",
 			category, req.ProjectID, truncatePreview(content), truncatePreview(sanitized))
 		return sanitized
 	}

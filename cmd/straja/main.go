@@ -2,10 +2,10 @@ package main
 
 import (
 	"flag"
-	"log"
 
 	"github.com/straja-ai/straja/internal/auth"
 	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja/internal/redact"
 	"github.com/straja-ai/straja/internal/server"
 )
 
@@ -17,13 +17,16 @@ func main() {
 	// Load config
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		redact.Fatalf("failed to load config: %v", err)
+	}
+	if err := config.Validate(cfg); err != nil {
+		redact.Fatalf("invalid config: %v", err)
 	}
 
 	// Build auth mappings
 	authz, err := auth.NewFromConfig(cfg)
 	if err != nil {
-		log.Fatalf("failed to initialize auth: %v", err)
+		redact.Fatalf("failed to initialize auth: %v", err)
 	}
 
 	addr := cfg.Server.Addr
@@ -33,8 +36,8 @@ func main() {
 
 	srv := server.New(cfg, authz)
 
-	log.Printf("Starting Straja on %s...", addr)
+	redact.Logf("Starting Straja on %s...", addr)
 	if err := srv.Start(addr); err != nil {
-		log.Fatalf("server error: %v", err)
+		redact.Fatalf("server error: %v", err)
 	}
 }

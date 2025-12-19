@@ -3,10 +3,11 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,30 +26,55 @@ import (
 	"github.com/straja-ai/straja/internal/mockprovider"
 	"github.com/straja-ai/straja/internal/policy"
 	"github.com/straja-ai/straja/internal/provider"
+	"github.com/straja-ai/straja/internal/redact"
 	"github.com/straja-ai/straja/internal/strajaguard"
 )
 
 // Server wraps the HTTP server components for Straja.
 type Server struct {
-	mux              *http.ServeMux
-	cfg              *config.Config
-	auth             *auth.Auth
-	policy           policy.Engine
-	providers        map[string]provider.Provider // name -> provider
-	defaultProvider  string                       // name of default provider
-	activation       activation.Emitter
-	loggingLevel     string
-	projectProviders map[string]string // project ID -> provider name
-	licenseClaims    *license.LicenseClaims
-	intelEnabled     bool
-	licenseKey       string
-	intelStatus      string
-	httpClient       *http.Client
-	inFlightLimiter  chan struct{}
-	strajaGuardModel *strajaguard.StrajaGuardModel
-	activeBundleVer  string
-	requireML        bool
-	allowRegexOnly   bool
+	mux               *http.ServeMux
+	cfg               *config.Config
+	auth              *auth.Auth
+	policy            policy.Engine
+	providers         map[string]provider.Provider // name -> provider
+	defaultProvider   string                       // name of default provider
+	activation        activation.Emitter
+	loggingLevel      string
+	projectProviders  map[string]string // project ID -> provider name
+	licenseClaims     *license.LicenseClaims
+	intelEnabled      bool
+	licenseKey        string
+	intelStatus       string
+	intelMeta         *strajaguard.ValidationMeta
+	strajaGuardStatus string
+	strajaGuardMeta   *strajaguard.ValidationMeta
+	httpClient        *http.Client
+	inFlightLimiter   chan struct{}
+	strajaGuardModel  *strajaguard.StrajaGuardModel
+	activeBundleVer   string
+	requireML         bool
+	allowRegexOnly    bool
+}
+
+func isNetworkyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "timeout"),
+		strings.Contains(msg, "deadline"),
+		strings.Contains(msg, "temporary"),
+		strings.Contains(msg, "connection reset"),
+		strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "dial tcp"),
+		strings.Contains(msg, "tls handshake"),
+		strings.Contains(msg, "503"),
+		strings.Contains(msg, "502"):
+		return true
+	default:
+		return false
+	}
 }
 
 type consoleProject struct {
@@ -72,7 +98,7 @@ func (s *Server) handleConsoleProjects(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(projects); err != nil {
-		log.Printf("failed to write console projects: %v", err)
+		redact.Logf("failed to write console projects: %v", err)
 	}
 }
 
@@ -86,6 +112,10 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+
+	if s.cfg.Server.MaxRequestBodyBytes > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.Server.MaxRequestBodyBytes)
 	}
 
 	var reqBody consoleChatRequest
@@ -109,7 +139,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	prov, ok := s.providers[providerName]
 	if !ok {
-		log.Printf("no provider %q for project %q (console)", providerName, reqBody.ProjectID)
+		redact.Logf("no provider %q for project %q (console)", providerName, reqBody.ProjectID)
 		writeOpenAIError(w, http.StatusInternalServerError, "Straja misconfiguration: unknown provider for project", "configuration_error")
 		return
 	}
@@ -122,6 +152,12 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	infReq.Timings = &inference.Timings{}
 	decision := "allow"
 	defer logTimingDebug(reqBody.ProjectID, providerName, decision, infReq.Timings)
+
+	if err := s.validateChatRequest(infReq, providerName); err != nil {
+		decision = "blocked_request"
+		writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
 
 	ctx := r.Context()
 	if s.cfg.Server.UpstreamTimeout > 0 {
@@ -152,7 +188,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		infReq.Timings.Provider = time.Since(providerStart)
 	}
 	if err != nil {
-		log.Printf("provider %q error (console): %v", providerName, err)
+		redact.Logf("provider %q error (console): %v", providerName, err)
 		decision = "error_provider"
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
@@ -179,7 +215,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(respBody); err != nil {
-		log.Printf("failed to write console response: %v", err)
+		redact.Logf("failed to write console response: %v", err)
 	}
 }
 
@@ -188,220 +224,176 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux := http.NewServeMux()
 
 	// Resolve license key with env override (env wins; placeholder treated as empty).
-	licenseKey := strings.TrimSpace(cfg.Intelligence.LicenseKey)
+	licenseKey := strings.TrimSpace(cfg.ResolvedLicenseKey)
 	envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv)
-	envVal := ""
-	if envName != "" {
-		envVal = strings.TrimSpace(os.Getenv(envName))
-	}
-	if envVal != "" {
-		licenseKey = envVal
-	}
-	if isPlaceholderLicenseKey(licenseKey) {
-		licenseKey = ""
-	}
+	redact.Logf("license: using %s set=%t", envName, licenseKey != "")
 
 	// Build intelligence engine (bundle-backed regex or noop) with offline license verification.
 	var (
-		intelEngine   intel.Engine
+		intelEngine   intel.Engine = intel.NewRegexBundle(cfg.Policy)
 		licenseClaims *license.LicenseClaims
 		intelEnabled  = cfg.Intelligence.Enabled
-		intelStatus   = "enabled"
+		intelStatus   = "online_validated"
 	)
 
 	if !intelEnabled {
-		log.Printf("intelligence disabled via config; running in routing-only mode")
+		redact.Logf("intelligence disabled via config; running in routing-only mode")
 		intelEngine = intel.NewNoop()
-		intelStatus = "disabled_config"
+		intelStatus = "disabled_missing_license"
 	} else {
 		if strings.TrimSpace(licenseKey) == "" {
-			log.Printf("license key not provided; disabling intelligence (routing-only mode)")
-			intelEngine = intel.NewNoop()
-			intelEnabled = false
+			redact.Logf("license key not provided; running regex-only (no ML bundle)")
 			intelStatus = "disabled_missing_license"
 		} else {
 			pubKey, err := license.DefaultPublicKey()
 			if err != nil {
-				log.Printf("license public key unavailable: %v; disabling intelligence (routing-only mode)", err)
-				intelEngine = intel.NewNoop()
-				intelEnabled = false
-				intelStatus = "disabled_missing_public_key"
+				redact.Logf("license public key unavailable: %v; running regex-only", err)
+				intelStatus = "offline_cached_bundle"
 			} else {
 				claims, err := license.VerifyLicenseKey(licenseKey, pubKey)
 				if err != nil {
-					log.Printf("license verification failed: %v; disabling intelligence (routing-only mode)", err)
-					intelEngine = intel.NewNoop()
-					intelEnabled = false
-					intelStatus = "disabled_invalid_license"
+					redact.Logf("license verification failed: %v; running regex-only", err)
+					intelStatus = "offline_cached_bundle"
 				} else {
 					licenseClaims = claims
 					intelEngine = intel.NewRegexBundle(cfg.Policy)
-					intelStatus = "enabled"
+					intelStatus = "online_validated"
 				}
 			}
 		}
 	}
 
-	// Build StrajaGuard model (optional)
+	// Build StrajaGuard model (optional, offline-first)
 	var (
 		sgModel             *strajaguard.StrajaGuardModel
 		activeBundleVersion string
+		intelMeta           *strajaguard.ValidationMeta
+		sgStatus            string
+		sgMeta              *strajaguard.ValidationMeta
 	)
+	sgStatus = "disabled_missing_bundle"
 	strajaGuardDir := cfg.Security.BundleDir
 	if cfg.Intel.StrajaGuardV1.IntelDir != "" {
 		strajaGuardDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, "strajaguard_v1")
 		cfg.Security.BundleDir = strajaGuardDir
 	}
 
-	if !cfg.Security.Enabled {
-		log.Printf("strajaguard disabled via security config; running regex-only")
-	} else if !cfg.Intel.StrajaGuardV1.Enabled {
-		log.Printf("strajaguard disabled via intel config; running regex-only")
+	if !cfg.Security.Enabled || !cfg.Intel.StrajaGuardV1.Enabled {
+		redact.Logf("strajaguard disabled via config; running regex-only")
+		sgStatus = "disabled_missing_bundle"
 	} else {
 		rt := strajaguard.ResolveRuntime(strajaguard.RuntimeConfig{
 			MaxSessions:  cfg.StrajaGuard.MaxSessions,
 			IntraThreads: cfg.StrajaGuard.IntraThreads,
 			InterThreads: cfg.StrajaGuard.InterThreads,
 		})
-		log.Printf("strajaguard runtime: max_sessions=%d intra_threads=%d inter_threads=%d source=max_sessions=%s intra=%s inter=%s",
+		redact.Logf("strajaguard runtime: max_sessions=%d intra_threads=%d inter_threads=%d source=max_sessions=%s intra=%s inter=%s",
 			rt.MaxSessions, rt.IntraThreads, rt.InterThreads,
 			rt.MaxSessionsSource, rt.IntraSource, rt.InterSource)
+
 		allowRegexOnly := cfg.Intel.StrajaGuardV1.AllowRegexOnly
-		updateOnStart := cfg.Intel.StrajaGuardV1.UpdateOnStart
 		requireML := cfg.Intel.StrajaGuardV1.RequireML
 		mustExit := requireML && !allowRegexOnly
 		fail := func(format string, args ...interface{}) {
 			if mustExit {
-				log.Fatalf(format, args...)
+				redact.Fatalf(format, args...)
 			}
-			log.Printf(format, args...)
-		}
-		sgLicenseKey := strings.TrimSpace(cfg.Intel.StrajaGuardV1.LicenseKey)
-		if envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv); envName != "" {
-			if envVal := strings.TrimSpace(os.Getenv(envName)); envVal != "" {
-				sgLicenseKey = envVal
-			}
-		}
-		if isPlaceholderLicenseKey(sgLicenseKey) {
-			sgLicenseKey = ""
+			redact.Logf(format, args...)
 		}
 
+		state, _ := strajaguard.LoadBundleState(strajaGuardDir)
+		currentVersion := strings.TrimSpace(state.CurrentVersion)
+		var cachedMeta *strajaguard.ValidationMeta
+		if meta, err := strajaguard.LoadValidationMeta(strajaGuardDir); err == nil {
+			cachedMeta = &meta
+		}
+
+		sgLicenseKey := strings.TrimSpace(cfg.ResolvedLicenseKey)
 		if sgLicenseKey == "" {
-			log.Printf("strajaguard license key not provided; running regex-only")
+			if currentVersion != "" {
+				redact.Logf("strajaguard: cached bundle present (version=%s) but not used because license is missing", currentVersion)
+				sgStatus = "disabled_missing_license"
+			} else {
+				sgStatus = "disabled_missing_license"
+			}
+		} else if err := os.MkdirAll(strajaGuardDir, 0o755); err != nil {
+			fail("strajaguard: cannot create bundle dir %s: %v; running regex-only", strajaGuardDir, err)
 		} else {
 			ctx := context.Background()
-			if err := os.MkdirAll(strajaGuardDir, 0o755); err != nil {
-				fail("strajaguard: cannot create bundle dir %s: %v; running regex-only", strajaGuardDir, err)
-			} else {
-				state := strajaguard.BundleState{}
-				skipLicense := false
 
-				loadedState, err := strajaguard.LoadBundleState(strajaGuardDir)
-				if err == nil {
-					state = loadedState
-					if strings.TrimSpace(state.CurrentVersion) != "" {
-						versionDir := filepath.Join(strajaGuardDir, state.CurrentVersion)
-						if _, statErr := os.Stat(versionDir); statErr == nil {
-							log.Printf("strajaguard: loading existing bundle current_version=%s", state.CurrentVersion)
-							model, loadErr := strajaguard.LoadModel(versionDir, cfg.Security.SeqLen, rt)
+			valRes, outcome, err := strajaguard.ValidateLicense(ctx, cfg.Intel.StrajaGuardV1.LicenseServerBaseURL, sgLicenseKey, currentVersion, cfg.Intel.StrajaGuardV1.LicenseValidateTimeoutSeconds)
+			if err == nil && valRes != nil && outcome == strajaguard.ValidateOK {
+				redact.Logf("strajaguard: license validate returned version=%s update_available=%t", valRes.BundleInfo.Version, valRes.BundleInfo.UpdateAvailable)
+				dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
+				if err != nil {
+					redact.Logf("strajaguard: bundle version=%s verification failed: %v", valRes.BundleInfo.Version, err)
+				} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt); loadErr != nil {
+					redact.Logf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
+				} else {
+					state.PreviousVersion = state.CurrentVersion
+					state.CurrentVersion = valRes.BundleInfo.Version
+					_ = strajaguard.SaveBundleState(strajaGuardDir, state)
+					fp := licenseFingerprint(sgLicenseKey)
+					meta := strajaguard.ValidationMeta{
+						Version:            state.CurrentVersion,
+						LastValidatedAt:    time.Now().UTC().Format(time.RFC3339),
+						LicenseFingerprint: fp,
+						Source:             "online",
+					}
+					if err := strajaguard.SaveValidationMeta(strajaGuardDir, meta); err == nil {
+						sgMeta = &meta
+					}
+					sgModel = model
+					activeBundleVersion = state.CurrentVersion
+					sgStatus = "online_validated"
+					redact.Logf("strajaguard: bundle version=%s verified and activated", state.CurrentVersion)
+					redact.Logf("strajaguard: pool_size=%d intra_threads=%d inter_threads=%d seq_len=%d",
+						sgModel.PoolSize(), sgModel.IntraThreads(), sgModel.InterThreads(), cfg.Security.SeqLen)
+				}
+			} else {
+				switch outcome {
+				case strajaguard.ValidateInvalidLicense:
+					redact.Logf("strajaguard: license invalid; refusing cached bundle; ml disabled")
+					sgStatus = "disabled_invalid_license"
+				case strajaguard.ValidateNetworkError:
+					redact.Logf("strajaguard: license validate failed: %v", err)
+					if currentVersion != "" {
+						if integErr := strajaguard.VerifyBundleIntegrity(strajaGuardDir, currentVersion); integErr == nil {
+							model, loadErr := strajaguard.LoadModel(filepath.Join(strajaGuardDir, currentVersion), cfg.Security.SeqLen, rt)
 							if loadErr != nil {
-								if mustExit {
-									log.Fatalf("strajaguard: failed to load existing bundle version=%s: %v", state.CurrentVersion, loadErr)
-								}
-								log.Printf("strajaguard: failed to load existing bundle version=%s: %v; running regex-only (skipping startup download)", state.CurrentVersion, loadErr)
-								skipLicense = true
+								sgStatus = "disabled_invalid_bundle"
 							} else {
 								sgModel = model
-								activeBundleVersion = state.CurrentVersion
+								activeBundleVersion = currentVersion
+								sgStatus = "offline_cached_bundle"
+								if cachedMeta != nil {
+									sgMeta = cachedMeta
+								}
+								redact.Logf("strajaguard: using offline cached bundle version=%s (reason=validate_network_error)", currentVersion)
 							}
 						} else {
-							log.Printf("strajaguard: state current_version=%s but directory missing; will fetch version from license server", state.CurrentVersion)
+							sgStatus = "disabled_invalid_bundle"
 						}
 					} else {
-						log.Printf("strajaguard: no current_version in state; will fetch version from license server")
+						sgStatus = "disabled_missing_bundle"
 					}
-				} else if errors.Is(err, strajaguard.ErrBundleStateNotFound) {
-					log.Printf("strajaguard: no existing bundle; will fetch version from license server")
-				} else {
-					log.Printf("strajaguard: load bundle state failed: %v; treating as fresh install", err)
-				}
-
-				if !skipLicense {
-					valRes, err := strajaguard.ValidateLicense(ctx, cfg.Intel.StrajaGuardV1.LicenseServerBaseURL, sgLicenseKey, state.CurrentVersion, cfg.Intel.StrajaGuardV1.LicenseValidateTimeoutSeconds)
-					if err != nil {
-						if sgModel != nil {
-							log.Printf("strajaguard: license validate failed: %v; continuing with existing bundle current_version=%s", err, activeBundleVersion)
-						} else if mustExit {
-							log.Fatalf("strajaguard: license validate failed and no active bundle: %v", err)
-						} else {
-							log.Printf("strajaguard: license validate failed and no active bundle: %v; running regex-only", err)
-						}
-					} else {
-						log.Printf("strajaguard: license validate returned version=%s update_available=%t", valRes.BundleInfo.Version, valRes.BundleInfo.UpdateAvailable)
-						currentVersion := strings.TrimSpace(state.CurrentVersion)
-
-						// Fresh install: no current bundle on disk.
-						if currentVersion == "" {
-							dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
-							if err != nil {
-								if mustExit {
-									log.Fatalf("strajaguard: bundle version=%s verification failed: %v", valRes.BundleInfo.Version, err)
-								}
-								log.Printf("strajaguard: bundle version=%s verification failed: %v; running regex-only", valRes.BundleInfo.Version, err)
-							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt); loadErr != nil {
-								if mustExit {
-									log.Fatalf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
-								}
-								log.Printf("strajaguard: bundle version=%s downloaded but failed to load: %v; running regex-only", valRes.BundleInfo.Version, loadErr)
-							} else {
-								state.PreviousVersion = ""
-								state.CurrentVersion = valRes.BundleInfo.Version
-								if err := strajaguard.SaveBundleState(strajaGuardDir, state); err != nil {
-									log.Printf("strajaguard: failed to save bundle state for version=%s: %v", state.CurrentVersion, err)
-								} else {
-									sgModel = model
-									activeBundleVersion = state.CurrentVersion
-									log.Printf("strajaguard: bundle version=%s verified and activated; previous_version=%s", state.CurrentVersion, state.PreviousVersion)
-									log.Printf("strajaguard: pool_size=%d intra_threads=%d inter_threads=%d seq_len=%d",
-										sgModel.PoolSize(), sgModel.IntraThreads(), sgModel.InterThreads(), cfg.Security.SeqLen)
-								}
-							}
-						} else if updateOnStart && valRes.BundleInfo.UpdateAvailable && valRes.BundleInfo.Version != currentVersion {
-							dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
-							if err != nil {
-								log.Printf("strajaguard: bundle version=%s verification failed: %v; keeping current_version=%s", valRes.BundleInfo.Version, err, currentVersion)
-							} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt); loadErr != nil {
-								log.Printf("strajaguard: bundle version=%s installed but failed to load: %v; keeping current_version=%s", valRes.BundleInfo.Version, loadErr, currentVersion)
-							} else {
-								state.PreviousVersion = currentVersion
-								state.CurrentVersion = valRes.BundleInfo.Version
-								if err := strajaguard.SaveBundleState(strajaGuardDir, state); err != nil {
-									log.Printf("strajaguard: failed to save bundle state for version=%s: %v; keeping current_version=%s", state.CurrentVersion, err, currentVersion)
-								} else {
-									sgModel = model
-									activeBundleVersion = state.CurrentVersion
-									log.Printf("strajaguard: bundle version=%s verified and activated; previous_version=%s", state.CurrentVersion, state.PreviousVersion)
-									log.Printf("strajaguard: pool_size=%d intra_threads=%d inter_threads=%d seq_len=%d",
-										sgModel.PoolSize(), sgModel.IntraThreads(), sgModel.InterThreads(), cfg.Security.SeqLen)
-								}
-							}
-						} else if valRes.BundleInfo.UpdateAvailable && !updateOnStart {
-							log.Printf("strajaguard: update available version=%s but STRAJA_UPDATE_ON_START is disabled; continuing with current_version=%s", valRes.BundleInfo.Version, currentVersion)
-						}
-					}
+				default:
+					redact.Logf("strajaguard: license validate failed (other): %v; cached bundle not used", err)
+					sgStatus = "disabled_invalid_license"
 				}
 			}
 
 			if sgModel != nil {
 				if dur, err := sgModel.Warmup("hello"); err != nil {
 					if mustExit {
-						log.Fatalf("strajaguard: warmup inference failed: %v", err)
+						redact.Fatalf("strajaguard: warmup inference failed: %v", err)
 					}
-					log.Printf("strajaguard: warmup inference failed: %v; running regex-only", err)
+					redact.Logf("strajaguard: warmup inference failed: %v; running regex-only", err)
 					sgModel = nil
 					activeBundleVersion = ""
+					sgStatus = "disabled_invalid_bundle"
 				} else {
-					log.Printf("strajaguard: warmup inference ok duration_ms=%.2f", float64(dur.Microseconds())/1000)
+					redact.Logf("strajaguard: warmup inference ok duration_ms=%.2f", float64(dur.Microseconds())/1000)
 				}
 			}
 		}
@@ -413,8 +405,8 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	// Build providers
 	provs, provErr := buildProviderRegistry(cfg)
 	if provErr != nil {
-		log.Printf("warning: failed to build providers from config: %v", provErr)
-		log.Printf("falling back to echo provider")
+		redact.Logf("warning: failed to build providers from config: %v", provErr)
+		redact.Logf("falling back to echo provider")
 		provs = map[string]provider.Provider{
 			"echo": provider.NewEcho(),
 		}
@@ -444,25 +436,28 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	}
 
 	s := &Server{
-		mux:              mux,
-		cfg:              cfg,
-		auth:             authz,
-		policy:           pol,
-		providers:        provs,
-		defaultProvider:  cfg.DefaultProvider,
-		activation:       activation.NewStdout(),
-		loggingLevel:     strings.ToLower(cfg.Logging.ActivationLevel),
-		projectProviders: projectProviders,
-		licenseClaims:    licenseClaims,
-		intelEnabled:     intelEnabled,
-		licenseKey:       licenseKey,
-		intelStatus:      intelStatus,
-		httpClient:       &http.Client{Timeout: licenseHTTPTimeout},
-		inFlightLimiter:  limiter,
-		strajaGuardModel: sgModel,
-		activeBundleVer:  activeBundleVersion,
-		requireML:        cfg.Intel.StrajaGuardV1.RequireML,
-		allowRegexOnly:   cfg.Intel.StrajaGuardV1.AllowRegexOnly,
+		mux:               mux,
+		cfg:               cfg,
+		auth:              authz,
+		policy:            pol,
+		providers:         provs,
+		defaultProvider:   cfg.DefaultProvider,
+		activation:        activation.NewStdout(),
+		loggingLevel:      strings.ToLower(cfg.Logging.ActivationLevel),
+		projectProviders:  projectProviders,
+		licenseClaims:     licenseClaims,
+		intelEnabled:      intelEnabled,
+		licenseKey:        licenseKey,
+		intelStatus:       intelStatus,
+		intelMeta:         intelMeta,
+		httpClient:        &http.Client{Timeout: licenseHTTPTimeout},
+		inFlightLimiter:   limiter,
+		strajaGuardModel:  sgModel,
+		activeBundleVer:   activeBundleVersion,
+		strajaGuardStatus: sgStatus,
+		strajaGuardMeta:   sgMeta,
+		requireML:         cfg.Intel.StrajaGuardV1.RequireML,
+		allowRegexOnly:    cfg.Intel.StrajaGuardV1.AllowRegexOnly,
 	}
 
 	bundleTimeout := time.Duration(cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds) * time.Second
@@ -470,7 +465,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		bundleTimeout = 30 * time.Second
 	}
 
-	log.Printf("gateway hardening: read_header_timeout=%s read_timeout=%s write_timeout=%s idle_timeout=%s max_body_bytes=%d max_nonstream_response_bytes=%d max_in_flight=%d upstream_timeout=%s license_validate_timeout=%s bundle_download_timeout=%s require_ml=%t allow_regex_only=%t",
+	redact.Logf("gateway hardening: read_header_timeout=%s read_timeout=%s write_timeout=%s idle_timeout=%s max_body_bytes=%d max_nonstream_response_bytes=%d max_in_flight=%d upstream_timeout=%s license_validate_timeout=%s bundle_download_timeout=%s require_ml=%t allow_regex_only=%t",
 		cfg.Server.ReadHeaderTimeout,
 		cfg.Server.ReadTimeout,
 		cfg.Server.WriteTimeout,
@@ -498,7 +493,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 
 	if s.intelEnabled {
 		if err := s.ValidateLicenseOnline(context.Background()); err != nil {
-			log.Printf("license online validation failed (continuing with offline-verified license): %v", err)
+			redact.Logf("license online validation failed (continuing with offline-verified license): %v", err)
 		}
 	}
 
@@ -548,7 +543,7 @@ func (s *Server) ValidateLicenseOnline(ctx context.Context) error {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("license online validation warning: %v", err)
+		redact.Logf("license online validation warning: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -559,7 +554,7 @@ func (s *Server) ValidateLicenseOnline(ctx context.Context) error {
 		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		log.Printf("license online validation decode error: %v", err)
+		redact.Logf("license online validation decode error: %v", err)
 		return err
 	}
 
@@ -585,11 +580,11 @@ func (s *Server) disableIntelligence(reason string) {
 	if !s.intelEnabled {
 		return
 	}
-	log.Printf("disabling intelligence: %s", reason)
+	redact.Logf("disabling intelligence: %s", reason)
 	s.intelEnabled = false
 	s.licenseClaims = nil
-	s.policy = policy.NewBasic(s.cfg.Policy, s.cfg.Security, intel.NewNoop(), nil)
-	s.intelStatus = "disabled_license_invalid"
+	s.policy = policy.NewBasic(s.cfg.Policy, s.cfg.Security, intel.NewRegexBundle(s.cfg.Policy), s.strajaGuardModel)
+	s.intelStatus = "regex_only_invalid_license"
 }
 
 // buildProviderRegistry constructs all configured providers.
@@ -603,9 +598,12 @@ func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, er
 	for name, pcfg := range cfg.Providers {
 		switch pcfg.Type {
 		case "openai":
-			apiKey := os.Getenv(pcfg.APIKeyEnv)
+			apiKey := strings.TrimSpace(os.Getenv(pcfg.APIKeyEnv))
 			if apiKey == "" {
-				return nil, fmt.Errorf("provider %q: environment variable %s is empty", name, pcfg.APIKeyEnv)
+				apiKey = strings.TrimSpace(pcfg.APIKey)
+			}
+			if apiKey == "" {
+				return nil, fmt.Errorf("provider %q: api key missing (env %s empty)", name, pcfg.APIKeyEnv)
 			}
 			reg[name] = provider.NewOpenAI(pcfg.BaseURL, apiKey, cfg.Server.UpstreamTimeout, cfg.Server.MaxNonStreamResponseBytes)
 		case "mock":
@@ -621,7 +619,7 @@ func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, er
 				baseURL = "http://127.0.0.1:18080"
 			}
 			reg[name] = provider.NewOpenAI(baseURL, os.Getenv(pcfg.APIKeyEnv), cfg.Server.UpstreamTimeout, cfg.Server.MaxNonStreamResponseBytes)
-			log.Printf("provider %q using mock upstream at %s", name, baseURL)
+			redact.Logf("provider %q using mock upstream at %s", name, baseURL)
 		default:
 			return nil, fmt.Errorf("provider %q: unsupported type %q", name, pcfg.Type)
 		}
@@ -693,7 +691,7 @@ func (s *Server) Start(addr string) error {
 		IdleTimeout:       s.cfg.Server.IdleTimeout,
 	}
 
-	log.Printf("Straja Gateway running on %s (read_header_timeout=%s, read_timeout=%s, write_timeout=%s, idle_timeout=%s)", addr, s.cfg.Server.ReadHeaderTimeout, s.cfg.Server.ReadTimeout, s.cfg.Server.WriteTimeout, s.cfg.Server.IdleTimeout)
+	redact.Logf("Straja Gateway running on %s (read_header_timeout=%s, read_timeout=%s, write_timeout=%s, idle_timeout=%s)", addr, s.cfg.Server.ReadHeaderTimeout, s.cfg.Server.ReadTimeout, s.cfg.Server.WriteTimeout, s.cfg.Server.IdleTimeout)
 	return server.ListenAndServe()
 }
 
@@ -810,6 +808,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.cfg.Server.MaxRequestBodyBytes > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.Server.MaxRequestBodyBytes)
+	}
+
 	// Auth: extract API key and map to project
 	apiKey, ok := parseBearerToken(r.Header.Get("Authorization"))
 	if !ok || apiKey == "" {
@@ -848,7 +850,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	prov, ok := s.providers[providerName]
 	if !ok {
-		log.Printf("no provider %q for project %q", providerName, project.ID)
+		redact.Logf("no provider %q for project %q", providerName, project.ID)
 		writeOpenAIError(w, http.StatusInternalServerError, "Straja misconfiguration: unknown provider for project", "configuration_error")
 		return
 	}
@@ -858,6 +860,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	infReq.Timings = &inference.Timings{}
 	decision := "allow"
 	defer logTimingDebug(project.ID, providerName, decision, infReq.Timings)
+
+	if err := s.validateChatRequest(infReq, providerName); err != nil {
+		decision = "blocked_request"
+		writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
 
 	// 2) Before-model block
 	prePolicyStart := time.Now()
@@ -881,7 +889,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		infReq.Timings.Provider = time.Since(providerStart)
 	}
 	if err != nil {
-		log.Printf("provider %q error: %v", providerName, err)
+		redact.Logf("provider %q error: %v", providerName, err)
 		decision = "error_provider"
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
@@ -910,7 +918,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(respBody); err != nil {
-		log.Printf("failed to write response: %v", err)
+		redact.Logf("failed to write response: %v", err)
 	}
 }
 
@@ -930,6 +938,56 @@ func normalizeToInferenceRequest(projectID string, req *chatCompletionRequest) *
 		UserID:    "", // later: could be taken from request body or headers
 		Messages:  msgs,
 	}
+}
+
+func (s *Server) validateChatRequest(req *inference.Request, providerName string) error {
+	if req == nil || s == nil || s.cfg == nil {
+		return errors.New("request invalid")
+	}
+	maxMsgs := s.cfg.Server.MaxMessages
+	if maxMsgs > 0 && len(req.Messages) > maxMsgs {
+		return errors.New("Request too large")
+	}
+	maxChars := s.cfg.Server.MaxTotalMessageChars
+	if maxChars > 0 {
+		total := 0
+		for _, m := range req.Messages {
+			total += len(m.Content)
+			if total > maxChars {
+				return errors.New("Request too large")
+			}
+		}
+	}
+
+	if !s.isModelAllowed(req.Model, req.ProjectID, providerName) {
+		return errors.New("Model not allowed")
+	}
+	return nil
+}
+
+func (s *Server) isModelAllowed(model, projectID, providerName string) bool {
+	if model == "" {
+		return true
+	}
+	// project allowlist wins, then provider allowlist.
+	for _, p := range s.cfg.Projects {
+		if p.ID == projectID && len(p.AllowedModels) > 0 {
+			return containsString(p.AllowedModels, model)
+		}
+	}
+	if provCfg, ok := s.cfg.Providers[providerName]; ok && len(provCfg.AllowedModels) > 0 {
+		return containsString(provCfg.AllowedModels, model)
+	}
+	return true
+}
+
+func containsString(list []string, value string) bool {
+	for _, v := range list {
+		if strings.TrimSpace(v) == strings.TrimSpace(value) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildChatCompletionResponse converts an internal inference.Response into OpenAI-style JSON.
@@ -964,7 +1022,7 @@ func logTimingDebug(projectID, providerName, decision string, t *inference.Timin
 		return
 	}
 
-	log.Printf("debug: timings project=%s provider=%s decision=%s pre_policy_ms=%.2f provider_ms=%.2f post_policy_ms=%.2f strajaguard_ms=%.2f",
+	redact.Logf("debug: timings project=%s provider=%s decision=%s pre_policy_ms=%.2f provider_ms=%.2f post_policy_ms=%.2f strajaguard_ms=%.2f",
 		projectID,
 		providerName,
 		decision,
@@ -1050,20 +1108,33 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 			Flags:  append([]string(nil), req.SecurityFlags...),
 		}
 	}
+	if s.strajaGuardModel == nil || strings.HasPrefix(s.strajaGuardStatus, "disabled") {
+		sgPayload = nil
+	}
 
 	ev := &activation.Event{
-		Timestamp:         time.Now().UTC(),
-		ProjectID:         req.ProjectID,
-		Provider:          providerName,
-		Model:             req.Model,
-		Decision:          decision,
-		PromptPreview:     promptPreview,
-		CompletionPreview: completionPreview,
-		PolicyHits:        append([]string(nil), req.PolicyHits...),
-		IntelStatus:       s.intelStatus,
-		PolicyDecisions:   policyDecisions,
-		StrajaGuard:       sgPayload,
+		Timestamp:          time.Now().UTC(),
+		ProjectID:          req.ProjectID,
+		Provider:           providerName,
+		Model:              req.Model,
+		Decision:           decision,
+		PromptPreview:      promptPreview,
+		CompletionPreview:  completionPreview,
+		PolicyHits:         append([]string(nil), req.PolicyHits...),
+		IntelStatus:        s.intelStatus,
+		IntelBundleVersion: s.activeBundleVer,
+		PolicyDecisions:    policyDecisions,
+		StrajaGuard:        sgPayload,
+		StrajaGuardStatus:  s.strajaGuardStatus,
 	}
+	if s.intelMeta != nil {
+		ev.IntelLastValidatedAt = s.intelMeta.LastValidatedAt
+	}
+	if s.strajaGuardMeta != nil && ev.IntelLastValidatedAt == "" {
+		ev.IntelLastValidatedAt = s.strajaGuardMeta.LastValidatedAt
+	}
+	ev.PromptPreview = redact.String(ev.PromptPreview)
+	ev.CompletionPreview = redact.String(ev.CompletionPreview)
 
 	// Emit via configured emitter (stdout, later webhooks, etc.)
 	s.activation.Emit(ctx, ev)
@@ -1071,7 +1142,7 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 	// Also expose activation to clients via header so the console can show it
 	if w != nil {
 		if b, err := json.Marshal(ev); err == nil {
-			w.Header().Set("X-Straja-Activation", string(b))
+			w.Header().Set("X-Straja-Activation", redact.String(string(b)))
 		}
 	}
 }
@@ -1093,18 +1164,18 @@ func (s *Server) buildPreviews(req *inference.Request, resp *inference.Response)
 	case "full":
 		if len(req.Messages) > 0 {
 			last := req.Messages[len(req.Messages)-1]
-			promptPreview = truncate(last.Content, 500)
+			promptPreview = redact.String(truncate(last.Content, 500))
 		}
 		if resp != nil {
-			completionPreview = truncate(resp.Message.Content, 500)
+			completionPreview = redact.String(truncate(resp.Message.Content, 500))
 		}
 	case "redacted":
 		if len(req.Messages) > 0 {
 			last := req.Messages[len(req.Messages)-1]
-			promptPreview = truncate(simpleRedact(last.Content), 500)
+			promptPreview = redact.String(truncate(simpleRedact(last.Content), 500))
 		}
 		if resp != nil {
-			completionPreview = truncate(simpleRedact(resp.Message.Content), 500)
+			completionPreview = redact.String(truncate(simpleRedact(resp.Message.Content), 500))
 		}
 	default: // "metadata"
 		// no previews
@@ -1142,4 +1213,26 @@ func isPlaceholderLicenseKey(k string) bool {
 		}
 	}
 	return false
+}
+
+func licenseFingerprint(k string) string {
+	k = strings.TrimSpace(k)
+	if k == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte(k))
+	return hex.EncodeToString(h[:])[:8]
+}
+
+func reasonForFallback(err error) string {
+	if err == nil {
+		return "validate_failed_network"
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "invalid") || strings.Contains(strings.ToLower(err.Error()), "unknown") || strings.Contains(strings.ToLower(err.Error()), "unauthorized") {
+		return "invalid_license"
+	}
+	if isNetworkyError(err) {
+		return "validate_failed_network"
+	}
+	return "validate_failed"
 }

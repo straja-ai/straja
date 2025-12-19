@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/straja-ai/straja/internal/config"
@@ -66,8 +65,8 @@ func TestValidateLicenseOnline_NonOKDisablesIntel(t *testing.T) {
 	if s.intelEnabled {
 		t.Fatalf("expected intelEnabled to be false after revoke")
 	}
-	if !strings.HasPrefix(s.intelStatus, "disabled_") {
-		t.Fatalf("expected intelStatus disabled_, got %s", s.intelStatus)
+	if s.intelStatus != "regex_only_invalid_license" {
+		t.Fatalf("expected regex_only_invalid_license, got %s", s.intelStatus)
 	}
 }
 
