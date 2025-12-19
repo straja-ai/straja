@@ -97,12 +97,30 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 	var shouldBlock bool
 	var blockReason string
 
+	recordDecision := func(category string, act action) {
+		if category == "" {
+			return
+		}
+		for _, existing := range req.PolicyDecisions {
+			if existing.Category == category {
+				return
+			}
+		}
+		req.PolicyDecisions = append(req.PolicyDecisions, safety.PolicyHit{
+			Category:   category,
+			Action:     string(act),
+			Confidence: 1.0,
+			Sources:    []string{"regex"},
+		})
+	}
+
 	// NOTE: redaction itself is delegated to the intel bundle (no regex here).
 	handle := func(hit bool, act action, category, reason string) {
 		if !hit {
 			return
 		}
 		addPolicyHit(req, category)
+		recordDecision(category, act)
 
 		switch act {
 		case actionBlock:
