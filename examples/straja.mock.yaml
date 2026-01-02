@@ -35,10 +35,11 @@ intel:
     enabled: true
     allow_regex_only: true
     require_ml: false
+    intel_dir: "/var/lib/straja/intel"
 
 security:
   enabled: true
-  bundle_dir: "./intel/strajaguard_v1"
+  bundle_dir: "/var/lib/straja/bundles/strajaguard_v1"
   seq_len: 256
   prompt_injection:
     regex_enabled: true

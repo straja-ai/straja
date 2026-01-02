@@ -17,8 +17,9 @@ MOCK_GATEWAY_LOG := /tmp/straja_mock_gateway.log
 MOCK_GATEWAY_PID := /tmp/straja_mock_gateway.pid
 STRAJAGUARD_ONNX ?= intel/strajaguard_v1/strajaguard_v1.onnx
 BENCH_CONFIG ?= examples/straja.mock.yaml
+DOCKER_IMAGE ?= straja:local
 
-.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard
+.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run
 
 all: build
 
@@ -135,3 +136,37 @@ bench-strajaguard: build
 	@go build -o bin/straja-bench ./cmd/straja-bench
 	@echo ">> Running StrajaGuard benchmark ($(BENCH_CONFIG))..."
 	@MOCK_DELAY_MS=0 STRAJA_GUARD_MAX_SESSIONS=2 STRAJA_GUARD_INTRA_THREADS=4 STRAJA_GUARD_INTER_THREADS=1 ./bin/straja-bench --config=$(BENCH_CONFIG) --n=200
+
+## Build Docker image (multi-stage, distroless runtime)
+docker-build:
+	@echo ">> Building Docker image ($(DOCKER_IMAGE))..."
+	@docker build -t $(DOCKER_IMAGE) .
+
+## Run Docker image with mounted config + intel/bundle dirs and print readiness JSON
+docker-run: docker-build
+	@echo ">> Running $(DOCKER_IMAGE)..."
+	@mkdir -p bundles intel
+	@docker run --rm -d --name straja-local \
+		-p 8080:8080 \
+		-v $(PWD)/straja.yaml:/etc/straja/straja.yaml:ro \
+		-v $(PWD)/intel:/var/lib/straja/intel \
+		-v $(PWD)/bundles:/var/lib/straja/bundles \
+		$(DOCKER_IMAGE) >/dev/null
+	@echo ">> Waiting for readiness..."
+	@attempts=0; \
+	while [ $$attempts -lt 20 ]; do \
+		if docker exec straja-local /busybox wget -qO- http://127.0.0.1:8080/readyz >/tmp/straja_ready.json 2>/dev/null; then \
+			break; \
+		fi; \
+		attempts=$$((attempts+1)); \
+		sleep 1; \
+	done; \
+	if [ $$attempts -ge 20 ]; then \
+		echo "Gateway not ready after 20s"; \
+		docker logs straja-local || true; \
+		docker rm -f straja-local >/dev/null 2>&1 || true; \
+		exit 1; \
+	fi; \
+	echo ">> Readiness response:"; \
+	cat /tmp/straja_ready.json; echo; \
+	docker rm -f straja-local >/dev/null 2>&1 || true

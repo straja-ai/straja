@@ -77,11 +77,28 @@ You should see an OpenAI-compatible JSON response.
 
 ## 🐳 Docker
 
-Run Straja in a container, mounting your config and injecting the provider key as an env var:
+Run Straja in a container, mounting your config and giving the runtime writable bundle dirs. The image expects:
+- Config at `/etc/straja/straja.yaml`
+- Intel dir at `/var/lib/straja/intel`
+- Bundle cache at `/var/lib/straja/bundles`
 
+Quick start (local build + sanity check):
 ```bash
-docker run   -p 8080:8080   -v $(pwd)/straja.yaml:/straja.yaml   -e OPENAI_API_KEY="sk-..."   straja-ai/straja:latest   ./straja --config /straja.yaml
+# build multi-arch distroless image tagged straja:local
+make docker-build
+
+# run it with mounted config + writable cache dirs (adjust host port if 8080 is busy)
+docker run --rm \
+  -p 8080:8080 \
+  -v "$(pwd)/straja.yaml:/etc/straja/straja.yaml:ro" \
+  -v "$(pwd)/intel:/var/lib/straja/intel" \
+  -v "$(pwd)/bundles:/var/lib/straja/bundles" \
+  -e OPENAI_API_KEY="sk-..." \
+  -e STRAJA_LICENSE_KEY="your-license" \
+  straja:local
 ```
+
+If you prefer a one-liner that waits for readiness, use `make docker-run` (same mounts, assumes port 8080).
 
 Your apps still talk to `http://host:8080/v1` and use **project keys**, not provider keys.
 

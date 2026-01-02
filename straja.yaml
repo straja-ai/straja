@@ -58,7 +58,7 @@ intelligence:
   enabled: true
   license_key: "STRAJA-FREE-XXX-XXX-XXXXX"
   license_server_url: "https://straja.ai/api/license/validate"
-  bundle_cache_dir: "~/.straja/bundles"
+  bundle_cache_dir: "/var/lib/straja/bundles"
   license_key_env: "STRAJA_LICENSE_KEY"
   auto_update: true
   update_check_interval: "6h"
@@ -69,12 +69,12 @@ intel:
     license_server_base_url: "https://straja.ai"
     request_timeout_seconds: 300
     bundle_download_timeout_seconds: 300
-    intel_dir: "./intel"
+    intel_dir: "/var/lib/straja/intel"
     version_file: "version"
 
 security:
   enabled: true
-  bundle_dir: "./intel/strajaguard_v1"
+  bundle_dir: "/var/lib/straja/bundles/strajaguard_v1"
   seq_len: 256
   prompt_injection:
     regex_enabled: true
