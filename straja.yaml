@@ -109,6 +109,7 @@ security:
     action_on_ml_only: "log"
 
 strajaguard:
+  intel_dir: /var/lib/straja/intel
   max_sessions: 2
   intra_threads: 4
   inter_threads: 1

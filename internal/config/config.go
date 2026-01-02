@@ -500,6 +500,9 @@ func applyDefaults(cfg *Config) {
 			cfg.Intelligence.UpdateCheckInterval = "6h"
 		}
 	}
+	if v, ok := envString("STRAJA_BUNDLE_CACHE_DIR"); ok && v != "" {
+		cfg.Intelligence.BundleCacheDir = v
+	}
 
 	// Security defaults
 	if cfg.Security.isZero() {
@@ -513,6 +516,18 @@ func applyDefaults(cfg *Config) {
 		cfg.Intel = defaultIntelConfig()
 	} else {
 		cfg.Intel.applyDefaults()
+	}
+
+	bundleDirFromEnv := false
+	if v, ok := envString("STRAJA_BUNDLE_DIR"); ok && v != "" {
+		cfg.Security.BundleDir = v
+		bundleDirFromEnv = true
+	}
+	if v, ok := envString("STRAJA_INTEL_DIR"); ok && v != "" {
+		cfg.Intel.StrajaGuardV1.IntelDir = v
+		if !bundleDirFromEnv && (cfg.Security.BundleDir == "" || cfg.Security.BundleDir == defaultSecurityConfig().BundleDir) {
+			cfg.Security.BundleDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, "strajaguard_v1")
+		}
 	}
 
 	// Align bundle dir with intel dir if user omitted bundle_dir.
@@ -715,4 +730,12 @@ func envDuration(name string) (time.Duration, bool) {
 	}
 
 	return 0, false
+}
+
+func envString(name string) (string, bool) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return "", false
+	}
+	return raw, true
 }

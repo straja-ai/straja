@@ -93,6 +93,9 @@ docker run --rm \
   -v "$(pwd)/straja.yaml:/etc/straja/straja.yaml:ro" \
   -v "$(pwd)/intel:/var/lib/straja/intel" \
   -v "$(pwd)/bundles:/var/lib/straja/bundles" \
+  -e STRAJA_INTEL_DIR="/var/lib/straja/intel" \
+  -e STRAJA_BUNDLE_CACHE_DIR="/var/lib/straja/bundles" \
+  -e STRAJA_BUNDLE_DIR="/var/lib/straja/bundles/strajaguard_v1" \
   -e OPENAI_API_KEY="sk-..." \
   -e STRAJA_LICENSE_KEY="your-license" \
   straja:local
@@ -118,6 +121,10 @@ Your apps still talk to `http://host:8080/v1` and use **project keys**, not prov
 Recommended:
 - Keep provider URLs HTTPS; leave `allow_private_networks` off except for mock/local testing.
 - Store project API keys in config, but inject provider/license keys via env or secret store.
+- You can override bundle/intel paths without editing YAML by setting:
+  - `STRAJA_INTEL_DIR` for StrajaGuard bundle root
+  - `STRAJA_BUNDLE_DIR` for the security bundle dir (defaults to `<intel_dir>/strajaguard_v1`)
+  - `STRAJA_BUNDLE_CACHE_DIR` for the bundle cache dir
 - Tune `server.max_request_body_bytes`, `max_messages`, and `max_total_message_chars` for your traffic profile.
 
 ### License key configuration
