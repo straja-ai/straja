@@ -30,8 +30,10 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates onnxruntime && \
     rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd -m -s /bin/bash straja
+# Create non-root user and writable runtime dirs
+RUN useradd -m -s /bin/bash straja && \
+    mkdir -p /app/intel/strajaguard_v1 && \
+    chown -R straja:straja /app
 
 USER straja
 WORKDIR /app

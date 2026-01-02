@@ -75,7 +75,7 @@ func EnsureStrajaGuardVersion(ctx context.Context, baseDir, version, manifestURL
 		}
 	}()
 
-	redact.Logf("strajaguard: downloading bundle version=%s into tempDir=%s", version, tmpDir)
+	redact.Logf("strajaguard: downloading bundle version=%s", version)
 
 	client := &http.Client{Timeout: time.Duration(timeoutSeconds) * time.Second}
 	pk, err := manifestPublicKey()
@@ -93,7 +93,7 @@ func EnsureStrajaGuardVersion(ctx context.Context, baseDir, version, manifestURL
 		return "", err
 	}
 
-	if err := verifyManifest(manifestBytes, manifest.Version, manifestURL, sigEncoded, sigAlgorithm, pk); err != nil {
+	if err := verifyManifest(manifestBytes, manifest.Version, sigEncoded, sigAlgorithm, pk); err != nil {
 		return "", err
 	}
 

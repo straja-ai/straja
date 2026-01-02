@@ -707,6 +707,9 @@ type readinessResponse struct {
 	Mode                string `json:"mode"`
 	ActiveBundleVersion string `json:"active_bundle_version,omitempty"`
 	Reason              string `json:"reason,omitempty"`
+	IntelStatus         string `json:"intel_status,omitempty"`
+	StrajaGuardStatus   string `json:"strajaguard_status,omitempty"`
+	IntelLastValidated  string `json:"intel_last_validated_at,omitempty"`
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
@@ -728,6 +731,14 @@ func (s *Server) readiness() (readinessResponse, bool) {
 		Status:              "ready",
 		Mode:                mode,
 		ActiveBundleVersion: s.activeBundleVer,
+		IntelStatus:         s.intelStatus,
+		StrajaGuardStatus:   s.strajaGuardStatus,
+	}
+
+	if s.intelMeta != nil {
+		resp.IntelLastValidated = s.intelMeta.LastValidatedAt
+	} else if s.strajaGuardMeta != nil {
+		resp.IntelLastValidated = s.strajaGuardMeta.LastValidatedAt
 	}
 
 	if s.cfg == nil {

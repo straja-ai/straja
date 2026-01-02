@@ -103,12 +103,18 @@ Recommended:
 - Store project API keys in config, but inject provider/license keys via env or secret store.
 - Tune `server.max_request_body_bytes`, `max_messages`, and `max_total_message_chars` for your traffic profile.
 
-### Offline cached bundle mode
-- One license key (`STRAJA_LICENSE_KEY`) is used for bundle validation/update. Env wins; placeholders in YAML are ignored.
-- Straja keeps a locally validated StrajaGuard bundle. If validation is temporarily unavailable (network/timeout) but the cached bundle verifies (signature + hashes), Straja runs it in `offline_cached_bundle` mode.
-- If the license is missing/invalid and a cached bundle exists, Straja still loads the cached bundle but reports `offline_cached_bundle` (reason=missing_license/invalid_license).
-- If no valid cached bundle exists: status is `disabled_missing_bundle` (or `disabled_invalid_bundle` if verification fails) and StrajaGuard ML is disabled until validation/download succeeds.
-- Status values surface in logs and activation events (`intel_status`, `intel_bundle_version`, `intel_last_validated_at`).
+### StrajaGuard licensing & bundles
+- One license key (`STRAJA_LICENSE_KEY`) is used for StrajaGuard validation/update. Env wins; placeholders in YAML are ignored.
+- Runtime behavior (matching the server state machine):
+
+| Case | Behavior |
+| --- | --- |
+| No license key resolved (empty env + no real YAML key) | StrajaGuard ML disabled; runs regex-only; status `disabled_missing_license`. |
+| Invalid license (online validate returns non-network error/status) | StrajaGuard ML disabled; cached bundle is not loaded; regex-only; status `disabled_invalid_license`. |
+| Online validate fails with networky error (timeout/DNS/refused/502/503) | If a cached bundle verifies, StrajaGuard ML loads from disk; status `offline_cached_bundle`. Otherwise regex-only. |
+| Cached bundle integrity fails | Do not load ML; stay regex-only; status `disabled_invalid_bundle` (or `disabled_missing_bundle` if nothing cached). |
+
+- Operators can see these statuses via activation events (`intel_status`, `strajaguard_status`, `intel_bundle_version`, `intel_last_validated_at`) and `/readyz` (fields `status`, `mode`, `active_bundle_version`, `reason`, `intel_status`, `strajaguard_status`, `intel_last_validated_at`).
 - To force a refresh, delete the bundle cache directory (default `./intel/strajaguard_v1`) or bump version; Straja will re-validate and re-download on next start.
 
 ---

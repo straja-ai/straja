@@ -54,6 +54,13 @@ type ManifestSignature struct {
 	Signature string `json:"signature"`
 }
 
+func wrapRedactedError(msg string, err error) error {
+	if err == nil {
+		return errors.New(strings.TrimSpace(msg))
+	}
+	return fmt.Errorf("%s: %s", strings.TrimSpace(msg), redact.String(err.Error()))
+}
+
 // ValidationResult represents the outcome of a license validate call.
 type ValidationResult struct {
 	LatestVersion string
@@ -214,7 +221,7 @@ func DownloadAndInstallStrajaGuardBundle(ctx context.Context, destDir string, in
 		return err
 	}
 
-	if err := verifyManifest(manifestBytes, manifest.Version, info.ManifestURL, sigEncoded, sigAlgorithm, pk); err != nil {
+	if err := verifyManifest(manifestBytes, manifest.Version, sigEncoded, sigAlgorithm, pk); err != nil {
 		return err
 	}
 
@@ -328,18 +335,18 @@ func decodeKey(v string) ([]byte, error) {
 func downloadManifest(ctx context.Context, client *http.Client, url, token string) ([]byte, *Manifest, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build manifest request: %w", err)
+		return nil, nil, wrapRedactedError("build manifest request", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("download manifest %s: %w", url, err)
+		return nil, nil, wrapRedactedError("download manifest", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, nil, fmt.Errorf("download manifest %s status: %s: %s", url, resp.Status, strings.TrimSpace(string(errBody)))
+		return nil, nil, fmt.Errorf("download manifest status: %s: %s", resp.Status, strings.TrimSpace(string(errBody)))
 	}
 
 	data, err := io.ReadAll(resp.Body)
@@ -357,18 +364,18 @@ func downloadManifest(ctx context.Context, client *http.Client, url, token strin
 func downloadSignature(ctx context.Context, client *http.Client, url, token string) (string, string, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("build manifest signature request: %w", err)
+		return "", "", nil, wrapRedactedError("build manifest signature request", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("download manifest signature %s: %w", url, err)
+		return "", "", nil, wrapRedactedError("download manifest signature", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", "", nil, fmt.Errorf("download manifest signature %s status: %s: %s", url, resp.Status, strings.TrimSpace(string(errBody)))
+		return "", "", nil, fmt.Errorf("download manifest signature status: %s: %s", resp.Status, strings.TrimSpace(string(errBody)))
 	}
 
 	data, err := io.ReadAll(resp.Body)
@@ -385,8 +392,8 @@ func downloadSignature(ctx context.Context, client *http.Client, url, token stri
 	return strings.TrimSpace(string(data)), "ed25519", data, nil
 }
 
-func verifyManifest(manifestBytes []byte, manifestVersion string, manifestURL string, sigEncoded string, sigAlgorithm string, pk []byte) error {
-	redact.Logf("strajaguard verifying manifest %s version=%s", manifestURL, manifestVersion)
+func verifyManifest(manifestBytes []byte, manifestVersion string, sigEncoded string, sigAlgorithm string, pk []byte) error {
+	redact.Logf("strajaguard verifying manifest version=%s", manifestVersion)
 
 	if len(pk) != ed25519.PublicKeySize {
 		return fmt.Errorf("invalid manifest public key length: %d", len(pk))
@@ -402,21 +409,21 @@ func verifyManifest(manifestBytes []byte, manifestVersion string, manifestURL st
 
 	sigBytes, err := decodeSignature(sigEncoded)
 	if err != nil {
-		redact.Logf("strajaguard manifest signature parse failed for %s version=%s: %v", manifestURL, manifestVersion, err)
+		redact.Logf("strajaguard manifest signature parse failed version=%s: %v", manifestVersion, err)
 		return fmt.Errorf("decode signature: %w", err)
 	}
 
 	if len(sigBytes) != ed25519.SignatureSize {
 		err := fmt.Errorf("manifest signature invalid length: got %d, want %d", len(sigBytes), ed25519.SignatureSize)
-		redact.Logf("strajaguard manifest signature parse failed for %s version=%s: %v", manifestURL, manifestVersion, err)
+		redact.Logf("strajaguard manifest signature parse failed version=%s: %v", manifestVersion, err)
 		return err
 	}
 
 	if !ed25519.Verify(pk, manifestBytes, sigBytes) {
-		redact.Logf("strajaguard manifest signature verify failed for %s version=%s", manifestURL, manifestVersion)
+		redact.Logf("strajaguard manifest signature verify failed version=%s", manifestVersion)
 		return errors.New("manifest signature verification failed")
 	}
-	redact.Logf("strajaguard manifest signature verified for %s version=%s", manifestURL, manifestVersion)
+	redact.Logf("strajaguard manifest signature verified version=%s", manifestVersion)
 	return nil
 }
 
@@ -495,18 +502,18 @@ func downloadBundleFiles(ctx context.Context, client *http.Client, baseDir strin
 		remote := baseURL + url.QueryEscape(f.Path)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, remote, nil)
 		if err != nil {
-			return fmt.Errorf("build file request for %s: %w", f.Path, err)
+			return wrapRedactedError("build file request for "+f.Path, err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return fmt.Errorf("download file %s (%s): %w", f.Path, remote, err)
+			return wrapRedactedError("download file "+f.Path, err)
 		}
 		if resp.StatusCode != http.StatusOK {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 			resp.Body.Close()
-			return fmt.Errorf("download file %s (%s) status: %s: %s", f.Path, remote, resp.Status, strings.TrimSpace(string(errBody)))
+			return fmt.Errorf("download file %s status: %s: %s", f.Path, resp.Status, strings.TrimSpace(string(errBody)))
 		}
 
 		dst, err := os.Create(localPath)

@@ -42,7 +42,7 @@ func VerifyBundleIntegrity(baseDir, version string) error {
 	if err != nil {
 		return fmt.Errorf("load manifest public key: %w", err)
 	}
-	if err := verifyManifest(manifestBytes, manifest.Version, "local", sigEncoded, sigAlg, pk); err != nil {
+	if err := verifyManifest(manifestBytes, manifest.Version, sigEncoded, sigAlg, pk); err != nil {
 		return err
 	}
 
