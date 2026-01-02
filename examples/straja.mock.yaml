@@ -22,6 +22,14 @@ projects:
 logging:
   activation_level: "metadata"
 
+activation:
+  enabled: true
+  queue_size: 200
+  workers: 1
+  sinks:
+    - type: "file_jsonl"
+      path: "./tmp/mock_activation.jsonl"
+
 policy:
   banned_words: "log"
   pii: "log"

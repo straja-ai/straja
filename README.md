@@ -395,33 +395,78 @@ Defaults are conservative: many safety checks are enabled and blocking, toxicity
 
 ## 🔥 Activation Events
 
-For every request Straja emits a structured activation event (currently to stdout and a response header):
+Straja builds one canonical activation event per request and reuses it for logs, the `X-Straja-Activation` response header, and optional delivery sinks. The request path never blocks: events are enqueued to a bounded worker queue (default 1000; drops when full, with counters).
 
-Example:
+Canonical payload (fields are redacted as needed):
 
 ```json
 {
   "timestamp": "2025-11-22T19:47:47.321304Z",
+  "request_id": "b82f0c0f2f8d4c6e8c45da54e2121e3a",
   "project_id": "default",
-  "provider": "openai_default",
+  "provider_id": "openai_default",
   "model": "gpt-4.1-mini",
   "decision": "allow",
+  "policy_hits": [
+    {"category": "pii", "action": "redact", "score": 0.82}
+  ],
+  "policy_hit_categories": ["pii"],
   "prompt_preview": "please use [REDACTED_EMAIL] in a sentence",
-  "completion_preview": "Sure! Here's a sentence using "[REDACTED_EMAIL]"...",
-  "policy_hits": ["pii"]
+  "completion_preview": "Sure! Here's a sentence using [REDACTED_EMAIL]...",
+  "safety_scores": {"pii_email": 0.82},
+  "safety_thresholds": {"pii.warn": 0.5},
+  "latencies_ms": {"pre_policy": 2.1, "provider": 48.0}
 }
 ```
 
 Key fields:
 
 - `decision` – `allow`, `blocked_before_policy`, `blocked_after_policy`, or `error_provider`  
-- `policy_hits` – categories that fired (`pii`, `injection`, `prompt_injection`, `jailbreak`, `toxicity`, `output_redaction`, `banned_words`)  
-- `prompt_preview` / `completion_preview` – respect `logging.activation_level`  
-  - `"metadata"` – short previews  
-  - `"redacted"` – PII masked in previews  
-  - `"full"` – full prompt/response (for internal use only)
+- `policy_hits` – per-category decision/action (+ optional score/reason); `policy_hit_categories` keeps the legacy string list  
+- `prompt_preview` / `completion_preview` – respect `logging.activation_level` (`metadata` | `redacted` | `full`)  
+- Optional maps include safety scores/thresholds and latency timings when available.
 
-The activation event is also exposed in the **`X-Straja-Activation`** response header as a JSON string.
+### Configuring sinks (non-blocking)
+
+Add an `activation` block to `straja.yaml`:
+
+```yaml
+activation:
+  enabled: true                # keep false to stay header+log only
+  queue_size: 1000             # drop when full
+  workers: 1
+  shutdown_timeout: "2s"       # drain best-effort on shutdown
+  sinks:
+    - type: "file_jsonl"
+      path: "./tmp/activation/events.jsonl"
+    - type: "webhook"
+      url: "http://127.0.0.1:8099/activation"
+      timeout: "2s"
+      headers:
+        X-Auth: "dev-token"
+```
+
+Supported sinks:
+
+- `file_jsonl` – appends one JSON event per line; creates parent dirs; flushes each line; single-writer to avoid corruption.
+- `webhook` – POST `application/json` with 2 retries (100ms, 300ms backoff); treats non-2xx as failure with a logged status/body snippet; per-request timeout defaults to 2s.
+
+Counters tracked internally:
+
+- `activation_enqueued_total`
+- `activation_dropped_total`
+- `activation_sink_success_total{sink}`
+- `activation_sink_failure_total{sink}`
+
+### Local webhook receiver
+
+For quick testing, run the dev receiver:
+
+```bash
+make activation-receiver           # starts on :8099
+```
+
+Point a webhook sink at `http://127.0.0.1:8099/activation` and watch events printed to stdout.
 
 ---
 

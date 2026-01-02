@@ -54,6 +54,10 @@ func Validate(cfg *Config) error {
 		}
 	}
 
+	if err := validateActivationConfig(cfg.Activation); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -76,6 +80,34 @@ func validateProviderConfig(name string, p ProviderConfig) error {
 		}
 		if err := blockPrivateHost(u.Host, p.AllowPrivateNetworks); err != nil {
 			return fmt.Errorf("provider %q base_url blocked: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func validateActivationConfig(a ActivationConfig) error {
+	if len(a.Sinks) == 0 {
+		return nil
+	}
+	for i, s := range a.Sinks {
+		switch strings.ToLower(strings.TrimSpace(s.Type)) {
+		case "file_jsonl":
+			if strings.TrimSpace(s.Path) == "" {
+				return fmt.Errorf("activation sink %d (file_jsonl) missing path", i)
+			}
+		case "webhook":
+			if strings.TrimSpace(s.URL) == "" {
+				return fmt.Errorf("activation sink %d (webhook) missing url", i)
+			}
+			u, err := url.Parse(s.URL)
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				return fmt.Errorf("activation sink %d (webhook) has invalid url", i)
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return fmt.Errorf("activation sink %d (webhook) url must be http or https", i)
+			}
+		default:
+			return fmt.Errorf("activation sink %d has unknown type %q", i, s.Type)
 		}
 	}
 	return nil

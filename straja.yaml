@@ -34,6 +34,18 @@ projects:
 logging:
   activation_level: "redacted"   # metadata | redacted | full
 
+activation:
+  enabled: true
+  queue_size: 1000
+  workers: 1
+  shutdown_timeout: "2s"
+  sinks:
+    - type: "file_jsonl"
+      path: "./tmp/activation/events.jsonl"
+    - type: "webhook"
+      url: "http://127.0.0.1:8099/activation"
+      timeout: "2s"
+
 policy:
   banned_words: "redact" #  | redact| ignore | block | log
   banned_words_list:

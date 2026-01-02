@@ -19,7 +19,7 @@ STRAJAGUARD_ONNX ?= intel/strajaguard_v1/strajaguard_v1.onnx
 BENCH_CONFIG ?= examples/straja.mock.yaml
 DOCKER_IMAGE ?= straja:local
 
-.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run
+.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run activation-receiver
 
 all: build
 
@@ -41,6 +41,11 @@ run:
 		echo "   -> No .env file found, running with current environment"; \
 	fi; \
 	go run $(CMD_PKG) --config=straja.yaml
+
+## Dev helper: local activation webhook receiver
+activation-receiver:
+	@echo ">> Starting activation receiver on :8099 (POST /activation)..."
+	@go run ./cmd/activation-receiver --addr=:8099
 
 ## Run tests
 test:

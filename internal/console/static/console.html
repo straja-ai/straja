@@ -425,6 +425,14 @@
                 const actJson = JSON.parse(activationHeader);
                 activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
 
+                const policyHits = Array.isArray(actJson.policy_hits)
+                  ? actJson.policy_hits
+                      .map(h => (typeof h === 'string' ? h : h.category))
+                      .filter(Boolean)
+                  : Array.isArray(actJson.policy_hit_categories)
+                    ? actJson.policy_hit_categories.filter(Boolean)
+                    : [];
+
                 if (decisionEl && actJson.decision) {
                   // base decision from backend
                   let d = String(actJson.decision);
@@ -433,8 +441,7 @@
                   // treat this as "redacted" for the UI.
                   if (
                     d === 'allow' &&
-                    Array.isArray(actJson.policy_hits) &&
-                    actJson.policy_hits.some(h => h !== 'toxicity')
+                    policyHits.some(h => h !== 'toxicity')
                   ) {
                     d = 'redacted';
                   }

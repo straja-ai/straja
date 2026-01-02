@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/straja-ai/straja/internal/activation"
@@ -32,30 +34,31 @@ import (
 
 // Server wraps the HTTP server components for Straja.
 type Server struct {
-	mux               *http.ServeMux
-	cfg               *config.Config
-	auth              *auth.Auth
-	policy            policy.Engine
-	providers         map[string]provider.Provider // name -> provider
-	defaultProvider   string                       // name of default provider
-	activation        activation.Emitter
-	loggingLevel      string
-	projectProviders  map[string]string // project ID -> provider name
-	licenseClaims     *license.LicenseClaims
-	intelEnabled      bool
-	licenseKey        string
-	intelStatus       string
-	intelMeta         *strajaguard.ValidationMeta
-	intelBundleVer    string
-	strajaGuardStatus string
-	strajaGuardReason string
-	strajaGuardMeta   *strajaguard.ValidationMeta
-	httpClient        *http.Client
-	inFlightLimiter   chan struct{}
-	strajaGuardModel  *strajaguard.StrajaGuardModel
-	activeBundleVer   string
-	requireML         bool
-	allowRegexOnly    bool
+	mux                *http.ServeMux
+	cfg                *config.Config
+	auth               *auth.Auth
+	policy             policy.Engine
+	providers          map[string]provider.Provider // name -> provider
+	defaultProvider    string                       // name of default provider
+	activationEmitter  *activation.Emitter
+	loggingLevel       string
+	securityThresholds map[string]float32
+	projectProviders   map[string]string // project ID -> provider name
+	licenseClaims      *license.LicenseClaims
+	intelEnabled       bool
+	licenseKey         string
+	intelStatus        string
+	intelMeta          *strajaguard.ValidationMeta
+	intelBundleVer     string
+	strajaGuardStatus  string
+	strajaGuardReason  string
+	strajaGuardMeta    *strajaguard.ValidationMeta
+	httpClient         *http.Client
+	inFlightLimiter    chan struct{}
+	strajaGuardModel   *strajaguard.StrajaGuardModel
+	activeBundleVer    string
+	requireML          bool
+	allowRegexOnly     bool
 }
 
 func isNetworkyError(err error) bool {
@@ -453,31 +456,34 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		licenseHTTPTimeout = 10 * time.Second
 	}
 
+	activationEmitter := buildActivationEmitter(cfg)
+
 	s := &Server{
-		mux:               mux,
-		cfg:               cfg,
-		auth:              authz,
-		policy:            pol,
-		providers:         provs,
-		defaultProvider:   cfg.DefaultProvider,
-		activation:        activation.NewStdout(),
-		loggingLevel:      strings.ToLower(cfg.Logging.ActivationLevel),
-		projectProviders:  projectProviders,
-		licenseClaims:     licenseClaims,
-		intelEnabled:      intelEnabled,
-		licenseKey:        licenseKey,
-		intelStatus:       intelStatus,
-		intelMeta:         intelMeta,
-		intelBundleVer:    intelBundleVer,
-		httpClient:        &http.Client{Timeout: licenseHTTPTimeout},
-		inFlightLimiter:   limiter,
-		strajaGuardModel:  sgModel,
-		activeBundleVer:   activeBundleVersion,
-		strajaGuardStatus: sgStatus,
-		strajaGuardReason: sgReason,
-		strajaGuardMeta:   sgMeta,
-		requireML:         cfg.Intel.StrajaGuardV1.RequireML,
-		allowRegexOnly:    cfg.Intel.StrajaGuardV1.AllowRegexOnly,
+		mux:                mux,
+		cfg:                cfg,
+		auth:               authz,
+		policy:             pol,
+		providers:          provs,
+		defaultProvider:    cfg.DefaultProvider,
+		activationEmitter:  activationEmitter,
+		loggingLevel:       strings.ToLower(cfg.Logging.ActivationLevel),
+		securityThresholds: buildSecurityThresholds(cfg.Security),
+		projectProviders:   projectProviders,
+		licenseClaims:      licenseClaims,
+		intelEnabled:       intelEnabled,
+		licenseKey:         licenseKey,
+		intelStatus:        intelStatus,
+		intelMeta:          intelMeta,
+		intelBundleVer:     intelBundleVer,
+		httpClient:         &http.Client{Timeout: licenseHTTPTimeout},
+		inFlightLimiter:    limiter,
+		strajaGuardModel:   sgModel,
+		activeBundleVer:    activeBundleVersion,
+		strajaGuardStatus:  sgStatus,
+		strajaGuardReason:  sgReason,
+		strajaGuardMeta:    sgMeta,
+		requireML:          cfg.Intel.StrajaGuardV1.RequireML,
+		allowRegexOnly:     cfg.Intel.StrajaGuardV1.AllowRegexOnly,
 	}
 
 	bundleTimeout := time.Duration(cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds) * time.Second
@@ -518,6 +524,74 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	}
 
 	return s
+}
+
+func buildActivationEmitter(cfg *config.Config) *activation.Emitter {
+	if cfg == nil {
+		return nil
+	}
+	if !cfg.Activation.Enabled || len(cfg.Activation.Sinks) == 0 {
+		return nil
+	}
+
+	sinks := make([]activation.Sink, 0, len(cfg.Activation.Sinks))
+	for _, s := range cfg.Activation.Sinks {
+		switch strings.ToLower(strings.TrimSpace(s.Type)) {
+		case "file_jsonl":
+			sink, err := activation.NewFileSink(s.Path)
+			if err != nil {
+				redact.Logf("activation: skipping file_jsonl sink (%s): %v", s.Path, err)
+				continue
+			}
+			sinks = append(sinks, sink)
+		case "webhook":
+			sink, err := activation.NewWebhookSink(s.URL, s.Headers, s.Timeout)
+			if err != nil {
+				redact.Logf("activation: skipping webhook sink (%s): %v", s.URL, err)
+				continue
+			}
+			sinks = append(sinks, sink)
+		default:
+			redact.Logf("activation: unknown sink type %q (skipping)", s.Type)
+		}
+	}
+
+	if len(sinks) == 0 {
+		redact.Logf("activation: enabled but no valid sinks configured; delivery disabled")
+		return nil
+	}
+
+	redact.Logf("activation: emitter enabled sinks=%d queue_size=%d workers=%d", len(sinks), cfg.Activation.QueueSize, cfg.Activation.Workers)
+
+	return activation.NewEmitter(activation.EmitterConfig{
+		QueueSize:       cfg.Activation.QueueSize,
+		Workers:         cfg.Activation.Workers,
+		ShutdownTimeout: cfg.Activation.ShutdownTimeout,
+	}, sinks)
+}
+
+func buildSecurityThresholds(cfg config.SecurityConfig) map[string]float32 {
+	add := func(m map[string]float32, key string, val float32) {
+		if val > 0 {
+			m[key] = val
+		}
+	}
+
+	out := make(map[string]float32)
+	add(out, "prompt_injection.warn", cfg.PromptInj.MLWarnThreshold)
+	add(out, "prompt_injection.block", cfg.PromptInj.MLBlockThreshold)
+	add(out, "jailbreak.warn", cfg.Jailbreak.MLWarnThreshold)
+	add(out, "jailbreak.block", cfg.Jailbreak.MLBlockThreshold)
+	add(out, "data_exfil.warn", cfg.DataExfil.MLWarnThreshold)
+	add(out, "data_exfil.block", cfg.DataExfil.MLBlockThreshold)
+	add(out, "pii.warn", cfg.PII.MLWarnThreshold)
+	add(out, "secrets.warn", cfg.Secrets.MLWarnThreshold)
+	add(out, "secrets.block", cfg.Secrets.MLBlockThreshold)
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // ValidateLicenseOnline optionally validates the license key once at startup.
@@ -712,7 +786,38 @@ func (s *Server) Start(addr string) error {
 	}
 
 	redact.Logf("Straja Gateway running on %s (read_header_timeout=%s, read_timeout=%s, write_timeout=%s, idle_timeout=%s)", addr, s.cfg.Server.ReadHeaderTimeout, s.cfg.Server.ReadTimeout, s.cfg.Server.WriteTimeout, s.cfg.Server.IdleTimeout)
-	return server.ListenAndServe()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe()
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case err := <-errCh:
+		s.shutdownActivation(context.Background())
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case sig := <-stop:
+		redact.Logf("received signal %s, shutting down gateway...", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			redact.Logf("graceful shutdown error: %v", err)
+		}
+		s.shutdownActivation(ctx)
+		return nil
+	}
+}
+
+func (s *Server) shutdownActivation(ctx context.Context) {
+	if s.activationEmitter != nil {
+		s.activationEmitter.Close(ctx)
+	}
 }
 
 // --- Handlers ---
@@ -1111,67 +1216,43 @@ func writeOpenAIError(w http.ResponseWriter, status int, message, typ string) {
 
 // emitActivation builds and sends an activation event via the configured emitter.
 func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req *inference.Request, resp *inference.Response, providerName string, decision activation.Decision) {
-	if s.activation == nil || req == nil {
+	if req == nil {
 		return
 	}
 
-	promptPreview, completionPreview := s.buildPreviews(req, resp)
-
-	var policyDecisions []activation.PolicyDecision
-	for _, hit := range req.PolicyDecisions {
-		policyDecisions = append(policyDecisions, activation.PolicyDecision{
-			Category:   hit.Category,
-			Action:     hit.Action,
-			Confidence: hit.Confidence,
-			Sources:    append([]string(nil), hit.Sources...),
-		})
+	lastValidated := ""
+	if s.intelMeta != nil {
+		lastValidated = s.intelMeta.LastValidatedAt
+	} else if s.strajaGuardMeta != nil {
+		lastValidated = s.strajaGuardMeta.LastValidatedAt
 	}
 
-	var sgPayload *activation.StrajaGuardPayload
-	if len(req.SecurityScores) > 0 || len(req.SecurityFlags) > 0 {
-		scores := make(map[string]float32, len(req.SecurityScores))
-		for k, v := range req.SecurityScores {
-			scores[k] = v
-		}
-		sgPayload = &activation.StrajaGuardPayload{
-			Model:  "strajaguard_v1",
-			Scores: scores,
-			Flags:  append([]string(nil), req.SecurityFlags...),
-		}
-	}
-	if s.strajaGuardModel == nil || strings.HasPrefix(s.strajaGuardStatus, "disabled") {
-		sgPayload = nil
-	}
-
-	ev := &activation.Event{
-		Timestamp:            time.Now().UTC(),
-		ProjectID:            req.ProjectID,
-		Provider:             providerName,
-		Model:                req.Model,
+	ev := activation.BuildEvent(activation.BuildParams{
+		Request:              req,
+		Response:             resp,
+		ProviderName:         providerName,
 		Decision:             decision,
-		PromptPreview:        promptPreview,
-		CompletionPreview:    completionPreview,
-		PolicyHits:           append([]string(nil), req.PolicyHits...),
+		LoggingLevel:         s.loggingLevel,
 		IntelStatus:          s.intelStatus,
 		IntelBundleVersion:   s.intelBundleVer,
-		PolicyDecisions:      policyDecisions,
-		StrajaGuard:          sgPayload,
+		IntelLastValidatedAt: lastValidated,
+		IntelCachePresent:    s.intelMeta != nil || s.strajaGuardMeta != nil,
 		StrajaGuardStatus:    s.strajaGuardStatus,
 		StrajaGuardBundleVer: s.activeBundleVer,
+		SecurityThresholds:   s.securityThresholds,
+		IncludeStrajaGuard:   s.strajaGuardModel != nil && !strings.HasPrefix(s.strajaGuardStatus, "disabled"),
+	})
+	if ev == nil {
+		return
 	}
-	if s.intelMeta != nil {
-		ev.IntelLastValidatedAt = s.intelMeta.LastValidatedAt
-	}
-	if s.strajaGuardMeta != nil && ev.IntelLastValidatedAt == "" {
-		ev.IntelLastValidatedAt = s.strajaGuardMeta.LastValidatedAt
-	}
-	ev.PromptPreview = redact.String(ev.PromptPreview)
-	ev.CompletionPreview = redact.String(ev.CompletionPreview)
 
-	// Emit via configured emitter (stdout, later webhooks, etc.)
-	s.activation.Emit(ctx, ev)
+	activation.LogEvent(ev)
 
-	// Also expose activation to clients via header so the console can show it
+	if s.activationEmitter != nil {
+		s.activationEmitter.Emit(ctx, ev)
+	}
+
+	// Also expose activation to clients via header so the console can show it.
 	if w != nil {
 		if b, err := json.Marshal(ev); err == nil {
 			w.Header().Set("X-Straja-Activation", redact.String(string(b)))

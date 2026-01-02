@@ -17,6 +17,7 @@ type Config struct {
 	DefaultProvider string                    `yaml:"default_provider"`
 	Projects        []ProjectConfig           `yaml:"projects"`
 	Logging         LoggingConfig             `yaml:"logging"`
+	Activation      ActivationConfig          `yaml:"activation"`
 	Policy          PolicyConfig              `yaml:"policy"`
 	Intelligence    IntelligenceConfig        `yaml:"intelligence"`
 	Security        SecurityConfig            `yaml:"security"`
@@ -88,6 +89,30 @@ type ProjectConfig struct {
 
 type LoggingConfig struct {
 	ActivationLevel string `yaml:"activation_level"`
+}
+
+type ActivationConfig struct {
+	Enabled         bool                   `yaml:"enabled"`
+	QueueSize       int                    `yaml:"queue_size"`
+	Workers         int                    `yaml:"workers"`
+	ShutdownTimeout time.Duration          `yaml:"shutdown_timeout"`
+	Sinks           []ActivationSinkConfig `yaml:"sinks"`
+}
+
+func (a ActivationConfig) isZero() bool {
+	return !a.Enabled &&
+		a.QueueSize == 0 &&
+		a.Workers == 0 &&
+		a.ShutdownTimeout == 0 &&
+		len(a.Sinks) == 0
+}
+
+type ActivationSinkConfig struct {
+	Type    string            `yaml:"type"`
+	Path    string            `yaml:"path"`
+	URL     string            `yaml:"url"`
+	Headers map[string]string `yaml:"headers"`
+	Timeout time.Duration     `yaml:"timeout"`
 }
 
 type PIIEntitiesConfig struct {
@@ -187,6 +212,15 @@ func defaultSecurityConfig() SecurityConfig {
 			ActionOnRegexHit: "block_and_redact",
 			ActionOnMLOnly:   "log",
 		},
+	}
+}
+
+func defaultActivationConfig() ActivationConfig {
+	return ActivationConfig{
+		Enabled:         false,
+		QueueSize:       1000,
+		Workers:         1,
+		ShutdownTimeout: 2 * time.Second,
 	}
 }
 
@@ -344,6 +378,7 @@ func defaultConfig() *Config {
 		Logging: LoggingConfig{
 			ActivationLevel: "metadata",
 		},
+		Activation: defaultActivationConfig(),
 		Policy: PolicyConfig{
 			BannedWords:     "block",
 			PII:             "block",
@@ -446,6 +481,21 @@ func applyDefaults(cfg *Config) {
 	// Logging defaults
 	if cfg.Logging.ActivationLevel == "" {
 		cfg.Logging.ActivationLevel = "metadata"
+	}
+
+	// Activation defaults
+	if cfg.Activation.isZero() {
+		cfg.Activation = defaultActivationConfig()
+	} else {
+		if cfg.Activation.QueueSize <= 0 {
+			cfg.Activation.QueueSize = 1000
+		}
+		if cfg.Activation.Workers <= 0 {
+			cfg.Activation.Workers = 1
+		}
+		if cfg.Activation.ShutdownTimeout == 0 {
+			cfg.Activation.ShutdownTimeout = 2 * time.Second
+		}
 	}
 
 	// Policy action defaults
