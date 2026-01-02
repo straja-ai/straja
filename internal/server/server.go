@@ -48,6 +48,7 @@ type Server struct {
 	intelMeta         *strajaguard.ValidationMeta
 	intelBundleVer    string
 	strajaGuardStatus string
+	strajaGuardReason string
 	strajaGuardMeta   *strajaguard.ValidationMeta
 	httpClient        *http.Client
 	inFlightLimiter   chan struct{}
@@ -280,6 +281,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		activeBundleVersion string
 		intelMeta           *strajaguard.ValidationMeta
 		sgStatus            string
+		sgReason            string
 		sgMeta              *strajaguard.ValidationMeta
 	)
 	sgStatus = "disabled_missing_bundle"
@@ -292,6 +294,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	if !cfg.Security.Enabled || !cfg.Intel.StrajaGuardV1.Enabled {
 		redact.Logf("strajaguard disabled via config; running regex-only")
 		sgStatus = "disabled_missing_bundle"
+		sgReason = "missing_bundle"
 	} else {
 		rt := strajaguard.ResolveRuntime(strajaguard.RuntimeConfig{
 			MaxSessions:  cfg.StrajaGuard.MaxSessions,
@@ -320,28 +323,9 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		}
 
 		if sgLicenseKey == "" {
-			if currentVersion != "" {
-				if integErr := strajaguard.VerifyBundleIntegrity(strajaGuardDir, currentVersion); integErr == nil {
-					if model, loadErr := strajaguard.LoadModel(filepath.Join(strajaGuardDir, currentVersion), cfg.Security.SeqLen, rt); loadErr == nil {
-						sgModel = model
-						activeBundleVersion = currentVersion
-						sgStatus = "offline_cached_bundle"
-						if cachedMeta != nil {
-							sgMeta = cachedMeta
-						}
-						redact.Logf("strajaguard: using offline cached bundle version=%s (license key missing)", currentVersion)
-					} else {
-						sgStatus = "disabled_invalid_bundle"
-						redact.Logf("strajaguard: cached bundle present but failed to load: %v", loadErr)
-					}
-				} else {
-					sgStatus = "disabled_invalid_bundle"
-					redact.Logf("strajaguard: cached bundle failed integrity: %v", integErr)
-				}
-			} else {
-				sgStatus = "disabled_missing_license"
-			}
+			_, sgStatus, sgReason = sgFallbackDecision(false, strajaguard.ValidateOtherError, "")
 		} else if err := os.MkdirAll(strajaGuardDir, 0o755); err != nil {
+			sgReason = "invalid_bundle"
 			fail("strajaguard: cannot create bundle dir %s: %v; running regex-only", strajaGuardDir, err)
 		} else {
 			ctx := context.Background()
@@ -352,8 +336,12 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 				dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
 				if err != nil {
 					redact.Logf("strajaguard: bundle version=%s verification failed: %v", valRes.BundleInfo.Version, err)
+					sgStatus = "disabled_invalid_bundle"
+					sgReason = "invalid_bundle"
 				} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt); loadErr != nil {
 					redact.Logf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
+					sgStatus = "disabled_invalid_bundle"
+					sgReason = "invalid_bundle"
 				} else {
 					state.PreviousVersion = state.CurrentVersion
 					state.CurrentVersion = valRes.BundleInfo.Version
@@ -371,6 +359,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 					sgModel = model
 					activeBundleVersion = state.CurrentVersion
 					sgStatus = "online_validated"
+					sgReason = "online_ok"
 					redact.Logf("strajaguard: bundle version=%s verified and activated", state.CurrentVersion)
 					redact.Logf("strajaguard: pool_size=%d intra_threads=%d inter_threads=%d seq_len=%d",
 						sgModel.PoolSize(), sgModel.IntraThreads(), sgModel.InterThreads(), cfg.Security.SeqLen)
@@ -378,33 +367,34 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 			} else {
 				switch outcome {
 				case strajaguard.ValidateInvalidLicense:
-					redact.Logf("strajaguard: license invalid; refusing cached bundle; ml disabled")
-					sgStatus = "disabled_invalid_license"
+					_, sgStatus, sgReason = sgFallbackDecision(true, outcome, currentVersion)
 				case strajaguard.ValidateNetworkError:
-					redact.Logf("strajaguard: license validate failed: %v", err)
-					if currentVersion != "" {
-						if integErr := strajaguard.VerifyBundleIntegrity(strajaGuardDir, currentVersion); integErr == nil {
-							model, loadErr := strajaguard.LoadModel(filepath.Join(strajaGuardDir, currentVersion), cfg.Security.SeqLen, rt)
-							if loadErr != nil {
-								sgStatus = "disabled_invalid_bundle"
-							} else {
-								sgModel = model
-								activeBundleVersion = currentVersion
-								sgStatus = "offline_cached_bundle"
-								if cachedMeta != nil {
-									sgMeta = cachedMeta
-								}
-								redact.Logf("strajaguard: using offline cached bundle version=%s (reason=validate_network_error)", currentVersion)
-							}
-						} else {
+					allowCache, nextStatus, nextReason := sgFallbackDecision(true, outcome, currentVersion)
+					sgStatus, sgReason = nextStatus, nextReason
+					if !allowCache {
+						break
+					}
+					if integErr := strajaguard.VerifyBundleIntegrity(strajaGuardDir, currentVersion); integErr == nil {
+						model, loadErr := strajaguard.LoadModel(filepath.Join(strajaGuardDir, currentVersion), cfg.Security.SeqLen, rt)
+						if loadErr != nil {
 							sgStatus = "disabled_invalid_bundle"
+							sgReason = "invalid_bundle"
+						} else {
+							sgModel = model
+							activeBundleVersion = currentVersion
+							sgStatus = "offline_cached_bundle"
+							sgReason = "network_error"
+							if cachedMeta != nil {
+								sgMeta = cachedMeta
+							}
+							redact.Logf("strajaguard: using offline cached bundle version=%s (reason=validate_network_error)", currentVersion)
 						}
 					} else {
-						sgStatus = "disabled_missing_bundle"
+						sgStatus = "disabled_invalid_bundle"
+						sgReason = "invalid_bundle"
 					}
 				default:
-					redact.Logf("strajaguard: license validate failed (other): %v; cached bundle not used", err)
-					sgStatus = "disabled_invalid_license"
+					_, sgStatus, sgReason = sgFallbackDecision(true, outcome, currentVersion)
 				}
 			}
 
@@ -417,12 +407,15 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 					sgModel = nil
 					activeBundleVersion = ""
 					sgStatus = "disabled_invalid_bundle"
+					sgReason = "invalid_bundle"
 				} else {
 					redact.Logf("strajaguard: warmup inference ok duration_ms=%.2f", float64(dur.Microseconds())/1000)
 				}
 			}
 		}
 	}
+
+	redact.Logf("strajaguard: status=%s reason=%s active_version=%s cache_dir=%s", sgStatus, sgReason, activeBundleVersion, strajaGuardDir)
 
 	// Build policy engine (consumes intelEngine)
 	pol := policy.NewBasic(cfg.Policy, cfg.Security, intelEngine, sgModel)
@@ -481,6 +474,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		strajaGuardModel:  sgModel,
 		activeBundleVer:   activeBundleVersion,
 		strajaGuardStatus: sgStatus,
+		strajaGuardReason: sgReason,
 		strajaGuardMeta:   sgMeta,
 		requireML:         cfg.Intel.StrajaGuardV1.RequireML,
 		allowRegexOnly:    cfg.Intel.StrajaGuardV1.AllowRegexOnly,
@@ -1273,4 +1267,23 @@ func reasonForFallback(err error) string {
 		return "validate_failed_network"
 	}
 	return "validate_failed"
+}
+
+// sgFallbackDecision determines whether cached bundles may be used and what status/reason to report.
+func sgFallbackDecision(hasLicense bool, outcome strajaguard.LicenseValidationOutcome, currentVersion string) (allowCache bool, status string, reason string) {
+	if !hasLicense {
+		return false, "disabled_missing_license", "missing_license"
+	}
+
+	switch outcome {
+	case strajaguard.ValidateInvalidLicense:
+		return false, "disabled_invalid_license", "invalid_license"
+	case strajaguard.ValidateNetworkError:
+		if strings.TrimSpace(currentVersion) != "" {
+			return true, "offline_cached_bundle", "network_error"
+		}
+		return false, "disabled_missing_bundle", "missing_bundle"
+	default:
+		return false, "disabled_invalid_bundle", "invalid_bundle"
+	}
 }
