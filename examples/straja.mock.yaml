@@ -34,13 +34,13 @@ intel:
   strajaguard_v1:
     enabled: true
     allow_regex_only: true
-    require_ml: false
-    intel_dir: "/var/lib/straja/intel"
+    require_ml: true
+    intel_dir: "./intel"
 
 security:
   enabled: true
-  bundle_dir: "/var/lib/straja/bundles/strajaguard_v1"
   seq_len: 256
+  bundle_dir: ./intel/strajaguard_v1
   prompt_injection:
     regex_enabled: true
     ml_enabled: true
@@ -77,3 +77,5 @@ strajaguard:
   max_sessions: 2
   intra_threads: 4
   inter_threads: 1
+  cache_dir: ./tmp/intel
+  bundle_dir: ./tmp/bundles
