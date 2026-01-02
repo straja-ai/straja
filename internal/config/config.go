@@ -24,6 +24,9 @@ type Config struct {
 	StrajaGuard     StrajaGuardConfig         `yaml:"strajaguard"`
 	// ResolvedLicenseKey is populated at runtime (env-first) for both intelligence and StrajaGuard.
 	ResolvedLicenseKey string `yaml:"-"`
+	// ResolvedStrajaGuardLicenseKey is populated at runtime (env-first) specifically for StrajaGuard.
+	ResolvedStrajaGuardLicenseKey string `yaml:"-"`
+	ResolvedStrajaGuardSource     string `yaml:"-"`
 }
 
 // IntelConfig holds ML bundle + license settings.
@@ -526,19 +529,52 @@ func resolveLicense(cfg *Config) {
 	}
 	envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv)
 	envVal := ""
+	envPresent := false
 	if envName != "" {
-		envVal = strings.TrimSpace(os.Getenv(envName))
+		if v, ok := os.LookupEnv(envName); ok {
+			envPresent = true
+			envVal = strings.TrimSpace(v)
+			if isPlaceholderLicenseKey(envVal) {
+				envVal = ""
+			}
+		}
 	}
-	// YAML value is a dev fallback; ignore placeholders.
+	// YAML values are dev fallbacks; ignore placeholders.
 	fileVal := strings.TrimSpace(cfg.Intelligence.LicenseKey)
 	if isPlaceholderLicenseKey(fileVal) {
 		fileVal = ""
 	}
-	resolved := envVal
+	sgFileVal := strings.TrimSpace(cfg.Intel.StrajaGuardV1.LicenseKey)
+	if isPlaceholderLicenseKey(sgFileVal) {
+		sgFileVal = ""
+	}
+
+	resolved := ""
+	if envPresent {
+		resolved = envVal
+	}
 	if resolved == "" {
 		resolved = fileVal
 	}
 	cfg.ResolvedLicenseKey = resolved
+
+	sgResolved := ""
+	sgSource := "intelligence.license_key"
+	if envPresent {
+		sgResolved = envVal
+		sgSource = "env:" + envName
+	}
+	if sgResolved == "" && sgFileVal != "" {
+		sgResolved = sgFileVal
+		sgSource = "intel.strajaguard_v1.license_key"
+	}
+	if sgResolved == "" && fileVal != "" {
+		sgResolved = fileVal
+		sgSource = "intelligence.license_key"
+	}
+
+	cfg.ResolvedStrajaGuardLicenseKey = sgResolved
+	cfg.ResolvedStrajaGuardSource = sgSource
 }
 
 func isPlaceholderLicenseKey(k string) bool {

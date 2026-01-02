@@ -103,6 +103,11 @@ Recommended:
 - Store project API keys in config, but inject provider/license keys via env or secret store.
 - Tune `server.max_request_body_bytes`, `max_messages`, and `max_total_message_chars` for your traffic profile.
 
+### License key configuration
+- Use a single license key for both Intelligence and StrajaGuard. Precedence: env `STRAJA_LICENSE_KEY` (via `intelligence.license_key_env`) → `intel.strajaguard_v1.license_key` → `intelligence.license_key` (placeholders are ignored).
+- Recommendation: set the env var and keep YAML keys empty in production.
+- On network outages during validation, Straja keeps running with the last verified bundle and reports `strajaguard_status=offline_cached_bundle`.
+
 ### StrajaGuard licensing & bundles
 - One license key (`STRAJA_LICENSE_KEY`) is used for StrajaGuard validation/update. Env wins; placeholders in YAML are ignored.
 - Runtime behavior (matching the server state machine):

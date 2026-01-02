@@ -227,6 +227,12 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	licenseKey := strings.TrimSpace(cfg.ResolvedLicenseKey)
 	envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv)
 	redact.Logf("license: using %s set=%t", envName, licenseKey != "")
+	sgLicenseKey := strings.TrimSpace(cfg.ResolvedStrajaGuardLicenseKey)
+	sgSource := strings.TrimSpace(cfg.ResolvedStrajaGuardSource)
+	if sgSource == "" {
+		sgSource = "intelligence.license_key"
+	}
+	redact.Logf("strajaguard: license key resolved set=%t source=%s", sgLicenseKey != "", sgSource)
 
 	// Build intelligence engine (bundle-backed regex or noop) with offline license verification.
 	var (
@@ -308,11 +314,25 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 			cachedMeta = &meta
 		}
 
-		sgLicenseKey := strings.TrimSpace(cfg.ResolvedLicenseKey)
 		if sgLicenseKey == "" {
 			if currentVersion != "" {
-				redact.Logf("strajaguard: cached bundle present (version=%s) but not used because license is missing", currentVersion)
-				sgStatus = "disabled_missing_license"
+				if integErr := strajaguard.VerifyBundleIntegrity(strajaGuardDir, currentVersion); integErr == nil {
+					if model, loadErr := strajaguard.LoadModel(filepath.Join(strajaGuardDir, currentVersion), cfg.Security.SeqLen, rt); loadErr == nil {
+						sgModel = model
+						activeBundleVersion = currentVersion
+						sgStatus = "offline_cached_bundle"
+						if cachedMeta != nil {
+							sgMeta = cachedMeta
+						}
+						redact.Logf("strajaguard: using offline cached bundle version=%s (license key missing)", currentVersion)
+					} else {
+						sgStatus = "disabled_invalid_bundle"
+						redact.Logf("strajaguard: cached bundle present but failed to load: %v", loadErr)
+					}
+				} else {
+					sgStatus = "disabled_invalid_bundle"
+					redact.Logf("strajaguard: cached bundle failed integrity: %v", integErr)
+				}
 			} else {
 				sgStatus = "disabled_missing_license"
 			}
