@@ -46,6 +46,7 @@ type Server struct {
 	licenseKey        string
 	intelStatus       string
 	intelMeta         *strajaguard.ValidationMeta
+	intelBundleVer    string
 	strajaGuardStatus string
 	strajaGuardMeta   *strajaguard.ValidationMeta
 	httpClient        *http.Client
@@ -236,10 +237,11 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 
 	// Build intelligence engine (bundle-backed regex or noop) with offline license verification.
 	var (
-		intelEngine   intel.Engine = intel.NewRegexBundle(cfg.Policy)
-		licenseClaims *license.LicenseClaims
-		intelEnabled  = cfg.Intelligence.Enabled
-		intelStatus   = "online_validated"
+		intelEngine    intel.Engine = intel.NewRegexBundle(cfg.Policy)
+		licenseClaims  *license.LicenseClaims
+		intelEnabled   = cfg.Intelligence.Enabled
+		intelStatus    = "online_validated"
+		intelBundleVer string
 	)
 
 	if !intelEnabled {
@@ -267,6 +269,9 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 				}
 			}
 		}
+	}
+	if intelEngine != nil {
+		intelBundleVer = strings.TrimSpace(intelEngine.Status().BundleVersion)
 	}
 
 	// Build StrajaGuard model (optional, offline-first)
@@ -470,6 +475,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		licenseKey:        licenseKey,
 		intelStatus:       intelStatus,
 		intelMeta:         intelMeta,
+		intelBundleVer:    intelBundleVer,
 		httpClient:        &http.Client{Timeout: licenseHTTPTimeout},
 		inFlightLimiter:   limiter,
 		strajaGuardModel:  sgModel,
@@ -1144,19 +1150,20 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 	}
 
 	ev := &activation.Event{
-		Timestamp:          time.Now().UTC(),
-		ProjectID:          req.ProjectID,
-		Provider:           providerName,
-		Model:              req.Model,
-		Decision:           decision,
-		PromptPreview:      promptPreview,
-		CompletionPreview:  completionPreview,
-		PolicyHits:         append([]string(nil), req.PolicyHits...),
-		IntelStatus:        s.intelStatus,
-		IntelBundleVersion: s.activeBundleVer,
-		PolicyDecisions:    policyDecisions,
-		StrajaGuard:        sgPayload,
-		StrajaGuardStatus:  s.strajaGuardStatus,
+		Timestamp:            time.Now().UTC(),
+		ProjectID:            req.ProjectID,
+		Provider:             providerName,
+		Model:                req.Model,
+		Decision:             decision,
+		PromptPreview:        promptPreview,
+		CompletionPreview:    completionPreview,
+		PolicyHits:           append([]string(nil), req.PolicyHits...),
+		IntelStatus:          s.intelStatus,
+		IntelBundleVersion:   s.intelBundleVer,
+		PolicyDecisions:      policyDecisions,
+		StrajaGuard:          sgPayload,
+		StrajaGuardStatus:    s.strajaGuardStatus,
+		StrajaGuardBundleVer: s.activeBundleVer,
 	}
 	if s.intelMeta != nil {
 		ev.IntelLastValidatedAt = s.intelMeta.LastValidatedAt

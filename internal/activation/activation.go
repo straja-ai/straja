@@ -36,6 +36,7 @@ type Event struct {
 	IntelLastValidatedAt string `json:"intel_last_validated_at,omitempty"`
 	IntelCachePresent    bool   `json:"intel_cache_present,omitempty"`
 	StrajaGuardStatus    string `json:"strajaguard_status,omitempty"`
+	StrajaGuardBundleVer string `json:"strajaguard_bundle_version,omitempty"`
 	// StrajaGuard contains raw scores and flags from the ML classifier.
 	StrajaGuard *StrajaGuardPayload `json:"strajaguard,omitempty"`
 	// PolicyDecisions are the merged per-category decisions (regex + ML).
