@@ -11,6 +11,7 @@ import (
 	"github.com/straja-ai/straja/internal/intel"
 	"github.com/straja-ai/straja/internal/license"
 	"github.com/straja-ai/straja/internal/policy"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestValidateLicenseOnline_OKStatusesKeepEnabled(t *testing.T) {
@@ -55,7 +56,7 @@ func TestValidateLicenseOnline_NonOKDisablesIntel(t *testing.T) {
 		licenseClaims: &license.LicenseClaims{},
 		intelStatus:   "enabled",
 		intelEnabled:  true,
-		policy:        policy.NewBasic(config.PolicyConfig{}, config.SecurityConfig{}, intel.NewNoop(), nil),
+		policy:        policy.NewBasic(config.PolicyConfig{}, config.SecurityConfig{}, intel.NewNoop(), nil, trace.NewNoopTracerProvider().Tracer("test"), config.StrajaGuardConfig{}),
 		httpClient:    fakeHTTPClient(`{"status":"revoked","message":"Revoked"}`),
 	}
 

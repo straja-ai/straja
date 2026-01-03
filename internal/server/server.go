@@ -30,7 +30,11 @@ import (
 	"github.com/straja-ai/straja/internal/provider"
 	"github.com/straja-ai/straja/internal/redact"
 	"github.com/straja-ai/straja/internal/strajaguard"
+	"github.com/straja-ai/straja/internal/telemetry"
+	"go.opentelemetry.io/otel/trace"
 )
+
+const version = "dev"
 
 // Server wraps the HTTP server components for Straja.
 type Server struct {
@@ -43,6 +47,7 @@ type Server struct {
 	activationEmitter  *activation.Emitter
 	loggingLevel       string
 	securityThresholds map[string]float32
+	telemetry          *telemetry.Provider
 	projectProviders   map[string]string // project ID -> provider name
 	licenseClaims      *license.LicenseClaims
 	intelEnabled       bool
@@ -59,6 +64,7 @@ type Server struct {
 	activeBundleVer    string
 	requireML          bool
 	allowRegexOnly     bool
+	providerTypes      map[string]string
 }
 
 func isNetworkyError(err error) bool {
@@ -119,6 +125,18 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
+	ctx := r.Context()
+	ctx, root := s.startSpan(ctx, "straja.request", trace.SpanKindServer, map[string]interface{}{
+		"straja.version":                    version,
+		"http.method":                       r.Method,
+		"http.route":                        "/console/api/chat",
+		"straja.strajaguard.enabled":        s.strajaGuardModel != nil,
+		"straja.strajaguard.loaded":         s.strajaGuardModel != nil,
+		"straja.strajaguard.bundle_version": s.activeBundleVer,
+	})
+	defer root.End()
+
 	if s.cfg.Server.MaxRequestBodyBytes > 0 {
 		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.Server.MaxRequestBodyBytes)
 	}
@@ -137,6 +155,8 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	statusCode := http.StatusOK
+
 	// lookup provider for this project
 	providerName := s.projectProviders[reqBody.ProjectID]
 	if providerName == "" {
@@ -150,21 +170,47 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Reuse the same normalization as /v1/chat/completions:
+	normCtx, normSpan := s.startSpan(ctx, "straja.normalize", trace.SpanKindInternal, map[string]interface{}{
+		"straja.project_id":  reqBody.ProjectID,
+		"straja.provider_id": providerName,
+	})
 	infReq := normalizeToInferenceRequest(reqBody.ProjectID, &chatCompletionRequest{
 		Model:    reqBody.Model,
 		Messages: reqBody.Messages,
 	})
+	setSpanAttrs(normSpan, map[string]interface{}{
+		"straja.model":  infReq.Model,
+		"straja.stream": false,
+	})
+	normSpan.End()
 	infReq.Timings = &inference.Timings{}
 	decision := "allow"
 	defer logTimingDebug(reqBody.ProjectID, providerName, decision, infReq.Timings)
+	defer func() {
+		setSpanAttrs(root, map[string]interface{}{
+			"straja.project_id":                 reqBody.ProjectID,
+			"straja.provider_id":                providerName,
+			"straja.provider_type":              s.providerTypes[providerName],
+			"straja.model":                      infReq.Model,
+			"straja.decision":                   decision,
+			"straja.policy_hits_total":          len(infReq.PolicyHits),
+			"straja.policy_categories":          infReq.PolicyHits,
+			"straja.blocked":                    strings.HasPrefix(decision, "blocked"),
+			"straja.strajaguard.bundle_version": s.activeBundleVer,
+			"http.status_code":                  statusCode,
+		})
+		if s.telemetry != nil {
+			s.telemetry.RecordRequestMetrics(decision, s.providerTypes[providerName], reqBody.ProjectID, float64(time.Since(start).Milliseconds()), durationMs(infReq.Timings.Provider), durationMs(infReq.Timings.StrajaGuard), len(infReq.PolicyHits))
+		}
+	}()
 
 	if err := s.validateChatRequest(infReq, providerName); err != nil {
 		decision = "blocked_request"
+		statusCode = http.StatusBadRequest
 		writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
 		return
 	}
 
-	ctx := r.Context()
 	if s.cfg.Server.UpstreamTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, s.cfg.Server.UpstreamTimeout)
@@ -174,11 +220,19 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	// Policy + provider + activation, same flow as handleChatCompletions:
 
 	prePolicyStart := time.Now()
-	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
+	policyPreCtx, policyPreSpan := s.startSpan(normCtx, "straja.policy.pre", trace.SpanKindInternal, map[string]interface{}{
+		"straja.policy.hits_total": len(infReq.PolicyHits),
+	})
+	if err := s.policy.BeforeModel(policyPreCtx, infReq); err != nil {
 		if infReq.Timings != nil {
 			infReq.Timings.PrePolicy = time.Since(prePolicyStart)
 		}
+		setSpanAttrs(policyPreSpan, map[string]interface{}{
+			"straja.policy.result": "blocked",
+		})
+		policyPreSpan.End()
 		decision = "blocked_before"
+		statusCode = http.StatusForbidden
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
@@ -186,26 +240,58 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	if infReq.Timings != nil {
 		infReq.Timings.PrePolicy = time.Since(prePolicyStart)
 	}
+	setSpanAttrs(policyPreSpan, map[string]interface{}{
+		"straja.policy.result":     "ok",
+		"straja.policy.hits_total": len(infReq.PolicyHits),
+	})
+	policyPreSpan.End()
 
 	providerStart := time.Now()
-	infResp, err := prov.ChatCompletion(ctx, infReq)
+	provSelectCtx, provSelectSpan := s.startSpan(ctx, "straja.provider.select", trace.SpanKindInternal, map[string]interface{}{
+		"straja.provider_id":   providerName,
+		"straja.provider_type": s.providerTypes[providerName],
+	})
+	provSelectSpan.End()
+
+	provCallCtx, provCallSpan := s.startSpan(provSelectCtx, "straja.provider.call", trace.SpanKindInternal, map[string]interface{}{
+		"straja.provider_id":   providerName,
+		"straja.provider_type": s.providerTypes[providerName],
+	})
+	infResp, err := prov.ChatCompletion(provCallCtx, infReq)
 	if infReq.Timings != nil {
 		infReq.Timings.Provider = time.Since(providerStart)
 	}
 	if err != nil {
 		redact.Logf("provider %q error (console): %v", providerName, err)
+		setSpanAttrs(provCallSpan, map[string]interface{}{
+			"straja.upstream.error": err.Error(),
+		})
+		provCallSpan.End()
 		decision = "error_provider"
+		statusCode = http.StatusBadGateway
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
+	setSpanAttrs(provCallSpan, map[string]interface{}{
+		"straja.upstream.status_code": 200,
+	})
+	provCallSpan.End()
 
 	postPolicyStart := time.Now()
-	if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
+	policyPostCtx, policyPostSpan := s.startSpan(ctx, "straja.policy.post", trace.SpanKindInternal, map[string]interface{}{
+		"straja.policy.hits_total": len(infReq.PolicyHits),
+	})
+	if err := s.policy.AfterModel(policyPostCtx, infReq, infResp); err != nil {
 		if infReq.Timings != nil {
 			infReq.Timings.PostPolicy = time.Since(postPolicyStart)
 		}
+		setSpanAttrs(policyPostSpan, map[string]interface{}{
+			"straja.policy.result": "blocked",
+		})
+		policyPostSpan.End()
 		decision = "blocked_after"
+		statusCode = http.StatusForbidden
 		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
@@ -213,10 +299,17 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	if infReq.Timings != nil {
 		infReq.Timings.PostPolicy = time.Since(postPolicyStart)
 	}
+	setSpanAttrs(policyPostSpan, map[string]interface{}{
+		"straja.policy.result":     "ok",
+		"straja.policy.hits_total": len(infReq.PolicyHits),
+	})
+	policyPostSpan.End()
 
 	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
 
+	_, respSpan := s.startSpan(ctx, "straja.response.encode", trace.SpanKindInternal, nil)
 	respBody := buildChatCompletionResponse(infReq, infResp)
+	respSpan.End()
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(respBody); err != nil {
@@ -420,8 +513,16 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 
 	redact.Logf("strajaguard: status=%s reason=%s active_version=%s cache_dir=%s", sgStatus, sgReason, activeBundleVersion, strajaGuardDir)
 
+	telProvider, _ := telemetry.NewProvider(context.Background(), telemetry.Config{
+		Enabled:  cfg.Telemetry.Enabled,
+		Endpoint: cfg.Telemetry.Endpoint,
+		Protocol: cfg.Telemetry.Protocol,
+		Service:  "straja-gateway",
+		Version:  version,
+	})
+
 	// Build policy engine (consumes intelEngine)
-	pol := policy.NewBasic(cfg.Policy, cfg.Security, intelEngine, sgModel)
+	pol := policy.NewBasic(cfg.Policy, cfg.Security, intelEngine, sgModel, telProvider.Tracer(), cfg.StrajaGuard)
 
 	// Build providers
 	provs, provErr := buildProviderRegistry(cfg)
@@ -434,6 +535,10 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		if cfg.DefaultProvider == "" {
 			cfg.DefaultProvider = "echo"
 		}
+	}
+	providerTypes := make(map[string]string, len(cfg.Providers))
+	for name, p := range cfg.Providers {
+		providerTypes[name] = p.Type
 	}
 
 	// Build project → provider map
@@ -468,6 +573,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		activationEmitter:  activationEmitter,
 		loggingLevel:       strings.ToLower(cfg.Logging.ActivationLevel),
 		securityThresholds: buildSecurityThresholds(cfg.Security),
+		telemetry:          telProvider,
 		projectProviders:   projectProviders,
 		licenseClaims:      licenseClaims,
 		intelEnabled:       intelEnabled,
@@ -484,6 +590,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		strajaGuardMeta:    sgMeta,
 		requireML:          cfg.Intel.StrajaGuardV1.RequireML,
 		allowRegexOnly:     cfg.Intel.StrajaGuardV1.AllowRegexOnly,
+		providerTypes:      providerTypes,
 	}
 
 	bundleTimeout := time.Duration(cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds) * time.Second
@@ -677,7 +784,11 @@ func (s *Server) disableIntelligence(reason string) {
 	redact.Logf("disabling intelligence: %s", reason)
 	s.intelEnabled = false
 	s.licenseClaims = nil
-	s.policy = policy.NewBasic(s.cfg.Policy, s.cfg.Security, intel.NewRegexBundle(s.cfg.Policy), s.strajaGuardModel)
+	tr := trace.NewNoopTracerProvider().Tracer("noop")
+	if s.telemetry != nil {
+		tr = s.telemetry.Tracer()
+	}
+	s.policy = policy.NewBasic(s.cfg.Policy, s.cfg.Security, intel.NewRegexBundle(s.cfg.Policy), s.strajaGuardModel, tr, s.cfg.StrajaGuard)
 	s.intelStatus = "regex_only_invalid_license"
 }
 
@@ -798,6 +909,7 @@ func (s *Server) Start(addr string) error {
 	select {
 	case err := <-errCh:
 		s.shutdownActivation(context.Background())
+		s.shutdownTelemetry(context.Background())
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
@@ -810,6 +922,7 @@ func (s *Server) Start(addr string) error {
 			redact.Logf("graceful shutdown error: %v", err)
 		}
 		s.shutdownActivation(ctx)
+		s.shutdownTelemetry(ctx)
 		return nil
 	}
 }
@@ -817,6 +930,12 @@ func (s *Server) Start(addr string) error {
 func (s *Server) shutdownActivation(ctx context.Context) {
 	if s.activationEmitter != nil {
 		s.activationEmitter.Close(ctx)
+	}
+}
+
+func (s *Server) shutdownTelemetry(ctx context.Context) {
+	if s.telemetry != nil {
+		s.telemetry.Shutdown(ctx)
 	}
 }
 
@@ -944,22 +1063,47 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
+	ctx := r.Context()
+	ctx, root := s.startSpan(ctx, "straja.request", trace.SpanKindServer, map[string]interface{}{
+		"straja.version":                    version,
+		"http.method":                       r.Method,
+		"http.route":                        "/v1/chat/completions",
+		"straja.strajaguard.enabled":        s.strajaGuardModel != nil,
+		"straja.strajaguard.loaded":         s.strajaGuardModel != nil,
+		"straja.strajaguard.bundle_version": s.activeBundleVer,
+	})
+	defer root.End()
+
 	if s.cfg.Server.MaxRequestBodyBytes > 0 {
 		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.Server.MaxRequestBodyBytes)
 	}
 
 	// Auth: extract API key and map to project
+	authCtx, authSpan := s.startSpan(ctx, "straja.auth", trace.SpanKindInternal, nil)
 	apiKey, ok := parseBearerToken(r.Header.Get("Authorization"))
+	setSpanAttrs(authSpan, map[string]interface{}{
+		"straja.auth.api_key_present": apiKey != "",
+	})
 	if !ok || apiKey == "" {
+		setSpanAttrs(authSpan, map[string]interface{}{"straja.auth.result": "missing"})
+		authSpan.End()
 		writeOpenAIError(w, http.StatusUnauthorized, "Invalid or missing API key", "authentication_error")
 		return
 	}
 
 	project, ok := s.auth.Lookup(apiKey)
+	setSpanAttrs(authSpan, map[string]interface{}{
+		"straja.auth.project_resolved": ok,
+	})
 	if !ok {
+		setSpanAttrs(authSpan, map[string]interface{}{"straja.auth.result": "invalid"})
+		authSpan.End()
 		writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key", "authentication_error")
 		return
 	}
+	setSpanAttrs(authSpan, map[string]interface{}{"straja.auth.result": "ok"})
+	authSpan.End()
 
 	var reqBody chatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
@@ -971,10 +1115,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
 	if s.cfg.Server.UpstreamTimeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.cfg.Server.UpstreamTimeout)
+		ctx, cancel = context.WithTimeout(authCtx, s.cfg.Server.UpstreamTimeout)
 		defer cancel()
 	}
 
@@ -992,10 +1135,37 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1) Normalize HTTP/OpenAI request → internal inference.Request
+	normCtx, normSpan := s.startSpan(ctx, "straja.normalize", trace.SpanKindInternal, map[string]interface{}{
+		"straja.project_id":  project.ID,
+		"straja.provider_id": providerName,
+	})
 	infReq := normalizeToInferenceRequest(project.ID, &reqBody)
+	setSpanAttrs(normSpan, map[string]interface{}{
+		"straja.model":  infReq.Model,
+		"straja.stream": reqBody.Stream,
+	})
+	normSpan.End()
 	infReq.Timings = &inference.Timings{}
 	decision := "allow"
+	statusCode := http.StatusOK
 	defer logTimingDebug(project.ID, providerName, decision, infReq.Timings)
+	defer func() {
+		setSpanAttrs(root, map[string]interface{}{
+			"straja.project_id":                 project.ID,
+			"straja.provider_id":                providerName,
+			"straja.provider_type":              s.providerTypes[providerName],
+			"straja.model":                      infReq.Model,
+			"straja.decision":                   decision,
+			"straja.policy_hits_total":          len(infReq.PolicyHits),
+			"straja.policy_categories":          infReq.PolicyHits,
+			"straja.blocked":                    strings.HasPrefix(decision, "blocked"),
+			"straja.strajaguard.bundle_version": s.activeBundleVer,
+			"http.status_code":                  statusCode,
+		})
+		if s.telemetry != nil {
+			s.telemetry.RecordRequestMetrics(decision, s.providerTypes[providerName], project.ID, float64(time.Since(start).Milliseconds()), durationMs(infReq.Timings.Provider), durationMs(infReq.Timings.StrajaGuard), len(infReq.PolicyHits))
+		}
+	}()
 
 	if err := s.validateChatRequest(infReq, providerName); err != nil {
 		decision = "blocked_request"
@@ -1005,11 +1175,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// 2) Before-model block
 	prePolicyStart := time.Now()
-	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
+	policyPreCtx, policyPreSpan := s.startSpan(normCtx, "straja.policy.pre", trace.SpanKindInternal, map[string]interface{}{
+		"straja.policy.hits_total": len(infReq.PolicyHits),
+	})
+	if err := s.policy.BeforeModel(policyPreCtx, infReq); err != nil {
 		if infReq.Timings != nil {
 			infReq.Timings.PrePolicy = time.Since(prePolicyStart)
 		}
+		setSpanAttrs(policyPreSpan, map[string]interface{}{
+			"straja.policy.result": "blocked",
+		})
+		policyPreSpan.End()
 		decision = "blocked_before"
+		statusCode = http.StatusForbidden
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
@@ -1017,28 +1195,60 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if infReq.Timings != nil {
 		infReq.Timings.PrePolicy = time.Since(prePolicyStart)
 	}
+	setSpanAttrs(policyPreSpan, map[string]interface{}{
+		"straja.policy.result":     "ok",
+		"straja.policy.hits_total": len(infReq.PolicyHits),
+	})
+	policyPreSpan.End()
 
 	// 3) Provider error
 	providerStart := time.Now()
-	infResp, err := prov.ChatCompletion(ctx, infReq)
+	provSelectCtx, provSelectSpan := s.startSpan(ctx, "straja.provider.select", trace.SpanKindInternal, map[string]interface{}{
+		"straja.provider_id":   providerName,
+		"straja.provider_type": s.providerTypes[providerName],
+	})
+	provSelectSpan.End()
+
+	provCallCtx, provCallSpan := s.startSpan(provSelectCtx, "straja.provider.call", trace.SpanKindInternal, map[string]interface{}{
+		"straja.provider_id":   providerName,
+		"straja.provider_type": s.providerTypes[providerName],
+	})
+	infResp, err := prov.ChatCompletion(provCallCtx, infReq)
 	if infReq.Timings != nil {
 		infReq.Timings.Provider = time.Since(providerStart)
 	}
 	if err != nil {
 		redact.Logf("provider %q error: %v", providerName, err)
+		setSpanAttrs(provCallSpan, map[string]interface{}{
+			"straja.upstream.error": err.Error(),
+		})
+		provCallSpan.End()
 		decision = "error_provider"
+		statusCode = http.StatusBadGateway
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
+	setSpanAttrs(provCallSpan, map[string]interface{}{
+		"straja.upstream.status_code": 200,
+	})
+	provCallSpan.End()
 
 	// 4) After-model block
 	postPolicyStart := time.Now()
-	if err := s.policy.AfterModel(ctx, infReq, infResp); err != nil {
+	policyPostCtx, policyPostSpan := s.startSpan(ctx, "straja.policy.post", trace.SpanKindInternal, map[string]interface{}{
+		"straja.policy.hits_total": len(infReq.PolicyHits),
+	})
+	if err := s.policy.AfterModel(policyPostCtx, infReq, infResp); err != nil {
 		if infReq.Timings != nil {
 			infReq.Timings.PostPolicy = time.Since(postPolicyStart)
 		}
+		setSpanAttrs(policyPostSpan, map[string]interface{}{
+			"straja.policy.result": "blocked",
+		})
+		policyPostSpan.End()
 		decision = "blocked_after"
+		statusCode = http.StatusForbidden
 		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
@@ -1046,11 +1256,18 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if infReq.Timings != nil {
 		infReq.Timings.PostPolicy = time.Since(postPolicyStart)
 	}
+	setSpanAttrs(policyPostSpan, map[string]interface{}{
+		"straja.policy.result":     "ok",
+		"straja.policy.hits_total": len(infReq.PolicyHits),
+	})
+	policyPostSpan.End()
 
 	// 5) Success
 	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
 
+	_, respSpan := s.startSpan(ctx, "straja.response.encode", trace.SpanKindInternal, nil)
 	respBody := buildChatCompletionResponse(infReq, infResp)
+	respSpan.End()
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(respBody); err != nil {
@@ -1220,6 +1437,12 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 		return
 	}
 
+	actCtx, actSpan := s.startSpan(ctx, "straja.activation.emit", trace.SpanKindInternal, map[string]interface{}{
+		"straja.activation.sinks": sinkNames(s.cfg.Activation.Sinks),
+		"straja.activation.async": true,
+	})
+	defer actSpan.End()
+
 	lastValidated := ""
 	if s.intelMeta != nil {
 		lastValidated = s.intelMeta.LastValidatedAt
@@ -1249,7 +1472,18 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 	activation.LogEvent(ev)
 
 	if s.activationEmitter != nil {
-		s.activationEmitter.Emit(ctx, ev)
+		s.activationEmitter.Emit(actCtx, ev)
+		setSpanAttrs(actSpan, map[string]interface{}{
+			"straja.activation.emit_result": "queued",
+		})
+		metrics := s.activationEmitter.MetricsSnapshot()
+		setSpanAttrs(actSpan, map[string]interface{}{
+			"straja.activation.fail_count": metrics.Dropped(),
+		})
+	} else {
+		setSpanAttrs(actSpan, map[string]interface{}{
+			"straja.activation.emit_result": "disabled",
+		})
 	}
 
 	// Also expose activation to clients via header so the console can show it.
@@ -1308,6 +1542,40 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
+}
+
+func (s *Server) startSpan(ctx context.Context, name string, kind trace.SpanKind, attrs map[string]interface{}) (context.Context, trace.Span) {
+	tr := trace.NewNoopTracerProvider().Tracer("noop")
+	if s != nil && s.telemetry != nil {
+		tr = s.telemetry.Tracer()
+	}
+	options := []trace.SpanStartOption{}
+	if kind != trace.SpanKindInternal {
+		options = append(options, trace.WithSpanKind(kind))
+	}
+	ctx, span := tr.Start(ctx, name, options...)
+	if len(attrs) > 0 {
+		span.SetAttributes(telemetry.SafeAttributes(attrs)...)
+	}
+	return ctx, span
+}
+
+func setSpanAttrs(span trace.Span, attrs map[string]interface{}) {
+	if span == nil {
+		return
+	}
+	if len(attrs) == 0 {
+		return
+	}
+	span.SetAttributes(telemetry.SafeAttributes(attrs)...)
+}
+
+func sinkNames(sinks []config.ActivationSinkConfig) []string {
+	out := make([]string, 0, len(sinks))
+	for _, s := range sinks {
+		out = append(out, s.Type)
+	}
+	return out
 }
 
 func isPlaceholderLicenseKey(k string) bool {

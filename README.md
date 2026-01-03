@@ -468,6 +468,13 @@ make activation-receiver           # starts on :8099
 
 Point a webhook sink at `http://127.0.0.1:8099/activation` and watch events printed to stdout.
 
+### OpenTelemetry (tracing + metrics)
+
+- Enable via `telemetry.enabled: true` in `straja.yaml` or `OTEL_EXPORTER_OTLP_ENDPOINT` env.
+- Supports OTLP gRPC (default) or HTTP; set `telemetry.protocol: "http"` to use HTTP.
+- Root span `straja.request` with child spans for auth/normalize/policy/provider/activation; only safe attributes are recorded (no prompts/PII/API keys).
+- Metrics: `straja_requests_total`, `straja_request_duration_ms`, `straja_upstream_duration_ms`, `straja_strajaguard_inference_duration_ms`, `straja_policy_hits_total` with decision/provider_type/project_id labels.
+
 ---
 
 ## 💻 Using Straja from SDKs

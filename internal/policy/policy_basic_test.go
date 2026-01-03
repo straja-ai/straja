@@ -8,6 +8,7 @@ import (
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/inference"
 	"github.com/straja-ai/straja/internal/intel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func newTestPolicy() Engine {
@@ -28,7 +29,7 @@ func newTestPolicy() Engine {
 	}
 
 	eng := intel.NewRegexBundle(pc)
-	return NewBasic(pc, config.SecurityConfig{}, eng, nil)
+	return NewBasic(pc, config.SecurityConfig{}, eng, nil, trace.NewNoopTracerProvider().Tracer("test"), config.StrajaGuardConfig{})
 }
 
 func hasHit(req *inference.Request, category string) bool {
@@ -240,7 +241,7 @@ func TestBasicPolicy_BeforeModel_RedactsBannedWords(t *testing.T) {
 		Injection:       "ignore",
 	}
 	eng := intel.NewRegexBundle(pc)
-	p := NewBasic(pc, config.SecurityConfig{}, eng, nil)
+	p := NewBasic(pc, config.SecurityConfig{}, eng, nil, trace.NewNoopTracerProvider().Tracer("test"), config.StrajaGuardConfig{})
 
 	req := &inference.Request{
 		ProjectID: "test",
@@ -280,7 +281,7 @@ func TestBasicPolicy_BeforeModel_RedactsPII(t *testing.T) {
 		},
 	}
 	eng := intel.NewRegexBundle(pc)
-	p := NewBasic(pc, config.SecurityConfig{}, eng, nil)
+	p := NewBasic(pc, config.SecurityConfig{}, eng, nil, trace.NewNoopTracerProvider().Tracer("test"), config.StrajaGuardConfig{})
 
 	req := &inference.Request{
 		ProjectID: "test",
@@ -323,7 +324,7 @@ func TestBasicPolicy_PIIEntities_EmailDisabledDoesNotTrigger(t *testing.T) {
 		},
 	}
 	eng := intel.NewRegexBundle(pc)
-	p := NewBasic(pc, config.SecurityConfig{}, eng, nil)
+	p := NewBasic(pc, config.SecurityConfig{}, eng, nil, trace.NewNoopTracerProvider().Tracer("test"), config.StrajaGuardConfig{})
 
 	req := &inference.Request{
 		ProjectID: "test",
@@ -354,7 +355,7 @@ func TestBasicPolicy_PIIEntities_IBANEnabledTriggers(t *testing.T) {
 		},
 	}
 	eng := intel.NewRegexBundle(pc)
-	p := NewBasic(pc, config.SecurityConfig{}, eng, nil)
+	p := NewBasic(pc, config.SecurityConfig{}, eng, nil, trace.NewNoopTracerProvider().Tracer("test"), config.StrajaGuardConfig{})
 
 	req := &inference.Request{
 		ProjectID: "test",

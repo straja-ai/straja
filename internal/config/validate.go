@@ -58,6 +58,10 @@ func Validate(cfg *Config) error {
 		return err
 	}
 
+	if err := validateTelemetryConfig(cfg.Telemetry); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -108,6 +112,23 @@ func validateActivationConfig(a ActivationConfig) error {
 			}
 		default:
 			return fmt.Errorf("activation sink %d has unknown type %q", i, s.Type)
+		}
+	}
+	return nil
+}
+
+func validateTelemetryConfig(t TelemetryConfig) error {
+	if !t.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(t.Endpoint) == "" {
+		return errors.New("telemetry enabled but endpoint is empty")
+	}
+	if t.Protocol != "" {
+		switch strings.ToLower(strings.TrimSpace(t.Protocol)) {
+		case "grpc", "http":
+		default:
+			return fmt.Errorf("telemetry.protocol must be grpc or http, got %q", t.Protocol)
 		}
 	}
 	return nil

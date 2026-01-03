@@ -12,6 +12,8 @@ import (
 	"github.com/straja-ai/straja/internal/redact"
 	"github.com/straja-ai/straja/internal/safety"
 	"github.com/straja-ai/straja/internal/strajaguard"
+	"github.com/straja-ai/straja/internal/telemetry"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Engine interface {
@@ -52,8 +54,10 @@ func parseAction(v string, def action) action {
 // ------------------------------
 
 type Basic struct {
-	intel intel.Engine
-	sg    *strajaguard.StrajaGuardModel
+	intel  intel.Engine
+	sg     *strajaguard.StrajaGuardModel
+	tracer trace.Tracer
+	sgCfg  config.StrajaGuardConfig
 
 	securityCfg config.SecurityConfig
 
@@ -67,10 +71,15 @@ type Basic struct {
 }
 
 // NewBasic builds the Basic policy engine using config.PolicyConfig.
-func NewBasic(pc config.PolicyConfig, sc config.SecurityConfig, eng intel.Engine, sg *strajaguard.StrajaGuardModel) Engine {
+func NewBasic(pc config.PolicyConfig, sc config.SecurityConfig, eng intel.Engine, sg *strajaguard.StrajaGuardModel, tracer trace.Tracer, sgCfg config.StrajaGuardConfig) Engine {
+	if tracer == nil {
+		tracer = trace.NewNoopTracerProvider().Tracer("noop")
+	}
 	return &Basic{
-		intel: eng,
-		sg:    sg,
+		intel:  eng,
+		sg:     sg,
+		tracer: tracer,
+		sgCfg:  sgCfg,
 
 		securityCfg: sc,
 
@@ -165,12 +174,24 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 
 	// Run StrajaGuard if available.
 	if p.securityCfg.Enabled && p.sg != nil {
+		sgCtx, sgSpan := p.tracer.Start(ctx, "straja.strajaguard.inference")
+		sgAttrs := map[string]interface{}{
+			"straja.strajaguard.seq_len":       p.securityCfg.SeqLen,
+			"straja.strajaguard.max_sessions":  p.sgCfg.MaxSessions,
+			"straja.strajaguard.intra_threads": p.sgCfg.IntraThreads,
+			"straja.strajaguard.inter_threads": p.sgCfg.InterThreads,
+		}
+		sgSpan.SetAttributes(telemetry.SafeAttributes(sgAttrs)...)
 		sgStart := time.Now()
 		if res, evalErr := p.sg.Evaluate(systemPrompt, content); evalErr != nil {
 			sgElapsed := time.Since(sgStart)
 			if req.Timings != nil {
 				req.Timings.StrajaGuard += sgElapsed
 			}
+			sgSpan.SetAttributes(telemetry.SafeAttributes(map[string]interface{}{
+				"straja.strajaguard.verdict": "error",
+				"straja.strajaguard.error":   evalErr.Error(),
+			})...)
 			redact.Logf("strajaguard evaluate failed after %s: %v", sgElapsed, evalErr)
 		} else if res != nil {
 			sgElapsed := time.Since(sgStart)
@@ -180,9 +201,15 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 			if req.Timings != nil {
 				req.Timings.StrajaGuard += sgElapsed
 			}
+			sgSpan.SetAttributes(telemetry.SafeAttributes(map[string]interface{}{
+				"straja.strajaguard.score_max": maxScore(res.Scores),
+				"straja.strajaguard.verdict":   verdict(res.Flags),
+			})...)
 			redact.Logf("debug: strajaguard_inference_ms=%.2f project=%s",
 				float64(sgElapsed.Microseconds())/1000, req.ProjectID)
 		}
+		sgSpan.End()
+		ctx = sgCtx
 	}
 
 	// Merge signals into per-category policy hits.
@@ -383,6 +410,23 @@ func detectionSignalsFromML(res *strajaguard.StrajaGuardResult, cfg config.Secur
 		}
 	}
 	return signals
+}
+
+func maxScore(scores map[string]float32) float32 {
+	var max float32
+	for _, v := range scores {
+		if v > max {
+			max = v
+		}
+	}
+	return max
+}
+
+func verdict(flags []string) string {
+	if len(flags) == 0 {
+		return "clean"
+	}
+	return flags[0]
 }
 
 func extractSystemPrompt(msgs []inference.Message) string {

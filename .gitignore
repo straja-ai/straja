@@ -16,6 +16,7 @@ STRAJA_STATUS.md
 coverage.out
 dist/
 .gocache/
+tmp/go-build/
 
 # ---- IDE / editor junk ----
 .vscode/

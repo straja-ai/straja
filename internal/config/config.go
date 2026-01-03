@@ -18,6 +18,7 @@ type Config struct {
 	Projects        []ProjectConfig           `yaml:"projects"`
 	Logging         LoggingConfig             `yaml:"logging"`
 	Activation      ActivationConfig          `yaml:"activation"`
+	Telemetry       TelemetryConfig           `yaml:"telemetry"`
 	Policy          PolicyConfig              `yaml:"policy"`
 	Intelligence    IntelligenceConfig        `yaml:"intelligence"`
 	Security        SecurityConfig            `yaml:"security"`
@@ -97,6 +98,12 @@ type ActivationConfig struct {
 	Workers         int                    `yaml:"workers"`
 	ShutdownTimeout time.Duration          `yaml:"shutdown_timeout"`
 	Sinks           []ActivationSinkConfig `yaml:"sinks"`
+}
+
+type TelemetryConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Endpoint string `yaml:"endpoint"`
+	Protocol string `yaml:"protocol"` // grpc | http
 }
 
 func (a ActivationConfig) isZero() bool {
@@ -221,6 +228,14 @@ func defaultActivationConfig() ActivationConfig {
 		QueueSize:       1000,
 		Workers:         1,
 		ShutdownTimeout: 2 * time.Second,
+	}
+}
+
+func defaultTelemetryConfig() TelemetryConfig {
+	return TelemetryConfig{
+		Enabled:  false,
+		Endpoint: "",
+		Protocol: "grpc",
 	}
 }
 
@@ -379,6 +394,7 @@ func defaultConfig() *Config {
 			ActivationLevel: "metadata",
 		},
 		Activation: defaultActivationConfig(),
+		Telemetry:  defaultTelemetryConfig(),
 		Policy: PolicyConfig{
 			BannedWords:     "block",
 			PII:             "block",
@@ -496,6 +512,21 @@ func applyDefaults(cfg *Config) {
 		if cfg.Activation.ShutdownTimeout == 0 {
 			cfg.Activation.ShutdownTimeout = 2 * time.Second
 		}
+	}
+
+	// Telemetry defaults + env override
+	if cfg.Telemetry == (TelemetryConfig{}) {
+		cfg.Telemetry = defaultTelemetryConfig()
+	} else {
+		if cfg.Telemetry.Protocol == "" {
+			cfg.Telemetry.Protocol = "grpc"
+		}
+	}
+	if v, ok := envString("OTEL_EXPORTER_OTLP_ENDPOINT"); ok && v != "" {
+		cfg.Telemetry.Endpoint = v
+	}
+	if v, ok := envString("OTEL_EXPORTER_OTLP_PROTOCOL"); ok && v != "" {
+		cfg.Telemetry.Protocol = v
 	}
 
 	// Policy action defaults

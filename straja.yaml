@@ -34,6 +34,11 @@ projects:
 logging:
   activation_level: "redacted"   # metadata | redacted | full
 
+telemetry:
+  enabled: true
+  endpoint: "127.0.0.1:4317"          # prefer setting OTEL_EXPORTER_OTLP_ENDPOINT in env
+  protocol: "grpc"      # grpc | http
+
 activation:
   enabled: true
   queue_size: 1000
