@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Straja Console</title>
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -73,6 +74,18 @@
     .small { font-size: 11px; color: #777; }
     @media (max-width: 900px) {
       .config, .results { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      body { padding: 10px; }
+      .container { padding: 16px; border-radius: 10px; }
+      .header { flex-direction: column; align-items: flex-start; gap: 6px; }
+      .logo-mark { height: 20px; }
+      h1 { font-size: 20px; }
+      .prompt-row { flex-direction: column; }
+      .actions { width: 100%; flex-direction: column; }
+      .actions button { width: 100%; }
+      .status { width: 100%; }
+      textarea { min-height: 120px; }
     }
     .copy-row {
       display: flex;
