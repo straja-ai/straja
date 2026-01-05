@@ -11,6 +11,13 @@ import (
 //go:embed static/*
 var embeddedStatic embed.FS
 
+const (
+	// RobotsTagHeader is the header used to block indexing of the console.
+	RobotsTagHeader = "X-Robots-Tag"
+	// RobotsTagValue disables indexing/caching for console routes.
+	RobotsTagValue = "noindex, nofollow, noarchive"
+)
+
 func Handler() http.Handler {
 	// Create a sub-FS rooted at /static
 	staticFS, err := fs.Sub(embeddedStatic, "static")
@@ -33,7 +40,10 @@ func Handler() http.Handler {
 		serveIndex(w, staticFS)
 	})
 
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(RobotsTagHeader, RobotsTagValue)
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // serveIndex loads static/index.html

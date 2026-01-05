@@ -36,6 +36,14 @@ import (
 
 const version = "dev"
 
+const robotsTxt = `User-agent: *
+Disallow: /console
+Disallow: /console/
+Disallow: /v1/
+Disallow: /api/
+Disallow: /
+`
+
 // Server wraps the HTTP server components for Straja.
 type Server struct {
 	mux                *http.ServeMux
@@ -88,6 +96,16 @@ func isNetworkyError(err error) bool {
 	}
 }
 
+func setConsoleRobotsHeader(w http.ResponseWriter) {
+	w.Header().Set(console.RobotsTagHeader, console.RobotsTagValue)
+}
+
+func handleRobots(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(robotsTxt))
+}
+
 type consoleProject struct {
 	ID       string `json:"id"`
 	Provider string `json:"provider"`
@@ -98,6 +116,7 @@ func (s *Server) handleConsoleProjects(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	setConsoleRobotsHeader(w)
 
 	projects := make([]consoleProject, 0, len(s.cfg.Projects))
 	for _, p := range s.cfg.Projects {
@@ -124,6 +143,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	setConsoleRobotsHeader(w)
 
 	start := time.Now()
 	ctx := r.Context()
@@ -320,6 +340,9 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 // New creates a new Straja server with all routes registered.
 func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux := http.NewServeMux()
+
+	// robots.txt served at root so crawlers see demo protections before any auth/other routes.
+	mux.HandleFunc("/robots.txt", handleRobots)
 
 	// Resolve license key with env override (env wins; placeholder treated as empty).
 	licenseKey := strings.TrimSpace(cfg.ResolvedLicenseKey)
@@ -620,7 +643,10 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 
 	// Serve console + static
 	mux.Handle("/console/", console.Handler())
-	mux.Handle("/console", http.RedirectHandler("/console/", http.StatusMovedPermanently))
+	mux.Handle("/console", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(console.RobotsTagHeader, console.RobotsTagValue)
+		http.Redirect(w, r, "/console/", http.StatusMovedPermanently)
+	}))
 	mux.HandleFunc("/console/api/projects", s.handleConsoleProjects)
 	mux.HandleFunc("/console/api/chat", s.wrapHandler(s.handleConsoleChat, handlerOptions{limitBody: true, useLimiter: true}))
 
