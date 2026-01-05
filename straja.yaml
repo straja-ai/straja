@@ -9,25 +9,21 @@ server:
   max_in_flight_requests: 200
   upstream_timeout: "60s"
 
-default_provider: "openai_default"
+default_provider: "openai_demo"
 
 providers:
-  openai_default:
-    type: "openai"
-    base_url: "https://api.openai.com/v1"
-    api_key_env: "OPENAI_API_KEY"
-  openai_production:
+  openai_demo:
     type: "openai"
     base_url: "https://api.openai.com/v1"
     api_key_env: "OPENAI_API_KEY"
 
 projects:
-  - id: "default"
-    provider: "openai_default"
+  - id: "demo"
+    provider: "openai_demo"
     api_keys:
       - "local-dev-key-123"
   - id: "production"
-    provider: "openai_production"
+    provider: "openai_demo"
     api_keys:
       - "local-dev-key-124"
 

@@ -13,6 +13,7 @@
     .config .full { grid-column: 1 / -1; }
     label { display: block; font-size: 13px; margin-bottom: 4px; color: #444; }
     input, textarea, select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #d0d0d7; font-size: 14px; }
+    input[readonly], input:disabled { background: #f3f4f6; color: #6b7280; cursor: not-allowed; }
     textarea { resize: vertical; min-height: 80px; }
     .prompt-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
     .prompt-row textarea { flex: 1; }
@@ -148,6 +149,8 @@
             <input
             id="model"
             type="text"
+            readonly
+            disabled
             value="gpt-4.1-mini"
             />
         </div>
