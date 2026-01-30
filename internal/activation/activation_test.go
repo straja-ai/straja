@@ -23,8 +23,8 @@ func TestFileSinkWritesJSONL(t *testing.T) {
 		t.Fatalf("file sink: %v", err)
 	}
 
-	ev1 := &Event{Timestamp: time.Now(), RequestID: "req-1", ProjectID: "p1", ProviderID: "prov"}
-	ev2 := &Event{Timestamp: time.Now(), RequestID: "req-2", ProjectID: "p1", ProviderID: "prov"}
+	ev1 := &Event{Version: "2", Timestamp: time.Now(), RequestID: "req-1", Meta: ActivationMeta{ProjectID: "p1", ProviderID: "prov", Provider: "prov", Mode: ModeNonStream}}
+	ev2 := &Event{Version: "2", Timestamp: time.Now(), RequestID: "req-2", Meta: ActivationMeta{ProjectID: "p1", ProviderID: "prov", Provider: "prov", Mode: ModeNonStream}}
 
 	if err := sink.Deliver(context.Background(), ev1); err != nil {
 		t.Fatalf("deliver 1: %v", err)
@@ -64,7 +64,7 @@ func TestWebhookSinkHandlesNon2xx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("webhook sink: %v", err)
 	}
-	ev := &Event{Timestamp: time.Now(), RequestID: "req-1"}
+	ev := &Event{Version: "2", Timestamp: time.Now(), RequestID: "req-1", Meta: ActivationMeta{Mode: ModeNonStream}}
 	if err := sink.Deliver(context.Background(), ev); err == nil {
 		t.Fatalf("expected non-2xx to return error")
 	} else if !strings.Contains(err.Error(), "status") {
@@ -77,7 +77,7 @@ func TestEmitterDropsWhenQueueFull(t *testing.T) {
 	sink := &blockingSink{wait: wait}
 	em := NewEmitter(EmitterConfig{QueueSize: 1, Workers: 1, ShutdownTimeout: time.Second}, []Sink{sink})
 
-	ev := &Event{Timestamp: time.Now(), RequestID: "r1"}
+	ev := &Event{Version: "2", Timestamp: time.Now(), RequestID: "r1", Meta: ActivationMeta{Mode: ModeNonStream}}
 	em.Emit(context.Background(), ev)
 	em.Emit(context.Background(), ev)
 	em.Emit(context.Background(), ev)
@@ -116,7 +116,7 @@ func TestEmitterWebhookIntegration(t *testing.T) {
 	em := NewEmitter(EmitterConfig{QueueSize: 8, Workers: 1, ShutdownTimeout: time.Second}, []Sink{sink})
 	defer em.Close(context.Background())
 
-	ev := &Event{Timestamp: time.Now(), RequestID: "integration", ProjectID: "p", ProviderID: "prov"}
+	ev := &Event{Version: "2", Timestamp: time.Now(), RequestID: "integration", Meta: ActivationMeta{ProjectID: "p", ProviderID: "prov", Provider: "prov", Mode: ModeNonStream}}
 	for i := 0; i < 5; i++ {
 		em.Emit(context.Background(), ev)
 	}

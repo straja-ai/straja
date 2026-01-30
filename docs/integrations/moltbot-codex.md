@@ -22,6 +22,8 @@ curl -H "Authorization: Bearer $STRAJA_KEY" \
   http://localhost:8080/v1/straja/requests/<request_id>
 ```
 
+Activation responses now include a `summary` object with `request_final`, `response_final`, and `response_note` (for streaming, `response_note` may be `redaction_suggested` when output would be redacted in non-stream mode).
+
 ## Moltbot provider config (baseUrl -> Straja)
 
 ```yaml

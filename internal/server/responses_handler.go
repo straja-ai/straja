@@ -85,6 +85,10 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	if v, ok := payload["stream"].(bool); ok {
 		stream = v
 	}
+	mode := activation.ModeNonStream
+	if stream {
+		mode = activation.ModeStream
+	}
 
 	var cancel context.CancelFunc
 	if s.cfg.Server.UpstreamTimeout > 0 {
@@ -144,6 +148,16 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	inputVal, hasInput := payload["input"]
+	if !hasInput {
+		if msgVal, ok := payload["messages"]; ok {
+			if converted, ok := messagesToResponsesInput(msgVal); ok {
+				inputVal = converted
+				hasInput = true
+				payload["input"] = converted
+				delete(payload, "messages")
+			}
+		}
+	}
 	if hasInput {
 		var err error
 		inputVal, infReq, _, _, err = s.hardenResponsesInput(ctx, project.ID, model, inputVal)
@@ -151,7 +165,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			decision = "blocked_before"
 			statusCode = http.StatusForbidden
-			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
+			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore, mode)
 			writePolicyBlockedError(w, http.StatusForbidden, err.Error())
 			return
 		}
@@ -173,7 +187,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		redact.Logf("provider %q error: %v", providerName, err)
 		decision = "error_provider"
 		statusCode = http.StatusBadGateway
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, mode)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
@@ -183,7 +197,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		decision = "error_provider"
 		statusCode = upstreamResp.StatusCode
 		copyHeaders(w.Header(), upstreamResp.Header, nil)
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, mode)
 		w.WriteHeader(upstreamResp.StatusCode)
 		_, _ = io.Copy(w, upstreamResp.Body)
 		return
@@ -205,9 +219,9 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		}
 		statusCode = upstreamResp.StatusCode
 		if postDecision == "blocked" {
-			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter)
+			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter, mode)
 		} else {
-			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow)
+			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow, mode)
 		}
 		return
 	}
@@ -216,7 +230,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		decision = "error_provider"
 		statusCode = http.StatusBadGateway
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, mode)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
@@ -243,7 +257,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 			if postDecision == "blocked" {
 				decision = "blocked_after"
 				statusCode = http.StatusForbidden
-				s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter)
+				s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter, mode)
 				writePolicyBlockedError(w, http.StatusForbidden, "Output blocked by Straja policy (after model)")
 				return
 			}
@@ -260,7 +274,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	statusCode = upstreamResp.StatusCode
 	copyHeaders(w.Header(), upstreamResp.Header, nil)
 	w.Header().Set("Content-Type", "application/json")
-	s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow)
+	s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow, mode)
 	w.WriteHeader(upstreamResp.StatusCode)
 	_, _ = w.Write(updatedBody)
 }
@@ -397,6 +411,50 @@ func normalizeRole(role string) string {
 		return "user"
 	}
 	return role
+}
+
+func messagesToResponsesInput(val any) (any, bool) {
+	msgs, ok := val.([]any)
+	if !ok || len(msgs) == 0 {
+		return nil, false
+	}
+	out := make([]any, 0, len(msgs))
+	for _, raw := range msgs {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		role := ""
+		if r, ok := m["role"].(string); ok {
+			role = r
+		}
+		role = normalizeRole(role)
+		contentVal, ok := m["content"]
+		if !ok {
+			continue
+		}
+		switch c := contentVal.(type) {
+		case string:
+			out = append(out, map[string]any{
+				"role": role,
+				"content": []map[string]any{
+					{
+						"type": "input_text",
+						"text": c,
+					},
+				},
+			})
+		case []any:
+			out = append(out, map[string]any{
+				"role":    role,
+				"content": c,
+			})
+		}
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return out, true
 }
 
 func mergeInferenceRequest(dst, src *inference.Request) {

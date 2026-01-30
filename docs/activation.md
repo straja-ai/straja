@@ -9,50 +9,135 @@ Straja emits one activation event per request. Events are:
 - Available via request status lookup using `X-Straja-Request-Id`
 - Optionally delivered to sinks asynchronously
 
-## Event shape
+## Event shape (Activation v2)
 
 Defined in `internal/activation/activation.go`:
 
 ```json
 {
-  "timestamp": "2025-01-01T00:00:00Z",
-  "request_id": "...",
-  "project_id": "default",
-  "provider_id": "openai_default",
-  "model": "gpt-4.1-mini",
-  "decision": "allow",
-  "policy_hits": [{"category":"pii","action":"redact"}],
-  "policy_hit_categories": ["pii"],
-  "prompt_preview": "...",
-  "completion_preview": "...",
-  "intel_status": "online_validated",
-  "intel_bundle_version": "...",
-  "intel_last_validated_at": "...",
-  "intel_cache_present": true,
-  "strajaguard_status": "online_validated",
-  "strajaguard_bundle_version": "...",
-  "strajaguard": {"model":"strajaguard_v1","scores":{},"flags":[]},
-  "policy_decisions": [],
-  "post_policy_hits": [{"category":"secrets","action":"redact"}],
-  "post_policy_decisions": [{"category":"secrets","action":"redact"}],
-  "post_decision": "redacted",
-  "output_preview": "...",
-  "post_check_latency_ms": 8.4,
-  "post_safety_scores": {"contains_secrets_maybe": 0.42},
-  "post_safety_flags": ["contains_secrets_maybe"],
-  "safety_scores": {},
-  "safety_thresholds": {},
-  "latencies_ms": {"pre_policy": 1.2, "provider": 30.5}
+  "version": "2",
+  "timestamp": "2026-01-30T14:23:46.146298Z",
+  "request_id": "req_123",
+
+  "meta": {
+    "project_id": "default",
+    "provider_id": "openai_default",
+    "provider": "openai_default",
+    "model": "gpt-4.1-mini",
+    "mode": "non_stream"
+  },
+
+  "summary": {
+    "request_final": "redact",
+    "response_final": "allow",
+    "response_note": "redaction_suggested",
+    "blocked": false,
+    "categories": ["secrets", "pii"]
+  },
+
+  "request": {
+    "decision": {
+      "final": "redact",
+      "reason_categories": ["secrets"],
+      "actions": [
+        {
+          "category": "secrets",
+          "action": "redact",
+          "confidence": 1.0,
+          "sources": ["regex"]
+        }
+      ]
+    },
+    "preview": {
+      "prompt": "string"
+    },
+    "hits": [
+      {
+        "category": "secrets",
+        "action": "redact",
+        "confidence": 1.0,
+        "sources": ["regex"]
+      }
+    ],
+    "scores": {
+      "contains_personal_data": 0.47,
+      "contains_secrets_maybe": 0.47,
+      "data_exfil_attempt": 0.47,
+      "jailbreak": 0.48,
+      "prompt_injection": 0.48
+    },
+    "latency_ms": 57.07
+  },
+
+  "response": {
+    "decision": {
+      "final": "allow",
+      "note": "redaction_suggested",
+      "reason_categories": ["pii"],
+      "actions": [
+        {
+          "category": "pii",
+          "action": "redact",
+          "confidence": 1.0,
+          "sources": ["regex"]
+        }
+      ]
+    },
+    "preview": {
+      "output": "string"
+    },
+    "hits": [
+      {
+        "category": "pii",
+        "action": "redact",
+        "confidence": 1.0,
+        "sources": ["regex"]
+      }
+    ],
+    "scores": {
+      "contains_personal_data": 0.46,
+      "contains_secrets_maybe": 0.48,
+      "data_exfil_attempt": 0.47,
+      "jailbreak": 0.48,
+      "prompt_injection": 0.49
+    },
+    "latency_ms": 58.13
+  },
+
+  "intel": {
+    "status": "online_validated",
+    "bundle_version": "0.1.0",
+    "last_validated_at": "2026-01-30T14:22:51Z",
+    "cache_present": true,
+    "strajaguard": {
+      "status": "online_validated",
+      "bundle_version": "20251213-215605",
+      "model": "strajaguard_v1"
+    },
+    "thresholds": {
+      "prompt_injection": { "warn": 0.6, "block": 0.8 },
+      "jailbreak": { "warn": 0.6, "block": 0.8 },
+      "data_exfil": { "warn": 0.55, "block": 0.75 },
+      "secrets": { "warn": 0.5, "block": 0.85 },
+      "pii": { "warn": 0.5 }
+    }
+  },
+
+  "timing_ms": {
+    "provider": 1230.61,
+    "total": 1345.81
+  }
 }
 ```
 
 Key notes:
 
-- `decision` values are defined in `internal/activation/activation.go`: `allow`, `blocked_before_policy`, `blocked_after_policy`, `error_provider`.
-- `prompt_preview` / `completion_preview` are controlled by `logging.activation_level`.
-- `post_*` fields reflect post-LLM checks on model output and only include redacted previews.
-- `post_safety_scores` / `post_safety_flags` capture StrajaGuard output-side scores when available.
-- `policy_decisions`, `safety_scores`, and `safety_thresholds` are present when the security layer runs.
+- `summary.request_final` and `request.decision.final` are one of `allow`, `redact`, `block`.
+- `summary.response_final` and `response.decision.final` are one of `allow`, `redact`, `block`.
+- `response.decision.note` / `summary.response_note` are `redaction_applied`, `redaction_suggested`, `skipped`, or `null`.
+- `meta.mode` is `stream` or `non_stream`. In streaming mode, Straja never mutates the response; if post-check would have redacted in non-stream mode, `response.decision.note` is `redaction_suggested` and `response.decision.final` remains `allow`.
+- `request.preview.prompt` and `response.preview.output` are controlled by `logging.activation_level` and are always redacted previews.
+- ML scores appear only in `request.scores` and `response.scores`. Thresholds appear only in `intel.thresholds`.
 
 ## Request status API
 

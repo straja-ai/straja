@@ -223,6 +223,12 @@ func TestResponsesRequestStatusPendingThenCompleted(t *testing.T) {
 				if body["activation"] == nil {
 					t.Fatalf("expected activation payload")
 				}
+				act, ok := body["activation"].(map[string]any)
+				if !ok {
+					t.Fatalf("activation payload invalid")
+				}
+				requireActivationV2(t, act)
+				requireNoLegacyFields(t, act)
 				statusResp.Body.Close()
 				return
 			}
@@ -288,9 +294,22 @@ func TestResponsesPreLLMRedaction(t *testing.T) {
 	if err := json.Unmarshal([]byte(actHeader), &act); err != nil {
 		t.Fatalf("activation header invalid JSON: %v", err)
 	}
-	hits, ok := act["policy_decisions"].([]any)
-	if !ok || len(hits) == 0 {
-		t.Fatalf("expected policy decisions in activation header")
+	requireActivationV2(t, act)
+	requireNoLegacyFields(t, act)
+	summary := activationSummary(t, act)
+	if summary["request_final"] != "redact" {
+		t.Fatalf("expected summary.request_final redact, got %v", summary["request_final"])
+	}
+	if summary["response_final"] != "allow" {
+		t.Fatalf("expected summary.response_final allow, got %v", summary["response_final"])
+	}
+	reqPayload := activationRequest(t, act)
+	decision, ok := reqPayload["decision"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing request decision")
+	}
+	if decision["final"] != "redact" {
+		t.Fatalf("expected request.decision.final redact, got %v", decision["final"])
 	}
 }
 
@@ -340,8 +359,25 @@ func TestResponsesPostCheckRedact(t *testing.T) {
 	if err := json.Unmarshal([]byte(actHeader), &act); err != nil {
 		t.Fatalf("activation header invalid JSON: %v", err)
 	}
-	if act["post_decision"] != "redacted" {
-		t.Fatalf("expected post_decision redacted, got %v", act["post_decision"])
+	requireActivationV2(t, act)
+	requireNoLegacyFields(t, act)
+	summary := activationSummary(t, act)
+	if summary["response_final"] != "redact" {
+		t.Fatalf("expected summary.response_final redact, got %v", summary["response_final"])
+	}
+	if summary["response_note"] != "redaction_applied" {
+		t.Fatalf("expected summary.response_note redaction_applied, got %v", summary["response_note"])
+	}
+	resp := activationResponse(t, act)
+	respDecision, ok := resp["decision"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing response decision")
+	}
+	if respDecision["final"] != "redact" {
+		t.Fatalf("expected response.decision.final redact, got %v", respDecision["final"])
+	}
+	if respDecision["note"] != "redaction_applied" {
+		t.Fatalf("expected response.decision.note redaction_applied, got %v", respDecision["note"])
 	}
 }
 
@@ -435,6 +471,296 @@ func TestResponsesStreamingNoCustomEvent(t *testing.T) {
 	if bytes.Contains(data, []byte("straja_post_check")) {
 		t.Fatalf("unexpected custom SSE event in /v1/responses: %s", string(data))
 	}
+}
+
+func TestResponsesStreamingPostCheckRedactSuggested(t *testing.T) {
+	events := []string{
+		`data: {"type":"response.output_text.delta","delta":"token sk-test-abcdefghijklmnopqrstuv"}` + "\n\n",
+		"data: [DONE]\n\n",
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		for _, e := range events {
+			_, _ = w.Write([]byte(e))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	srv := newResponsesTestServer(t, upstream.URL+"/v1", func(cfg *config.Config) {
+		cfg.Intelligence.Enabled = true
+		cfg.Security.Enabled = false
+		cfg.Policy.PII = "redact"
+		cfg.Policy.PIIEntities = config.PIIEntitiesConfig{
+			Email:      true,
+			Phone:      true,
+			CreditCard: true,
+			IBAN:       true,
+			Tokens:     true,
+		}
+	})
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+
+	body := `{"model":"gpt-4.1-mini","input":"hello","stream":true}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/responses", bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	reqID := resp.Header.Get("X-Straja-Request-Id")
+	if reqID == "" {
+		t.Fatalf("missing request id")
+	}
+	_, _ = io.ReadAll(resp.Body)
+
+	var act map[string]any
+	for i := 0; i < 20; i++ {
+		statusReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/straja/requests/"+reqID, nil)
+		statusReq.Header.Set("Authorization", "Bearer test-key")
+		statusResp, err := http.DefaultClient.Do(statusReq)
+		if err != nil {
+			t.Fatalf("status request: %v", err)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(statusResp.Body).Decode(&body); err == nil {
+			if body["status"] == "completed" {
+				act, _ = body["activation"].(map[string]any)
+				statusResp.Body.Close()
+				break
+			}
+		}
+		statusResp.Body.Close()
+		time.Sleep(50 * time.Millisecond)
+	}
+	if act == nil {
+		t.Fatalf("expected activation payload")
+	}
+	requireActivationV2(t, act)
+	requireNoLegacyFields(t, act)
+	meta := activationMeta(t, act)
+	if meta["mode"] != "stream" {
+		t.Fatalf("expected meta.mode stream, got %v", meta["mode"])
+	}
+	summary := activationSummary(t, act)
+	if summary["response_final"] != "allow" {
+		t.Fatalf("expected summary.response_final allow, got %v", summary["response_final"])
+	}
+	if summary["response_note"] != "redaction_suggested" {
+		t.Fatalf("expected summary.response_note redaction_suggested, got %v", summary["response_note"])
+	}
+
+	// Compare schema with a non-stream activation.
+	nonStreamAct := fetchNonStreamActivation(t, ts.URL)
+	if !sameKeys(act, nonStreamAct) {
+		t.Fatalf("expected stream/non-stream activations to share schema")
+	}
+}
+
+func TestRequestStatusReturnsSameActivation(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	srv := newResponsesTestServer(t, upstream.URL+"/v1", nil)
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+
+	body := `{"model":"gpt-4.1-mini","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	actHeader := rr.Header().Get("X-Straja-Activation")
+	if actHeader == "" {
+		t.Fatalf("missing X-Straja-Activation header")
+	}
+	var headerAct map[string]any
+	if err := json.Unmarshal([]byte(actHeader), &headerAct); err != nil {
+		t.Fatalf("activation header invalid JSON: %v", err)
+	}
+
+	reqID := rr.Header().Get("X-Straja-Request-Id")
+	if reqID == "" {
+		t.Fatalf("missing request id")
+	}
+	statusReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/straja/requests/"+reqID, nil)
+	statusReq.Header.Set("Authorization", "Bearer test-key")
+	statusResp, err := http.DefaultClient.Do(statusReq)
+	if err != nil {
+		t.Fatalf("status request: %v", err)
+	}
+	defer statusResp.Body.Close()
+	var bodyResp map[string]any
+	if err := json.NewDecoder(statusResp.Body).Decode(&bodyResp); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	act, ok := bodyResp["activation"].(map[string]any)
+	if !ok {
+		t.Fatalf("activation payload invalid")
+	}
+	if !sameKeys(headerAct, act) {
+		t.Fatalf("activation schema mismatch between header and status")
+	}
+}
+
+func fetchNonStreamActivation(t *testing.T, baseURL string) map[string]any {
+	t.Helper()
+	body := `{"model":"gpt-4.1-mini","input":"hello"}`
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/responses", bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+	actHeader := resp.Header.Get("X-Straja-Activation")
+	if actHeader == "" {
+		t.Fatalf("missing X-Straja-Activation header")
+	}
+	var act map[string]any
+	if err := json.Unmarshal([]byte(actHeader), &act); err != nil {
+		t.Fatalf("activation header invalid JSON: %v", err)
+	}
+	return act
+}
+
+func requireActivationV2(t *testing.T, act map[string]any) {
+	t.Helper()
+	required := []string{"version", "timestamp", "request_id", "meta", "summary", "request", "response", "intel", "timing_ms"}
+	if !hasExactKeys(act, required) {
+		t.Fatalf("activation keys mismatch: got=%v", mapKeys(act))
+	}
+	if act["version"] != "2" {
+		t.Fatalf("expected version 2, got %v", act["version"])
+	}
+	meta := activationMeta(t, act)
+	if meta["mode"] != "stream" && meta["mode"] != "non_stream" {
+		t.Fatalf("unexpected meta.mode: %v", meta["mode"])
+	}
+}
+
+func requireNoLegacyFields(t *testing.T, act map[string]any) {
+	t.Helper()
+	legacy := []string{
+		"decision",
+		"content",
+		"stages",
+		"policy_hits",
+		"policy_hit_categories",
+		"policy_decisions",
+		"post_policy_hits",
+		"post_policy_decisions",
+		"post_decision",
+		"post_safety_scores",
+		"post_safety_flags",
+		"safety_scores",
+		"safety_thresholds",
+		"completion_preview",
+		"latencies_ms",
+		"strajaguard",
+	}
+	for _, k := range legacy {
+		if _, ok := act[k]; ok {
+			t.Fatalf("legacy field still present: %s", k)
+		}
+	}
+	if intel, ok := act["intel"].(map[string]any); ok {
+		if sg, ok := intel["strajaguard"].(map[string]any); ok {
+			if _, ok := sg["scores"]; ok {
+				t.Fatalf("legacy field still present: intel.strajaguard.scores")
+			}
+			if _, ok := sg["flags"]; ok {
+				t.Fatalf("legacy field still present: intel.strajaguard.flags")
+			}
+		}
+	}
+}
+
+func activationMeta(t *testing.T, act map[string]any) map[string]any {
+	t.Helper()
+	meta, ok := act["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing meta")
+	}
+	return meta
+}
+
+func activationSummary(t *testing.T, act map[string]any) map[string]any {
+	t.Helper()
+	summary, ok := act["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing summary")
+	}
+	return summary
+}
+
+func activationRequest(t *testing.T, act map[string]any) map[string]any {
+	t.Helper()
+	req, ok := act["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing request")
+	}
+	return req
+}
+
+func activationResponse(t *testing.T, act map[string]any) map[string]any {
+	t.Helper()
+	resp, ok := act["response"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing response")
+	}
+	return resp
+}
+
+func hasExactKeys(m map[string]any, required []string) bool {
+	if len(m) != len(required) {
+		return false
+	}
+	for _, k := range required {
+		if _, ok := m[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func mapKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func sameKeys(a, b map[string]any) bool {
+	return hasExactKeys(a, mapKeys(b)) && hasExactKeys(b, mapKeys(a))
 }
 
 func TestResponsesBlockPath(t *testing.T) {

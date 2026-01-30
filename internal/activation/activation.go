@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/straja-ai/straja/internal/inference"
@@ -22,62 +23,108 @@ const (
 	DecisionErrorProvider Decision = "error_provider"
 )
 
-// PolicyHit captures a policy category and the action taken.
-type PolicyHit struct {
-	Category string   `json:"category"`
-	Action   string   `json:"action"`
-	Reason   string   `json:"reason,omitempty"`
-	Score    *float32 `json:"score,omitempty"`
-	Sources  []string `json:"sources,omitempty"`
-}
+const (
+	ModeStream    = "stream"
+	ModeNonStream = "non_stream"
+)
 
-// PolicyDecision mirrors the per-category action that was taken.
-type PolicyDecision struct {
+// ActionEntry is a normalized per-category action/hit.
+type ActionEntry struct {
 	Category   string   `json:"category"`
 	Action     string   `json:"action"`
 	Confidence float32  `json:"confidence,omitempty"`
 	Sources    []string `json:"sources,omitempty"`
 }
 
-// StrajaGuardPayload is attached when the local ONNX model runs.
-type StrajaGuardPayload struct {
-	Model  string             `json:"model"`
-	Scores map[string]float32 `json:"scores,omitempty"`
-	Flags  []string           `json:"flags,omitempty"`
+type Summary struct {
+	RequestFinal  string   `json:"request_final"`
+	ResponseFinal string   `json:"response_final"`
+	ResponseNote  *string  `json:"response_note"`
+	Blocked       bool     `json:"blocked"`
+	Categories    []string `json:"categories"`
+}
+
+type RequestDecision struct {
+	Final            string        `json:"final"`
+	ReasonCategories []string      `json:"reason_categories,omitempty"`
+	Actions          []ActionEntry `json:"actions,omitempty"`
+}
+
+type RequestPreview struct {
+	Prompt string `json:"prompt"`
+}
+
+type RequestPayload struct {
+	Decision  RequestDecision    `json:"decision"`
+	Preview   RequestPreview     `json:"preview"`
+	Hits      []ActionEntry      `json:"hits,omitempty"`
+	Scores    map[string]float32 `json:"scores,omitempty"`
+	LatencyMs float64            `json:"latency_ms"`
+}
+
+type ResponseDecision struct {
+	Final            string        `json:"final"`
+	Note             *string       `json:"note"`
+	ReasonCategories []string      `json:"reason_categories,omitempty"`
+	Actions          []ActionEntry `json:"actions,omitempty"`
+}
+
+type ResponsePreview struct {
+	Output string `json:"output"`
+}
+
+type ResponsePayload struct {
+	Decision  ResponseDecision   `json:"decision"`
+	Preview   ResponsePreview    `json:"preview"`
+	Hits      []ActionEntry      `json:"hits,omitempty"`
+	Scores    map[string]float32 `json:"scores,omitempty"`
+	LatencyMs float64            `json:"latency_ms"`
+}
+
+type ActivationMeta struct {
+	ProjectID  string `json:"project_id"`
+	ProviderID string `json:"provider_id"`
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	Mode       string `json:"mode"`
+}
+
+type StrajaGuardInfo struct {
+	Status        string `json:"status"`
+	BundleVersion string `json:"bundle_version,omitempty"`
+	Model         string `json:"model,omitempty"`
+}
+
+type ActivationThresholds struct {
+	Warn  float32 `json:"warn,omitempty"`
+	Block float32 `json:"block,omitempty"`
+}
+
+type ActivationIntel struct {
+	Status          string                          `json:"status"`
+	BundleVersion   string                          `json:"bundle_version,omitempty"`
+	LastValidatedAt string                          `json:"last_validated_at,omitempty"`
+	CachePresent    bool                            `json:"cache_present"`
+	StrajaGuard     *StrajaGuardInfo                `json:"strajaguard,omitempty"`
+	Thresholds      map[string]ActivationThresholds `json:"thresholds,omitempty"`
+}
+
+type ActivationTimingMs struct {
+	Provider float64 `json:"provider"`
+	Total    float64 `json:"total"`
 }
 
 // Event is the canonical activation payload.
 type Event struct {
-	Timestamp           time.Time           `json:"timestamp"`
-	RequestID           string              `json:"request_id"`
-	ProjectID           string              `json:"project_id"`
-	ProviderID          string              `json:"provider_id"`
-	Provider            string              `json:"provider,omitempty"` // compatibility alias
-	Model               string              `json:"model,omitempty"`
-	Decision            Decision            `json:"decision"`
-	PolicyHits          []PolicyHit         `json:"policy_hits,omitempty"`
-	PolicyHitCategories []string            `json:"policy_hit_categories,omitempty"`
-	PromptPreview       string              `json:"prompt_preview,omitempty"`
-	CompletionPreview   string              `json:"completion_preview,omitempty"`
-	PostPolicyHits      []PolicyHit         `json:"post_policy_hits,omitempty"`
-	PostPolicyDecisions []PolicyDecision    `json:"post_policy_decisions,omitempty"`
-	PostDecision        string              `json:"post_decision,omitempty"`
-	OutputPreview       string              `json:"output_preview,omitempty"`
-	PostCheckLatencyMs  float64             `json:"post_check_latency_ms,omitempty"`
-	PostSafetyScores    map[string]float32  `json:"post_safety_scores,omitempty"`
-	PostSafetyFlags     []string            `json:"post_safety_flags,omitempty"`
-	IntelStatus         string              `json:"intel_status,omitempty"`
-	IntelBundleVersion  string              `json:"intel_bundle_version,omitempty"`
-	IntelLastValidated  string              `json:"intel_last_validated_at,omitempty"`
-	IntelCachePresent   bool                `json:"intel_cache_present,omitempty"`
-	StrajaGuardStatus   string              `json:"strajaguard_status,omitempty"`
-	StrajaGuardBundle   string              `json:"strajaguard_bundle_version,omitempty"`
-	StrajaGuard         *StrajaGuardPayload `json:"strajaguard,omitempty"`
-	PolicyDecisions     []PolicyDecision    `json:"policy_decisions,omitempty"`
-	SafetyScores        map[string]float32  `json:"safety_scores,omitempty"`
-	SafetyThresholds    map[string]float32  `json:"safety_thresholds,omitempty"`
-	LatenciesMillis     map[string]float64  `json:"latencies_ms,omitempty"`
-	Extras              map[string]any      `json:"extras,omitempty"`
+	Version   string             `json:"version"`
+	Timestamp time.Time          `json:"timestamp"`
+	RequestID string             `json:"request_id"`
+	Meta      ActivationMeta     `json:"meta"`
+	Summary   Summary            `json:"summary"`
+	Request   RequestPayload     `json:"request"`
+	Response  ResponsePayload    `json:"response"`
+	Intel     ActivationIntel    `json:"intel"`
+	TimingMs  ActivationTimingMs `json:"timing_ms"`
 }
 
 // BuildParams collects inputs needed to assemble a canonical activation event.
@@ -96,6 +143,7 @@ type BuildParams struct {
 	SecurityThresholds   map[string]float32
 	IncludeStrajaGuard   bool
 	RequestID            string
+	Mode                 string
 }
 
 // BuildEvent creates a canonical activation event from an inference request/response pair.
@@ -104,46 +152,104 @@ func BuildEvent(params BuildParams) *Event {
 		return nil
 	}
 
-	promptPreview, completionPreview := buildPreviews(params.LoggingLevel, params.Request, params.Response)
-
-	ev := &Event{
-		Timestamp:           time.Now().UTC(),
-		RequestID:           ensureRequestID(params.RequestID),
-		ProjectID:           params.Request.ProjectID,
-		ProviderID:          params.ProviderName,
-		Provider:            params.ProviderName,
-		Model:               params.Request.Model,
-		Decision:            params.Decision,
-		PolicyHits:          buildPolicyHits(params.Request.PolicyDecisions),
-		PolicyHitCategories: cloneStrings(params.Request.PolicyHits),
-		PromptPreview:       redact.String(promptPreview),
-		CompletionPreview:   redact.String(completionPreview),
-		PostPolicyHits:      buildPolicyHits(params.Request.PostPolicyDecisions),
-		PostPolicyDecisions: buildPolicyDecisions(params.Request.PostPolicyDecisions),
-		PostDecision:        params.Request.PostDecision,
-		OutputPreview:       redact.String(params.Request.OutputPreview),
-		PostCheckLatencyMs:  durationMillis(params.Request.PostCheckLatency),
-		PostSafetyScores:    cloneFloatMap(params.Request.PostSafetyScores),
-		PostSafetyFlags:     cloneStrings(params.Request.PostSafetyFlags),
-		IntelStatus:         params.IntelStatus,
-		IntelBundleVersion:  params.IntelBundleVersion,
-		IntelLastValidated:  params.IntelLastValidatedAt,
-		IntelCachePresent:   params.IntelCachePresent,
-		StrajaGuardStatus:   params.StrajaGuardStatus,
-		StrajaGuardBundle:   params.StrajaGuardBundleVer,
-		PolicyDecisions:     buildPolicyDecisions(params.Request.PolicyDecisions),
-		SafetyScores:        cloneFloatMap(params.Request.SecurityScores),
-		SafetyThresholds:    cloneFloatMap(params.SecurityThresholds),
-		LatenciesMillis:     buildLatencies(params.Request.Timings),
+	mode := strings.TrimSpace(strings.ToLower(params.Mode))
+	if mode == "" {
+		mode = ModeNonStream
 	}
 
-	if params.IncludeStrajaGuard {
-		if sg := buildStrajaGuard(params.Request); sg != nil {
-			ev.StrajaGuard = sg
+	promptPreview, completionPreview := buildPreviews(params.LoggingLevel, params.Request, params.Response)
+	outputPreview := params.Request.OutputPreview
+	if outputPreview == "" {
+		outputPreview = completionPreview
+	}
+
+	requestHits := buildActionEntries(params.Request.PolicyDecisions)
+	responseHits := buildActionEntries(params.Request.PostPolicyDecisions)
+
+	requestScores := cloneFloatMap(params.Request.SecurityScores)
+	responseScores := cloneFloatMap(params.Request.PostSafetyScores)
+
+	requestLatencyMs := durationMillisFromTimings(params.Request.Timings, func(t *inference.Timings) time.Duration {
+		return t.PrePolicy
+	})
+	providerMs := durationMillisFromTimings(params.Request.Timings, func(t *inference.Timings) time.Duration {
+		return t.Provider
+	})
+	responseLatencyMs := durationMillisFromTimings(params.Request.Timings, func(t *inference.Timings) time.Duration {
+		return t.PostPolicy
+	}) + durationMillis(params.Request.PostCheckLatency)
+	totalMs := requestLatencyMs + providerMs + responseLatencyMs
+
+	requestFinal := deriveRequestFinal(params.Decision, requestHits)
+	responseFinal, responseNote := deriveResponseFinal(params.Decision, mode, params.Request.PostDecision, responseHits, responseScores, responseLatencyMs)
+
+	requestReasons := buildReasonCategories(requestHits)
+	responseReasons := buildReasonCategories(responseHits)
+	categories := unionCategories(requestReasons, responseReasons)
+
+	intel := ActivationIntel{
+		Status:          params.IntelStatus,
+		BundleVersion:   params.IntelBundleVersion,
+		LastValidatedAt: params.IntelLastValidatedAt,
+		CachePresent:    params.IntelCachePresent,
+		Thresholds:      buildThresholds(params.SecurityThresholds),
+	}
+	if params.IncludeStrajaGuard || params.StrajaGuardStatus != "" || params.StrajaGuardBundleVer != "" {
+		intel.StrajaGuard = &StrajaGuardInfo{
+			Status:        params.StrajaGuardStatus,
+			BundleVersion: params.StrajaGuardBundleVer,
+			Model:         "strajaguard_v1",
 		}
 	}
 
-	return ev
+	return &Event{
+		Version:   "2",
+		Timestamp: time.Now().UTC(),
+		RequestID: ensureRequestID(params.RequestID),
+		Meta: ActivationMeta{
+			ProjectID:  params.Request.ProjectID,
+			ProviderID: params.ProviderName,
+			Provider:   params.ProviderName,
+			Model:      params.Request.Model,
+			Mode:       mode,
+		},
+		Summary: Summary{
+			RequestFinal:  requestFinal,
+			ResponseFinal: responseFinal,
+			ResponseNote:  responseNote,
+			Blocked:       requestFinal == "block" || responseFinal == "block",
+			Categories:    categories,
+		},
+		Request: RequestPayload{
+			Decision: RequestDecision{
+				Final:            requestFinal,
+				ReasonCategories: requestReasons,
+				Actions:          requestHits,
+			},
+			Preview: RequestPreview{
+				Prompt: redact.String(promptPreview),
+			},
+			Hits:      requestHits,
+			Scores:    requestScores,
+			LatencyMs: requestLatencyMs,
+		},
+		Response: ResponsePayload{
+			Decision: ResponseDecision{
+				Final:            responseFinal,
+				Note:             responseNote,
+				ReasonCategories: responseReasons,
+				Actions:          responseHits,
+			},
+			Preview: ResponsePreview{
+				Output: redact.String(outputPreview),
+			},
+			Hits:      responseHits,
+			Scores:    responseScores,
+			LatencyMs: responseLatencyMs,
+		},
+		Intel:    intel,
+		TimingMs: ActivationTimingMs{Provider: providerMs, Total: totalMs},
+	}
 }
 
 // LogEvent prints a redacted JSON representation of the activation event.
@@ -170,33 +276,13 @@ func ensureRequestID(id string) string {
 	return hex.EncodeToString(buf[:])
 }
 
-func buildPolicyHits(hits []safety.PolicyHit) []PolicyHit {
+func buildActionEntries(hits []safety.PolicyHit) []ActionEntry {
 	if len(hits) == 0 {
 		return nil
 	}
-	out := make([]PolicyHit, 0, len(hits))
+	out := make([]ActionEntry, 0, len(hits))
 	for _, h := range hits {
-		hit := PolicyHit{
-			Category: h.Category,
-			Action:   h.Action,
-			Sources:  cloneStrings(h.Sources),
-		}
-		if h.Confidence != 0 {
-			c := h.Confidence
-			hit.Score = &c
-		}
-		out = append(out, hit)
-	}
-	return out
-}
-
-func buildPolicyDecisions(hits []safety.PolicyHit) []PolicyDecision {
-	if len(hits) == 0 {
-		return nil
-	}
-	out := make([]PolicyDecision, 0, len(hits))
-	for _, h := range hits {
-		out = append(out, PolicyDecision{
+		out = append(out, ActionEntry{
 			Category:   h.Category,
 			Action:     h.Action,
 			Confidence: h.Confidence,
@@ -206,43 +292,15 @@ func buildPolicyDecisions(hits []safety.PolicyHit) []PolicyDecision {
 	return out
 }
 
-func buildStrajaGuard(req *inference.Request) *StrajaGuardPayload {
-	if req == nil {
-		return nil
-	}
-	if len(req.SecurityScores) == 0 && len(req.SecurityFlags) == 0 {
-		return nil
-	}
-	scores := cloneFloatMap(req.SecurityScores)
-	return &StrajaGuardPayload{
-		Model:  "strajaguard_v1",
-		Scores: scores,
-		Flags:  cloneStrings(req.SecurityFlags),
-	}
-}
-
-func buildLatencies(t *inference.Timings) map[string]float64 {
-	if t == nil {
-		return nil
-	}
-	m := make(map[string]float64, 4)
-	if t.PrePolicy > 0 {
-		m["pre_policy"] = durationMillis(t.PrePolicy)
-	}
-	if t.Provider > 0 {
-		m["provider"] = durationMillis(t.Provider)
-	}
-	if t.PostPolicy > 0 {
-		m["post_policy"] = durationMillis(t.PostPolicy)
-	}
-	if t.StrajaGuard > 0 {
-		m["strajaguard"] = durationMillis(t.StrajaGuard)
-	}
-	return m
-}
-
 func durationMillis(d time.Duration) float64 {
 	return float64(d) / float64(time.Millisecond)
+}
+
+func durationMillisFromTimings(t *inference.Timings, pick func(*inference.Timings) time.Duration) float64 {
+	if t == nil || pick == nil {
+		return 0
+	}
+	return durationMillis(pick(t))
 }
 
 func cloneStrings(in []string) []string {
@@ -263,6 +321,146 @@ func cloneFloatMap(in map[string]float32) map[string]float32 {
 		out[k] = v
 	}
 	return out
+}
+
+func buildThresholds(flat map[string]float32) map[string]ActivationThresholds {
+	if len(flat) == 0 {
+		return nil
+	}
+	out := make(map[string]ActivationThresholds)
+	for key, val := range flat {
+		if val <= 0 {
+			continue
+		}
+		parts := strings.SplitN(key, ".", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		category := strings.TrimSpace(parts[0])
+		kind := strings.TrimSpace(parts[1])
+		if category == "" || kind == "" {
+			continue
+		}
+		entry := out[category]
+		switch kind {
+		case "warn":
+			entry.Warn = val
+		case "block":
+			entry.Block = val
+		default:
+			continue
+		}
+		out[category] = entry
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func deriveRequestFinal(decision Decision, hits []ActionEntry) string {
+	switch decision {
+	case DecisionBlockedBefore:
+		return "block"
+	case DecisionErrorProvider:
+		return "allow"
+	case DecisionBlockedAfter, DecisionAllow:
+		// continue
+	}
+	if hasAction(hits, "redact") {
+		return "redact"
+	}
+	return "allow"
+}
+
+func deriveResponseFinal(decision Decision, mode, postDecision string, hits []ActionEntry, scores map[string]float32, latencyMs float64) (string, *string) {
+	postDecision = strings.ToLower(strings.TrimSpace(postDecision))
+	if decision == DecisionBlockedBefore || decision == DecisionBlockedAfter || decision == DecisionErrorProvider {
+		return "block", nil
+	}
+	if postDecision == "blocked" {
+		return "block", nil
+	}
+	if postDecision == "redacted" {
+		if mode == ModeStream {
+			return "allow", strPtr("redaction_suggested")
+		}
+		return "redact", strPtr("redaction_applied")
+	}
+
+	postCheckRan := latencyMs > 0 || len(hits) > 0 || len(scores) > 0
+	if !postCheckRan {
+		return "allow", strPtr("skipped")
+	}
+	return "allow", nil
+}
+
+func strPtr(v string) *string {
+	return &v
+}
+
+func hasAction(hits []ActionEntry, needle string) bool {
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	for _, h := range hits {
+		if strings.Contains(strings.ToLower(h.Action), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildReasonCategories(entries []ActionEntry) []string {
+	seen := make(map[string]struct{})
+	for _, e := range entries {
+		if !actionInfluencesDecision(e.Action) {
+			continue
+		}
+		cat := strings.TrimSpace(e.Category)
+		if cat == "" {
+			continue
+		}
+		seen[cat] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	return out
+}
+
+func unionCategories(a, b []string) []string {
+	seen := make(map[string]struct{})
+	for _, v := range a {
+		if v == "" {
+			continue
+		}
+		seen[v] = struct{}{}
+	}
+	for _, v := range b {
+		if v == "" {
+			continue
+		}
+		seen[v] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	return out
+}
+
+func actionInfluencesDecision(action string) bool {
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "" {
+		return false
+	}
+	return strings.Contains(action, "block") || strings.Contains(action, "redact")
 }
 
 var (

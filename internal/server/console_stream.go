@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/straja-ai/straja/internal/activation"
+	"github.com/straja-ai/straja/internal/inference"
 	"github.com/straja-ai/straja/internal/redact"
 )
 
@@ -52,19 +53,39 @@ func (s *Server) handleConsoleChatStream(w http.ResponseWriter, r *http.Request,
 		return errors.New("unknown provider for project")
 	}
 
-	inputVal := responsesInputFromMessages(reqBody.Messages)
-	sanitized, infReq, _, _, err := s.hardenResponsesInput(ctx, reqBody.ProjectID, reqBody.Model, inputVal)
+	infReq := normalizeToInferenceRequest(reqBody.ProjectID, &chatCompletionRequest{
+		Model:    reqBody.Model,
+		Messages: reqBody.Messages,
+	})
 	infReq.RequestID = requestID
-	if err != nil {
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
+	infReq.Timings = &inference.Timings{}
+
+	preStart := time.Now()
+	if err := s.policy.BeforeModel(ctx, infReq); err != nil {
+		if infReq.Timings != nil {
+			infReq.Timings.PrePolicy = time.Since(preStart)
+		}
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore, activation.ModeStream)
 		writePolicyBlockedError(w, http.StatusForbidden, err.Error())
 		return nil
 	}
+	if infReq.Timings != nil {
+		infReq.Timings.PrePolicy = time.Since(preStart)
+	}
 	s.requestStore.Start(requestID, reqBody.ProjectID)
+
+	sanitizedMessages := make([]chatMessage, 0, len(infReq.Messages))
+	for _, msg := range infReq.Messages {
+		sanitizedMessages = append(sanitizedMessages, chatMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+	}
+	inputVal := responsesInputFromMessages(sanitizedMessages)
 
 	payload := map[string]any{
 		"model":  reqBody.Model,
-		"input":  sanitized,
+		"input":  inputVal,
 		"stream": true,
 	}
 
@@ -80,7 +101,7 @@ func (s *Server) handleConsoleChatStream(w http.ResponseWriter, r *http.Request,
 	}
 	if err != nil {
 		redact.Logf("provider %q error (console stream): %v", providerName, err)
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, activation.ModeStream)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return nil
 	}
@@ -90,7 +111,7 @@ func (s *Server) handleConsoleChatStream(w http.ResponseWriter, r *http.Request,
 		copyHeaders(w.Header(), upstreamResp.Header, nil)
 		w.WriteHeader(upstreamResp.StatusCode)
 		_, _ = io.Copy(w, upstreamResp.Body)
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, activation.ModeStream)
 		return nil
 	}
 
@@ -103,9 +124,9 @@ func (s *Server) handleConsoleChatStream(w http.ResponseWriter, r *http.Request,
 	}
 	postDecision := runPostCheckForStream(ctx, s, infReq, capture)
 	if postDecision == "blocked" {
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter, activation.ModeStream)
 	} else {
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow, activation.ModeStream)
 	}
 	return nil
 }

@@ -53,4 +53,4 @@ Common causes:
 - Bundle download/verification failure.
 - `security.enabled: false` or `intel.strajaguard_v1.enabled: false`.
 
-Check logs for `strajaguard:` status messages and the `strajaguard_status` field in activation events.
+Check logs for `strajaguard:` status messages and the `intel.strajaguard.status` field in activation events.

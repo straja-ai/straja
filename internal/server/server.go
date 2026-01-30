@@ -272,7 +272,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		policyPreSpan.End()
 		decision = "blocked_before"
 		statusCode = http.StatusForbidden
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore, activation.ModeNonStream)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
 	}
@@ -308,7 +308,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		provCallSpan.End()
 		decision = "error_provider"
 		statusCode = http.StatusBadGateway
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, activation.ModeNonStream)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
@@ -331,7 +331,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		policyPostSpan.End()
 		decision = "blocked_after"
 		statusCode = http.StatusForbidden
-		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
+		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter, activation.ModeNonStream)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
 	}
@@ -344,19 +344,37 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	})
 	policyPostSpan.End()
 
+	prevPostDecision := infReq.PostDecision
+	prevPostPolicyHits := infReq.PostPolicyHits
+	prevPostPolicyDecisions := infReq.PostPolicyDecisions
+	prevOutputPreview := infReq.OutputPreview
+	prevPostLatency := infReq.PostCheckLatency
+	prevPostScores := infReq.PostSafetyScores
+	prevPostFlags := infReq.PostSafetyFlags
+
 	updated, post := s.postCheckText(ctx, infReq, infResp.Message.Content)
-	infReq.PostPolicyHits = post.postReq.PolicyHits
-	infReq.PostPolicyDecisions = post.postReq.PolicyDecisions
-	infReq.PostDecision = post.decision
-	infReq.OutputPreview = outputPreview(post.outputs)
-	infReq.PostCheckLatency = post.latency
-	infReq.PostSafetyScores = post.postReq.SecurityScores
-	infReq.PostSafetyFlags = post.postReq.SecurityFlags
+	if post.decision == "allow" && prevPostDecision == "redacted" {
+		infReq.PostPolicyHits = prevPostPolicyHits
+		infReq.PostPolicyDecisions = prevPostPolicyDecisions
+		infReq.PostDecision = prevPostDecision
+		infReq.OutputPreview = prevOutputPreview
+		infReq.PostCheckLatency = prevPostLatency
+		infReq.PostSafetyScores = prevPostScores
+		infReq.PostSafetyFlags = prevPostFlags
+	} else {
+		infReq.PostPolicyHits = post.postReq.PolicyHits
+		infReq.PostPolicyDecisions = post.postReq.PolicyDecisions
+		infReq.PostDecision = post.decision
+		infReq.OutputPreview = outputPreview(post.outputs)
+		infReq.PostCheckLatency = post.latency
+		infReq.PostSafetyScores = post.postReq.SecurityScores
+		infReq.PostSafetyFlags = post.postReq.SecurityFlags
+	}
 
 	if post.decision == "blocked" {
 		decision = "blocked_after"
 		statusCode = http.StatusForbidden
-		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
+		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter, activation.ModeNonStream)
 		writePolicyBlockedError(w, http.StatusForbidden, "Output blocked by Straja policy (after model)")
 		return
 	}
@@ -364,7 +382,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		infResp.Message.Content = updated
 	}
 
-	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
+	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow, activation.ModeNonStream)
 
 	_, respSpan := s.startSpan(ctx, "straja.response.encode", trace.SpanKindInternal, nil)
 	respBody := buildChatCompletionResponse(infReq, infResp)
@@ -1262,7 +1280,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		policyPreSpan.End()
 		decision = "blocked_before"
 		statusCode = http.StatusForbidden
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore, activation.ModeNonStream)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
 		return
 	}
@@ -1299,7 +1317,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		provCallSpan.End()
 		decision = "error_provider"
 		statusCode = http.StatusBadGateway
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, activation.ModeNonStream)
 		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
 		return
 	}
@@ -1323,7 +1341,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		policyPostSpan.End()
 		decision = "blocked_after"
 		statusCode = http.StatusForbidden
-		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
+		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter, activation.ModeNonStream)
 		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
 		return
 	}
@@ -1337,7 +1355,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	policyPostSpan.End()
 
 	// 5) Success
-	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
+	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow, activation.ModeNonStream)
 
 	_, respSpan := s.startSpan(ctx, "straja.response.encode", trace.SpanKindInternal, nil)
 	respBody := buildChatCompletionResponse(infReq, infResp)
@@ -1506,7 +1524,7 @@ func writeOpenAIError(w http.ResponseWriter, status int, message, typ string) {
 }
 
 // emitActivation builds and sends an activation event via the configured emitter.
-func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req *inference.Request, resp *inference.Response, providerName string, decision activation.Decision) {
+func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req *inference.Request, resp *inference.Response, providerName string, decision activation.Decision, mode string) {
 	if req == nil {
 		return
 	}
@@ -1539,6 +1557,7 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 		SecurityThresholds:   s.securityThresholds,
 		IncludeStrajaGuard:   s.strajaGuardModel != nil && !strings.HasPrefix(s.strajaGuardStatus, "disabled"),
 		RequestID:            req.RequestID,
+		Mode:                 mode,
 	})
 	if ev == nil {
 		return

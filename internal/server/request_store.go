@@ -61,7 +61,7 @@ func (s *requestStore) Complete(requestID string, ev *activation.Event) {
 	if existing, ok := s.data[requestID]; ok {
 		entry.projectID = existing.projectID
 	} else if ev != nil {
-		entry.projectID = ev.ProjectID
+		entry.projectID = ev.Meta.ProjectID
 	}
 	s.data[requestID] = entry
 }

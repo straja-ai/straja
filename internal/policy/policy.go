@@ -292,6 +292,9 @@ func (p *Basic) AfterModel(ctx context.Context, req *inference.Request, resp *in
 
 	cat, ok := result.Categories["output_redaction"]
 	if !ok || !cat.Hit {
+		if req != nil && req.PostDecision == "" {
+			req.PostDecision = "allow"
+		}
 		return nil
 	}
 
@@ -302,10 +305,23 @@ func (p *Basic) AfterModel(ctx context.Context, req *inference.Request, resp *in
 		redacted, changed := bundle.RedactOutput(original)
 		if changed {
 			addPolicyHit(req, "output_redaction")
+			addPostPolicyHit(req, safety.PolicyHit{
+				Category:   "output_redaction",
+				Action:     "redact",
+				Confidence: 1.0,
+				Sources:    []string{"regex"},
+			})
+			if req != nil {
+				req.PostDecision = "redacted"
+			}
 			resp.Message.Content = redacted
 		}
 	} else {
 		redact.Logf("policy: output redaction requested but intel engine does not support RedactOutput; leaving output unchanged")
+	}
+
+	if req != nil && req.PostDecision == "" {
+		req.PostDecision = "allow"
 	}
 
 	return nil
@@ -334,6 +350,30 @@ func addPolicyHit(req *inference.Request, category string) {
 		}
 	}
 	req.PolicyHits = append(req.PolicyHits, category)
+}
+
+func addPostPolicyHit(req *inference.Request, hit safety.PolicyHit) {
+	if req == nil || hit.Category == "" {
+		return
+	}
+	if !containsPolicyHit(req.PostPolicyDecisions, hit.Category) {
+		req.PostPolicyDecisions = append(req.PostPolicyDecisions, hit)
+	}
+	for _, existing := range req.PostPolicyHits {
+		if existing == hit.Category {
+			return
+		}
+	}
+	req.PostPolicyHits = append(req.PostPolicyHits, hit.Category)
+}
+
+func containsPolicyHit(hits []safety.PolicyHit, category string) bool {
+	for _, h := range hits {
+		if h.Category == category {
+			return true
+		}
+	}
+	return false
 }
 
 func detectionSignalsFromRegex(cats map[string]intel.CategoryResult) []safety.DetectionSignal {

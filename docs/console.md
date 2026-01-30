@@ -38,6 +38,16 @@ The response matches the OpenAI-style JSON shape used by `/v1/chat/completions`.
 
 The console also displays activation payloads via the `X-Straja-Activation` response header.
 
+## UI status labels
+
+The console renders three labels from the activation `summary` object:
+
+- **Request**: `summary.request_final` (`allow`, `redact`, `block`)
+- **Response**: `summary.response_final` (`allow`, `redact`, `block`)
+- **Note**: `summary.response_note` (e.g., `redaction_applied`, `redaction_suggested`, `skipped`)
+
+For streaming, the labels appear once the request status endpoint returns the activation payload.
+
 ## API: chat (streaming)
 
 Add `"stream": true` to the request body to stream responses via the Responses API. Streaming is pure SSE passthrough (no custom events). The console UI uses `X-Straja-Request-Id` and the request status API to fetch post-check results after the stream completes. It can call the authenticated gateway endpoint (`/v1/straja/requests/{id}`) or the console helper (`/console/api/requests/{id}?project_id=...`). Source: `internal/server/console_stream.go`, `internal/console/static/console.html`, `internal/server/request_status.go`, `internal/server/console_request_status.go`.

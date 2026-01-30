@@ -211,18 +211,32 @@
     <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <h2>Completion</h2>
-          <div
-            id="decisionStatus"
-            style="
-              font-size: 11px;
-              padding: 4px 8px;
-              border-radius: 6px;
-              background: #eef2ff;
-              border: 1px solid #c7d2fe;
-              color: #3730a3;
-              display: none;
-            "
-          ></div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <div
+              id="requestStatusLabel"
+              style="
+                font-size: 11px;
+                padding: 4px 8px;
+                border-radius: 6px;
+                background: #e5e7eb;
+                border: 1px solid #d1d5db;
+                color: #374151;
+                display: none;
+              "
+            ></div>
+            <div
+              id="responseStatusLabel"
+              style="
+                font-size: 11px;
+                padding: 4px 8px;
+                border-radius: 6px;
+                background: #e5e7eb;
+                border: 1px solid #d1d5db;
+                color: #374151;
+                display: none;
+              "
+            ></div>
+          </div>
         </div>
 
         <!-- Assistant text with copy chip -->
@@ -257,7 +271,21 @@
     </div>
 
     <div class="card">
-        <h2>Activation event</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2>Activation event</h2>
+          <div
+            id="responseNoteLabel"
+            style="
+              font-size: 11px;
+              padding: 4px 8px;
+              border-radius: 6px;
+              background: #dbeafe;
+              border: 1px solid #bfdbfe;
+              color: #1e3a8a;
+              display: none;
+            "
+          ></div>
+        </div>
         <div class="small">
         Reads JSON from response header
         <code>X-Straja-Activation</code>.
@@ -296,6 +324,9 @@
     const activationJsonEl = document.getElementById('activationJson');
     const postCheckBanner = document.getElementById('postCheckBanner');
     const assistantTextEl = document.getElementById('assistantText');
+    const requestStatusLabel = document.getElementById('requestStatusLabel');
+    const responseStatusLabel = document.getElementById('responseStatusLabel');
+    const responseNoteLabel = document.getElementById('responseNoteLabel');
 
     const copyAssistantBtn = document.getElementById('copyAssistantBtn');
     const copyCompletionBtn = document.getElementById('copyCompletionBtn');
@@ -446,11 +477,7 @@
       completionJsonEl.textContent = '';
       activationJsonEl.textContent = '';
       assistantTextEl.textContent = '';
-      if (postCheckBanner) {
-        postCheckBanner.style.display = 'none';
-        postCheckBanner.textContent = '';
-        postCheckBanner.classList.remove('blocked', 'redacted');
-      }
+      clearStatusLabels();
 
       const body = {
         project_id: projectId,
@@ -499,11 +526,7 @@
         activationJsonEl.textContent = '';
         assistantTextEl.textContent = '';
 
-        const decisionEl = document.getElementById('decisionStatus');
-        if (decisionEl) {
-          decisionEl.style.display = 'none';
-          decisionEl.textContent = '';
-        }
+        clearStatusLabels();
       } finally {
         sendBtn.disabled = false;
         stopBtn.disabled = true;
@@ -535,11 +558,7 @@
       completionJsonEl.textContent = '';
       activationJsonEl.textContent = '';
       assistantTextEl.textContent = '';
-      if (postCheckBanner) {
-        postCheckBanner.style.display = 'none';
-        postCheckBanner.textContent = '';
-        postCheckBanner.classList.remove('blocked', 'redacted');
-      }
+      clearStatusLabels();
 
       const body = {
         project_id: projectId,
@@ -659,71 +678,77 @@
       return '';
     }
 
-    function applyPostCheckBanner(raw) {
-      if (!postCheckBanner) return;
-      let payload = null;
-      try {
-        payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      } catch (_) {
-        return;
+    function clearStatusLabels() {
+      if (requestStatusLabel) {
+        requestStatusLabel.style.display = 'none';
+        requestStatusLabel.textContent = '';
       }
-      if (!payload || !payload.post_decision) return;
-      const decision = String(payload.post_decision);
-      const hits = Array.isArray(payload.post_policy_hits) ? payload.post_policy_hits : [];
-      const hitText = hits.length ? `Categories: ${hits.join(', ')}` : 'No categories';
-      postCheckBanner.textContent = `Output ${decision} by policy (post-check). ${hitText}`;
-      postCheckBanner.classList.remove('blocked', 'redacted');
-      if (decision === 'blocked') {
-        postCheckBanner.classList.add('blocked');
-      } else if (decision === 'redacted') {
-        postCheckBanner.classList.add('redacted');
+      if (responseStatusLabel) {
+        responseStatusLabel.style.display = 'none';
+        responseStatusLabel.textContent = '';
       }
-      postCheckBanner.style.display = 'block';
+      if (responseNoteLabel) {
+        responseNoteLabel.style.display = 'none';
+        responseNoteLabel.textContent = '';
+      }
+    }
+
+    function mapStatusLabel(status) {
+      if (status === 'redact') return 'redacted';
+      if (status === 'block') return 'blocked';
+      return 'allow';
+    }
+
+    function styleStatusLabel(el, status) {
+      if (!el) return;
+      if (status === 'block') {
+        el.style.background = '#fee2e2';
+        el.style.border = '1px solid #fecaca';
+        el.style.color = '#b91c1c';
+      } else if (status === 'allow') {
+        el.style.background = '#dcfce7';
+        el.style.border = '1px solid #bbf7d0';
+        el.style.color = '#166534';
+      } else if (status === 'redact') {
+        el.style.background = '#fef9c3';
+        el.style.border = '1px solid #fef08a';
+        el.style.color = '#854d0e';
+      } else {
+        el.style.background = '#e5e7eb';
+        el.style.border = '1px solid #d1d5db';
+        el.style.color = '#374151';
+      }
+    }
+
+    function applySummaryLabels(summary) {
+      if (!summary) return;
+      const reqFinal = summary.request_final ? String(summary.request_final) : '';
+      const respFinal = summary.response_final ? String(summary.response_final) : '';
+      const respNote = summary.response_note ? String(summary.response_note) : '';
+
+      if (requestStatusLabel && reqFinal) {
+        requestStatusLabel.textContent = `Request: ${mapStatusLabel(reqFinal)}`;
+        requestStatusLabel.style.display = 'inline-block';
+        styleStatusLabel(requestStatusLabel, reqFinal);
+      }
+      if (responseStatusLabel && respFinal) {
+        responseStatusLabel.textContent = `Response: ${mapStatusLabel(respFinal)}`;
+        responseStatusLabel.style.display = 'inline-block';
+        styleStatusLabel(responseStatusLabel, respFinal);
+      }
+      if (responseNoteLabel && respNote) {
+        const noteText = respNote.replace(/_/g, ' ');
+        responseNoteLabel.textContent = `Note: ${noteText}`;
+        responseNoteLabel.style.display = 'inline-block';
+      }
     }
 
     function applyActivationObject(actJson) {
       if (!actJson) return;
       activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
-      applyPostCheckBanner({
-        post_decision: actJson.post_decision,
-        post_policy_hits: Array.isArray(actJson.post_policy_hits)
-          ? actJson.post_policy_hits.map(h => (typeof h === 'string' ? h : h.category)).filter(Boolean)
-          : []
-      });
-
-      const decisionEl = document.getElementById('decisionStatus');
-      if (!decisionEl || !actJson.decision) {
-        return;
-      }
-      const policyHits = Array.isArray(actJson.policy_hits)
-        ? actJson.policy_hits
-            .map(h => (typeof h === 'string' ? h : h.category))
-            .filter(Boolean)
-        : Array.isArray(actJson.policy_hit_categories)
-          ? actJson.policy_hit_categories.filter(Boolean)
-          : [];
-      let d = String(actJson.decision);
-      if (d === 'allow' && policyHits.some(h => h !== 'toxicity')) {
-        d = 'redacted';
-      }
-      decisionEl.textContent = d;
-      decisionEl.style.display = 'inline-block';
-      if (d.startsWith('blocked')) {
-        decisionEl.style.background = '#fee2e2';
-        decisionEl.style.border = '1px solid #fecaca';
-        decisionEl.style.color = '#b91c1c';
-      } else if (d === 'allow') {
-        decisionEl.style.background = '#dcfce7';
-        decisionEl.style.border = '1px solid #bbf7d0';
-        decisionEl.style.color = '#166534';
-      } else if (d === 'redacted') {
-        decisionEl.style.background = '#fef9c3';
-        decisionEl.style.border = '1px solid #fef08a';
-        decisionEl.style.color = '#854d0e';
-      } else {
-        decisionEl.style.background = '#e5e7eb';
-        decisionEl.style.border = '1px solid #d1d5db';
-        decisionEl.style.color = '#374151';
+      clearStatusLabels();
+      if (actJson.summary) {
+        applySummaryLabels(actJson.summary);
       }
     }
 
@@ -779,15 +804,7 @@
     }
 
     function applyActivationHeader(activationHeader) {
-      const decisionEl = document.getElementById('decisionStatus');
-
-      if (decisionEl) {
-        decisionEl.style.display = 'none';
-        decisionEl.textContent = '';
-        decisionEl.style.background = '#eef2ff';
-        decisionEl.style.border = '1px solid #c7d2fe';
-        decisionEl.style.color = '#3730a3';
-      }
+      clearStatusLabels();
 
       if (activationHeader) {
         try {
@@ -807,12 +824,7 @@
       activationJsonEl.textContent = '';
       assistantTextEl.textContent = '';
       statusEl.textContent = '';
-
-      const decisionEl = document.getElementById('decisionStatus');
-      if (decisionEl) {
-        decisionEl.style.display = 'none';
-        decisionEl.textContent = '';
-      }
+      clearStatusLabels();
     }
 
     sendBtn.addEventListener('click', sendRequest);
