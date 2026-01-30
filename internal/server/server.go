@@ -136,6 +136,7 @@ type consoleChatRequest struct {
 	ProjectID string        `json:"project_id"`
 	Model     string        `json:"model"`
 	Messages  []chatMessage `json:"messages"`
+	Stream    bool          `json:"stream,omitempty"`
 }
 
 func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +173,18 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if reqBody.ProjectID == "" {
 		http.Error(w, "missing project_id", http.StatusBadRequest)
+		return
+	}
+
+	stream := reqBody.Stream || parseBoolQuery(r.URL.Query().Get("stream"))
+	if stream {
+		if err := s.handleConsoleChatStream(w, r, reqBody); err != nil {
+			status := http.StatusBadGateway
+			if errors.Is(err, errConsoleMissingAPIKey) {
+				status = http.StatusBadRequest
+			}
+			writeOpenAIError(w, status, err.Error(), "invalid_request_error")
+		}
 		return
 	}
 

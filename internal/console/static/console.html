@@ -21,6 +21,10 @@
     .actions { display: flex; flex-direction: column; gap: 8px; min-width: 120px; }
     button { padding: 8px 12px; border-radius: 8px; border: none; font-size: 14px; cursor: pointer; background: #111827; color: #fff; }
     button:disabled { opacity: 0.6; cursor: default; }
+    .stop-btn { background: #b91c1c; }
+    .stop-btn:hover { background: #991b1b; }
+    .toggle-row { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; }
+    .toggle-row input { width: auto; }
     .status { font-size: 12px; color: #555; min-height: 16px; }
     .results { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; margin-top: 8px; }
     .card { border-radius: 10px; border: 1px solid #e3e3ec; padding: 12px; background: #fafafa; overflow: hidden; }
@@ -164,7 +168,12 @@
       ></textarea>
       <div class="actions">
         <button id="sendBtn">Send</button>
+        <button id="stopBtn" type="button" class="stop-btn" disabled>Stop</button>
         <button id="clearBtn" type="button">Clear</button>
+        <label class="toggle-row">
+          <input id="streamToggle" type="checkbox" />
+          Streaming
+        </label>
         <div class="status" id="status"></div>
       </div>
     </div>
@@ -248,7 +257,10 @@
     const modelInput = document.getElementById('model');
     const promptInput = document.getElementById('prompt');
     const sendBtn = document.getElementById('sendBtn');
+    const stopBtn = document.getElementById('stopBtn');
     const clearBtn = document.getElementById('clearBtn');
+    const streamToggle = document.getElementById('streamToggle');
+    streamToggle.checked = true;
     const statusEl = document.getElementById('status');
     const completionJsonEl = document.getElementById('completionJson');
     const activationJsonEl = document.getElementById('activationJson');
@@ -315,6 +327,9 @@
           // we'll select this after projects load
           projectSelect.dataset.selected = cfg.projectId;
         }
+        if (typeof cfg.streaming === 'boolean') {
+          streamToggle.checked = cfg.streaming;
+        }
       } catch (_) {}
     }
 
@@ -322,7 +337,8 @@
       const cfg = {
         baseUrl: gatewayUrlInput.value.trim(),
         model: modelInput.value.trim(),
-        projectId: projectSelect.value
+        projectId: projectSelect.value,
+        streaming: streamToggle.checked
       };
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
@@ -361,7 +377,17 @@
       }
     }
 
+    let activeController = null;
+
     async function sendRequest() {
+      if (streamToggle.checked) {
+        await sendStreamRequest();
+        return;
+      }
+      await sendNonStreamRequest();
+    }
+
+    async function sendNonStreamRequest() {
       const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
       const projectId = projectSelect.value;
       const model = modelInput.value.trim() || 'gpt-4.1-mini';
@@ -379,6 +405,7 @@
       saveConfig();
 
       sendBtn.disabled = true;
+      stopBtn.disabled = true;
       clearBtn.disabled = true;
       statusEl.textContent = 'Sending request…';
       completionJsonEl.textContent = '';
@@ -423,77 +450,7 @@
           assistantTextEl.textContent = assistantMessage || '(no assistant message found)';
         }
 
-        const activationHeader =
-              res.headers.get('x-straja-activation');
-
-            const decisionEl = document.getElementById('decisionStatus');
-
-            // Reset decision badge by default
-            if (decisionEl) {
-              decisionEl.style.display = 'none';
-              decisionEl.textContent = '';
-              decisionEl.style.background = '#eef2ff';
-              decisionEl.style.border = '1px solid #c7d2fe';
-              decisionEl.style.color = '#3730a3';
-            }
-
-            if (activationHeader) {
-              try {
-                const actJson = JSON.parse(activationHeader);
-                activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
-
-                const policyHits = Array.isArray(actJson.policy_hits)
-                  ? actJson.policy_hits
-                      .map(h => (typeof h === 'string' ? h : h.category))
-                      .filter(Boolean)
-                  : Array.isArray(actJson.policy_hit_categories)
-                    ? actJson.policy_hit_categories.filter(Boolean)
-                    : [];
-
-                if (decisionEl && actJson.decision) {
-                  // base decision from backend
-                  let d = String(actJson.decision);
-
-                  // If backend says "allow" but we have non-toxic policy hits,
-                  // treat this as "redacted" for the UI.
-                  if (
-                    d === 'allow' &&
-                    policyHits.some(h => h !== 'toxicity')
-                  ) {
-                    d = 'redacted';
-                  }
-
-                  decisionEl.textContent = d;
-                  decisionEl.style.display = 'inline-block';
-
-                  if (d.startsWith('blocked')) {
-                    // red badge
-                    decisionEl.style.background = '#fee2e2';
-                    decisionEl.style.border = '1px solid #fecaca';
-                    decisionEl.style.color = '#b91c1c';
-                  } else if (d === 'allow') {
-                    // green badge
-                    decisionEl.style.background = '#dcfce7';
-                    decisionEl.style.border = '1px solid #bbf7d0';
-                    decisionEl.style.color = '#166534';
-                  } else if (d === 'redacted') {
-                    // yellow badge
-                    decisionEl.style.background = '#fef9c3';
-                    decisionEl.style.border = '1px solid #fef08a';
-                    decisionEl.style.color = '#854d0e';
-                  } else {
-                    // fallback – neutral
-                    decisionEl.style.background = '#e5e7eb';
-                    decisionEl.style.border = '1px solid #d1d5db';
-                    decisionEl.style.color = '#374151';
-                  }
-                }
-              } catch (_) {
-                activationJsonEl.textContent = activationHeader;
-              }
-            } else {
-              activationJsonEl.textContent = '(no activation header present)';
-            }
+        applyActivationHeader(res.headers.get('x-straja-activation'));
 
         statusEl.textContent = `HTTP ${res.status} ${res.statusText}`;
       } catch (err) {
@@ -509,7 +466,196 @@
         }
       } finally {
         sendBtn.disabled = false;
+        stopBtn.disabled = true;
         clearBtn.disabled = false;
+      }
+    }
+
+    async function sendStreamRequest() {
+      const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
+      const projectId = projectSelect.value;
+      const model = modelInput.value.trim() || 'gpt-4.1-mini';
+      const prompt = promptInput.value.trim();
+
+      if (!projectId) {
+        statusEl.textContent = 'Please select a project.';
+        return;
+      }
+      if (!prompt) {
+        statusEl.textContent = 'Please enter a prompt.';
+        return;
+      }
+
+      saveConfig();
+
+      sendBtn.disabled = true;
+      stopBtn.disabled = false;
+      clearBtn.disabled = true;
+      statusEl.textContent = 'Streaming…';
+      completionJsonEl.textContent = '';
+      activationJsonEl.textContent = '';
+      assistantTextEl.textContent = '';
+
+      const body = {
+        project_id: projectId,
+        model: model,
+        stream: true,
+        messages: [
+          { role: 'user', content: prompt }
+        ]
+      };
+
+      const controller = new AbortController();
+      activeController = controller;
+
+      let rawSSE = '';
+      let assistantText = '';
+
+      try {
+        const res = await fetch(baseUrl + '/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream'
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+
+        applyActivationHeader(res.headers.get('x-straja-activation'));
+
+        if (!res.ok || !res.body) {
+          const errText = await res.text();
+          statusEl.textContent = `HTTP ${res.status} ${res.statusText}`;
+          completionJsonEl.textContent = errText;
+          stopBtn.disabled = true;
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let done = false;
+
+        while (!done) {
+          const { value, done: readDone } = await reader.read();
+          done = readDone;
+          if (value) {
+            buffer += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buffer.indexOf('\n\n')) !== -1) {
+              const chunk = buffer.slice(0, idx);
+              buffer = buffer.slice(idx + 2);
+              if (!chunk.trim()) {
+                continue;
+              }
+              rawSSE += chunk + '\n\n';
+              const delta = extractDeltaFromSSE(chunk);
+              if (delta) {
+                assistantText += delta;
+                assistantTextEl.textContent = assistantText;
+              }
+              completionJsonEl.textContent = rawSSE;
+            }
+          }
+        }
+
+        statusEl.textContent = 'Streaming complete';
+      } catch (err) {
+        if (err && err.name === 'AbortError') {
+          statusEl.textContent = 'Streaming stopped';
+        } else {
+          statusEl.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+        }
+      } finally {
+        sendBtn.disabled = false;
+        stopBtn.disabled = true;
+        clearBtn.disabled = false;
+        activeController = null;
+      }
+    }
+
+    function extractDeltaFromSSE(chunk) {
+      const lines = chunk.split('\n');
+      const dataLines = [];
+      for (const line of lines) {
+        if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+      if (dataLines.length === 0) return '';
+      const data = dataLines.join('\n');
+      if (data === '[DONE]') return '';
+      try {
+        const obj = JSON.parse(data);
+        if (obj && typeof obj === 'object') {
+          if (typeof obj.delta === 'string') return obj.delta;
+          if (typeof obj.text === 'string') return obj.text;
+          if (typeof obj.output_text === 'string') return obj.output_text;
+          if (obj.delta && typeof obj.delta.text === 'string') return obj.delta.text;
+        }
+      } catch (_) {
+        return '';
+      }
+      return '';
+    }
+
+    function applyActivationHeader(activationHeader) {
+      const decisionEl = document.getElementById('decisionStatus');
+
+      if (decisionEl) {
+        decisionEl.style.display = 'none';
+        decisionEl.textContent = '';
+        decisionEl.style.background = '#eef2ff';
+        decisionEl.style.border = '1px solid #c7d2fe';
+        decisionEl.style.color = '#3730a3';
+      }
+
+      if (activationHeader) {
+        try {
+          const actJson = JSON.parse(activationHeader);
+          activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
+
+          const policyHits = Array.isArray(actJson.policy_hits)
+            ? actJson.policy_hits
+                .map(h => (typeof h === 'string' ? h : h.category))
+                .filter(Boolean)
+            : Array.isArray(actJson.policy_hit_categories)
+              ? actJson.policy_hit_categories.filter(Boolean)
+              : [];
+
+          if (decisionEl && actJson.decision) {
+            let d = String(actJson.decision);
+            if (d === 'allow' && policyHits.some(h => h !== 'toxicity')) {
+              d = 'redacted';
+            }
+
+            decisionEl.textContent = d;
+            decisionEl.style.display = 'inline-block';
+
+            if (d.startsWith('blocked')) {
+              decisionEl.style.background = '#fee2e2';
+              decisionEl.style.border = '1px solid #fecaca';
+              decisionEl.style.color = '#b91c1c';
+            } else if (d === 'allow') {
+              decisionEl.style.background = '#dcfce7';
+              decisionEl.style.border = '1px solid #bbf7d0';
+              decisionEl.style.color = '#166534';
+            } else if (d === 'redacted') {
+              decisionEl.style.background = '#fef9c3';
+              decisionEl.style.border = '1px solid #fef08a';
+              decisionEl.style.color = '#854d0e';
+            } else {
+              decisionEl.style.background = '#e5e7eb';
+              decisionEl.style.border = '1px solid #d1d5db';
+              decisionEl.style.color = '#374151';
+            }
+          }
+        } catch (_) {
+          activationJsonEl.textContent = activationHeader;
+        }
+      } else {
+        activationJsonEl.textContent = '(no activation header present)';
       }
     }
 
@@ -529,6 +675,11 @@
 
     sendBtn.addEventListener('click', sendRequest);
     clearBtn.addEventListener('click', clearAll);
+    stopBtn.addEventListener('click', () => {
+      if (activeController) {
+        activeController.abort();
+      }
+    });
     promptInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
