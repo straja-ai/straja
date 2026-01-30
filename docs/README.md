@@ -10,6 +10,7 @@ This documentation set is generated from the current repository. Every option an
 - [Environment variables](environment-variables.md)
 - [Docker setup and production notes](docker.md)
 - [Built-in console](console.md)
+- [Moltbot + Codex integration](integrations/moltbot-codex.md)
 - [Load testing and mock provider](load-testing.md)
 - [Activation events and sinks](activation.md)
 - [StrajaGuard v1 intel bundle](strajaguard-v1.md)

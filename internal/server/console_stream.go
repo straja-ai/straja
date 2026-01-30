@@ -1,11 +1,16 @@
 package server
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/straja-ai/straja/internal/activation"
+	"github.com/straja-ai/straja/internal/redact"
 )
 
 var errConsoleMissingAPIKey = errors.New("project has no api_keys configured for streaming")
@@ -22,14 +27,44 @@ func parseBoolQuery(v string) bool {
 func (s *Server) handleConsoleChatStream(w http.ResponseWriter, r *http.Request, reqBody consoleChatRequest) error {
 	setConsoleRobotsHeader(w)
 
-	apiKey := s.projectAPIKey(reqBody.ProjectID)
-	if apiKey == "" {
+	requestID := newRequestID()
+	w.Header().Set("X-Straja-Request-Id", requestID)
+
+	ctx := r.Context()
+	var cancel context.CancelFunc
+	if s.cfg.Server.UpstreamTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, s.cfg.Server.UpstreamTimeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	defer cancel()
+
+	if s.projectAPIKey(reqBody.ProjectID) == "" {
 		return errConsoleMissingAPIKey
 	}
 
+	providerName := s.projectProviders[reqBody.ProjectID]
+	if providerName == "" {
+		providerName = s.defaultProvider
+	}
+	provCfg, ok := s.cfg.Providers[providerName]
+	if !ok {
+		return errors.New("unknown provider for project")
+	}
+
+	inputVal := responsesInputFromMessages(reqBody.Messages)
+	sanitized, infReq, _, _, err := s.hardenResponsesInput(ctx, reqBody.ProjectID, reqBody.Model, inputVal)
+	infReq.RequestID = requestID
+	if err != nil {
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore)
+		writePolicyBlockedError(w, http.StatusForbidden, err.Error())
+		return nil
+	}
+	s.requestStore.Start(requestID, reqBody.ProjectID)
+
 	payload := map[string]any{
 		"model":  reqBody.Model,
-		"input":  responsesInputFromMessages(reqBody.Messages),
+		"input":  sanitized,
 		"stream": true,
 	}
 
@@ -38,15 +73,40 @@ func (s *Server) handleConsoleChatStream(w http.ResponseWriter, r *http.Request,
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "/v1/responses", bytes.NewReader(body))
-	if err != nil {
-		return err
+	providerStart := time.Now()
+	upstreamResp, err := s.doResponsesUpstream(ctx, provCfg, providerName, http.Header{}, body)
+	if infReq.Timings != nil {
+		infReq.Timings.Provider = time.Since(providerStart)
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
+	if err != nil {
+		redact.Logf("provider %q error (console stream): %v", providerName, err)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
+		return nil
+	}
+	defer upstreamResp.Body.Close()
 
-	s.handleResponses(w, req)
+	if upstreamResp.StatusCode >= 400 {
+		copyHeaders(w.Header(), upstreamResp.Header, nil)
+		w.WriteHeader(upstreamResp.StatusCode)
+		_, _ = io.Copy(w, upstreamResp.Body)
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		return nil
+	}
+
+	setSSEHeaders(w.Header())
+	w.WriteHeader(upstreamResp.StatusCode)
+	capture := newSSECapture(s.cfg.Server.MaxNonStreamResponseBytes)
+	if err := copyUpstreamBodyWithCapture(w, upstreamResp.Body, capture); err != nil && !errors.Is(err, context.Canceled) {
+		cancel()
+		redact.Logf("console stream copy failed: %v", err)
+	}
+	postDecision := runPostCheckForStream(ctx, s, infReq, capture)
+	if postDecision == "blocked" {
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter)
+	} else {
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow)
+	}
 	return nil
 }
 

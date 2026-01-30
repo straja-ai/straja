@@ -52,6 +52,7 @@ type Server struct {
 	policy             policy.Engine
 	providers          map[string]provider.Provider // name -> provider
 	defaultProvider    string                       // name of default provider
+	requestStore       *requestStore
 	activationEmitter  *activation.Emitter
 	loggingLevel       string
 	securityThresholds map[string]float32
@@ -188,6 +189,9 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requestID := newRequestID()
+	w.Header().Set("X-Straja-Request-Id", requestID)
+
 	statusCode := http.StatusOK
 
 	// lookup provider for this project
@@ -211,6 +215,8 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		Model:    reqBody.Model,
 		Messages: reqBody.Messages,
 	})
+	infReq.RequestID = requestID
+	s.requestStore.Start(requestID, reqBody.ProjectID)
 	setSpanAttrs(normSpan, map[string]interface{}{
 		"straja.model":  infReq.Model,
 		"straja.stream": false,
@@ -337,6 +343,26 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		"straja.policy.hits_total": len(infReq.PolicyHits),
 	})
 	policyPostSpan.End()
+
+	updated, post := s.postCheckText(ctx, infReq, infResp.Message.Content)
+	infReq.PostPolicyHits = post.postReq.PolicyHits
+	infReq.PostPolicyDecisions = post.postReq.PolicyDecisions
+	infReq.PostDecision = post.decision
+	infReq.OutputPreview = outputPreview(post.outputs)
+	infReq.PostCheckLatency = post.latency
+	infReq.PostSafetyScores = post.postReq.SecurityScores
+	infReq.PostSafetyFlags = post.postReq.SecurityFlags
+
+	if post.decision == "blocked" {
+		decision = "blocked_after"
+		statusCode = http.StatusForbidden
+		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter)
+		writePolicyBlockedError(w, http.StatusForbidden, "Output blocked by Straja policy (after model)")
+		return
+	}
+	if post.decision == "redacted" {
+		infResp.Message.Content = updated
+	}
 
 	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow)
 
@@ -606,6 +632,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		policy:             pol,
 		providers:          provs,
 		defaultProvider:    cfg.DefaultProvider,
+		requestStore:       newRequestStore(30 * time.Minute),
 		activationEmitter:  activationEmitter,
 		loggingLevel:       strings.ToLower(cfg.Logging.ActivationLevel),
 		securityThresholds: buildSecurityThresholds(cfg.Security),
@@ -654,6 +681,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux.HandleFunc("/readyz", s.handleReady)
 	mux.HandleFunc("/v1/chat/completions", s.wrapHandler(s.handleChatCompletions, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/responses", s.wrapHandler(s.handleResponses, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/v1/straja/requests/", s.wrapHandler(s.handleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
 
 	// Serve console + static
 	mux.Handle("/console/", console.Handler())
@@ -663,6 +691,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	}))
 	mux.HandleFunc("/console/api/projects", s.handleConsoleProjects)
 	mux.HandleFunc("/console/api/chat", s.wrapHandler(s.handleConsoleChat, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/console/api/requests/", s.wrapHandler(s.handleConsoleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
 
 	if s.intelEnabled {
 		if err := s.ValidateLicenseOnline(context.Background()); err != nil {
@@ -1103,6 +1132,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requestID := newRequestID()
+	w.Header().Set("X-Straja-Request-Id", requestID)
+
 	start := time.Now()
 	ctx := r.Context()
 	ctx, root := s.startSpan(ctx, "straja.request", trace.SpanKindServer, map[string]interface{}{
@@ -1180,6 +1212,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		"straja.provider_id": providerName,
 	})
 	infReq := normalizeToInferenceRequest(project.ID, &reqBody)
+	infReq.RequestID = requestID
+	s.requestStore.Start(requestID, project.ID)
 	setSpanAttrs(normSpan, map[string]interface{}{
 		"straja.model":  infReq.Model,
 		"straja.stream": reqBody.Stream,
@@ -1504,12 +1538,17 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 		StrajaGuardBundleVer: s.activeBundleVer,
 		SecurityThresholds:   s.securityThresholds,
 		IncludeStrajaGuard:   s.strajaGuardModel != nil && !strings.HasPrefix(s.strajaGuardStatus, "disabled"),
+		RequestID:            req.RequestID,
 	})
 	if ev == nil {
 		return
 	}
 
 	activation.LogEvent(ev)
+
+	if s.requestStore != nil && req.RequestID != "" {
+		s.requestStore.Complete(req.RequestID, ev)
+	}
 
 	if s.activationEmitter != nil {
 		s.activationEmitter.Emit(actCtx, ev)

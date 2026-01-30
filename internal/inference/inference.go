@@ -14,6 +14,7 @@ type Message struct {
 
 // Request represents a normalized inference request that Straja operates on.
 type Request struct {
+	RequestID string
 	ProjectID string
 	Model     string
 	UserID    string
@@ -31,6 +32,20 @@ type Request struct {
 	SecurityScores map[string]float32
 	// SecurityFlags contains thresholded flags (e.g. prompt_injection_high).
 	SecurityFlags []string
+	// PostPolicyHits captures policy categories triggered on model output.
+	PostPolicyHits []string
+	// PostPolicyDecisions captures merged per-category actions for output.
+	PostPolicyDecisions []safety.PolicyHit
+	// PostDecision captures the output enforcement result: allow | redact | blocked.
+	PostDecision string
+	// OutputPreview is a redacted preview of output for activation metadata.
+	OutputPreview string
+	// PostCheckLatency captures time spent evaluating model output.
+	PostCheckLatency time.Duration
+	// PostSafetyScores holds output-side ML scores (label -> probability).
+	PostSafetyScores map[string]float32
+	// PostSafetyFlags contains thresholded flags for output checks.
+	PostSafetyFlags []string
 }
 
 // Usage holds token accounting.

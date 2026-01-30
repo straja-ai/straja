@@ -26,6 +26,26 @@
     .toggle-row { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; }
     .toggle-row input { width: auto; }
     .status { font-size: 12px; color: #555; min-height: 16px; }
+    .post-banner {
+      display: none;
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      color: #9a3412;
+    }
+    .post-banner.blocked {
+      background: #fee2e2;
+      border: 1px solid #fecaca;
+      color: #b91c1c;
+    }
+    .post-banner.redacted {
+      background: #fef9c3;
+      border: 1px solid #fef08a;
+      color: #854d0e;
+    }
     .results { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; margin-top: 8px; }
     .card { border-radius: 10px; border: 1px solid #e3e3ec; padding: 12px; background: #fafafa; overflow: hidden; }
     .card h2 { margin: 0 0 6px; font-size: 14px; }
@@ -159,6 +179,14 @@
             value="gpt-4.1-mini"
             />
         </div>
+        <div class="full">
+            <label for="apiKey">API key (for /v1/straja/requests)</label>
+            <input
+            id="apiKey"
+            type="password"
+            placeholder="sk-…"
+            />
+        </div>
     </div>
 
     <div class="prompt-row">
@@ -175,6 +203,7 @@
           Streaming
         </label>
         <div class="status" id="status"></div>
+        <div class="post-banner" id="postCheckBanner"></div>
       </div>
     </div>
 
@@ -261,9 +290,11 @@
     const clearBtn = document.getElementById('clearBtn');
     const streamToggle = document.getElementById('streamToggle');
     streamToggle.checked = true;
+    const apiKeyInput = document.getElementById('apiKey');
     const statusEl = document.getElementById('status');
     const completionJsonEl = document.getElementById('completionJson');
     const activationJsonEl = document.getElementById('activationJson');
+    const postCheckBanner = document.getElementById('postCheckBanner');
     const assistantTextEl = document.getElementById('assistantText');
 
     const copyAssistantBtn = document.getElementById('copyAssistantBtn');
@@ -330,6 +361,9 @@
         if (typeof cfg.streaming === 'boolean') {
           streamToggle.checked = cfg.streaming;
         }
+        if (cfg.apiKey) {
+          apiKeyInput.value = cfg.apiKey;
+        }
       } catch (_) {}
     }
 
@@ -338,7 +372,8 @@
         baseUrl: gatewayUrlInput.value.trim(),
         model: modelInput.value.trim(),
         projectId: projectSelect.value,
-        streaming: streamToggle.checked
+        streaming: streamToggle.checked,
+        apiKey: apiKeyInput.value
       };
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
@@ -411,6 +446,11 @@
       completionJsonEl.textContent = '';
       activationJsonEl.textContent = '';
       assistantTextEl.textContent = '';
+      if (postCheckBanner) {
+        postCheckBanner.style.display = 'none';
+        postCheckBanner.textContent = '';
+        postCheckBanner.classList.remove('blocked', 'redacted');
+      }
 
       const body = {
         project_id: projectId,
@@ -495,6 +535,11 @@
       completionJsonEl.textContent = '';
       activationJsonEl.textContent = '';
       assistantTextEl.textContent = '';
+      if (postCheckBanner) {
+        postCheckBanner.style.display = 'none';
+        postCheckBanner.textContent = '';
+        postCheckBanner.classList.remove('blocked', 'redacted');
+      }
 
       const body = {
         project_id: projectId,
@@ -550,7 +595,8 @@
                 continue;
               }
               rawSSE += chunk + '\n\n';
-              const delta = extractDeltaFromSSE(chunk);
+              const parsed = parseSSEEvent(chunk);
+              const delta = extractDeltaFromSSE(parsed);
               if (delta) {
                 assistantText += delta;
                 assistantTextEl.textContent = assistantText;
@@ -561,6 +607,12 @@
         }
 
         statusEl.textContent = 'Streaming complete';
+        const reqId = res.headers.get('x-straja-request-id');
+        if (reqId) {
+          await fetchRequestStatus(reqId);
+        } else {
+          statusEl.textContent = 'Streaming complete (no request id)';
+        }
       } catch (err) {
         if (err && err.name === 'AbortError') {
           statusEl.textContent = 'Streaming stopped';
@@ -575,16 +627,23 @@
       }
     }
 
-    function extractDeltaFromSSE(chunk) {
+    function parseSSEEvent(chunk) {
       const lines = chunk.split('\n');
+      let event = '';
       const dataLines = [];
       for (const line of lines) {
-        if (line.startsWith('data:')) {
+        if (line.startsWith('event:')) {
+          event = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
           dataLines.push(line.slice(5).trimStart());
         }
       }
-      if (dataLines.length === 0) return '';
-      const data = dataLines.join('\n');
+      return { event, data: dataLines.join('\n') };
+    }
+
+    function extractDeltaFromSSE(parsed) {
+      if (!parsed || !parsed.data) return '';
+      const data = parsed.data;
       if (data === '[DONE]') return '';
       try {
         const obj = JSON.parse(data);
@@ -598,6 +657,125 @@
         return '';
       }
       return '';
+    }
+
+    function applyPostCheckBanner(raw) {
+      if (!postCheckBanner) return;
+      let payload = null;
+      try {
+        payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      } catch (_) {
+        return;
+      }
+      if (!payload || !payload.post_decision) return;
+      const decision = String(payload.post_decision);
+      const hits = Array.isArray(payload.post_policy_hits) ? payload.post_policy_hits : [];
+      const hitText = hits.length ? `Categories: ${hits.join(', ')}` : 'No categories';
+      postCheckBanner.textContent = `Output ${decision} by policy (post-check). ${hitText}`;
+      postCheckBanner.classList.remove('blocked', 'redacted');
+      if (decision === 'blocked') {
+        postCheckBanner.classList.add('blocked');
+      } else if (decision === 'redacted') {
+        postCheckBanner.classList.add('redacted');
+      }
+      postCheckBanner.style.display = 'block';
+    }
+
+    function applyActivationObject(actJson) {
+      if (!actJson) return;
+      activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
+      applyPostCheckBanner({
+        post_decision: actJson.post_decision,
+        post_policy_hits: Array.isArray(actJson.post_policy_hits)
+          ? actJson.post_policy_hits.map(h => (typeof h === 'string' ? h : h.category)).filter(Boolean)
+          : []
+      });
+
+      const decisionEl = document.getElementById('decisionStatus');
+      if (!decisionEl || !actJson.decision) {
+        return;
+      }
+      const policyHits = Array.isArray(actJson.policy_hits)
+        ? actJson.policy_hits
+            .map(h => (typeof h === 'string' ? h : h.category))
+            .filter(Boolean)
+        : Array.isArray(actJson.policy_hit_categories)
+          ? actJson.policy_hit_categories.filter(Boolean)
+          : [];
+      let d = String(actJson.decision);
+      if (d === 'allow' && policyHits.some(h => h !== 'toxicity')) {
+        d = 'redacted';
+      }
+      decisionEl.textContent = d;
+      decisionEl.style.display = 'inline-block';
+      if (d.startsWith('blocked')) {
+        decisionEl.style.background = '#fee2e2';
+        decisionEl.style.border = '1px solid #fecaca';
+        decisionEl.style.color = '#b91c1c';
+      } else if (d === 'allow') {
+        decisionEl.style.background = '#dcfce7';
+        decisionEl.style.border = '1px solid #bbf7d0';
+        decisionEl.style.color = '#166534';
+      } else if (d === 'redacted') {
+        decisionEl.style.background = '#fef9c3';
+        decisionEl.style.border = '1px solid #fef08a';
+        decisionEl.style.color = '#854d0e';
+      } else {
+        decisionEl.style.background = '#e5e7eb';
+        decisionEl.style.border = '1px solid #d1d5db';
+        decisionEl.style.color = '#374151';
+      }
+    }
+
+    function resolveGatewayBase() {
+      const base = gatewayUrlInput.value.trim();
+      if (!base || base === '/console/api') {
+        return '';
+      }
+      if (base.endsWith('/console/api')) {
+        return base.slice(0, -'/console/api'.length);
+      }
+      return base;
+    }
+
+    async function fetchRequestStatus(requestId) {
+      const base = resolveGatewayBase();
+      const projectId = projectSelect.value;
+      let url = '';
+      let headers = {};
+      const apiKey = apiKeyInput.value.trim();
+      if (apiKey) {
+        url = `${base}/v1/straja/requests/${encodeURIComponent(requestId)}`;
+        headers = { 'Authorization': `Bearer ${apiKey}` };
+      } else {
+        url = `${base}/console/api/requests/${encodeURIComponent(requestId)}?project_id=${encodeURIComponent(projectId)}`;
+      }
+      for (let i = 0; i < 20; i += 1) {
+        try {
+          const res = await fetch(url, {
+            headers
+          });
+          if (res.status === 404) {
+            statusEl.textContent = 'Request status not found.';
+            return;
+          }
+          const data = await res.json();
+          if (data && data.status === 'completed' && data.activation) {
+            applyActivationObject(data.activation);
+            return;
+          }
+          if (data && data.status === 'pending') {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            continue;
+          }
+          statusEl.textContent = 'Unexpected request status response.';
+          return;
+        } catch (err) {
+          statusEl.textContent = 'Status check failed.';
+          return;
+        }
+      }
+      statusEl.textContent = 'Request status still pending.';
     }
 
     function applyActivationHeader(activationHeader) {
@@ -614,43 +792,7 @@
       if (activationHeader) {
         try {
           const actJson = JSON.parse(activationHeader);
-          activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
-
-          const policyHits = Array.isArray(actJson.policy_hits)
-            ? actJson.policy_hits
-                .map(h => (typeof h === 'string' ? h : h.category))
-                .filter(Boolean)
-            : Array.isArray(actJson.policy_hit_categories)
-              ? actJson.policy_hit_categories.filter(Boolean)
-              : [];
-
-          if (decisionEl && actJson.decision) {
-            let d = String(actJson.decision);
-            if (d === 'allow' && policyHits.some(h => h !== 'toxicity')) {
-              d = 'redacted';
-            }
-
-            decisionEl.textContent = d;
-            decisionEl.style.display = 'inline-block';
-
-            if (d.startsWith('blocked')) {
-              decisionEl.style.background = '#fee2e2';
-              decisionEl.style.border = '1px solid #fecaca';
-              decisionEl.style.color = '#b91c1c';
-            } else if (d === 'allow') {
-              decisionEl.style.background = '#dcfce7';
-              decisionEl.style.border = '1px solid #bbf7d0';
-              decisionEl.style.color = '#166534';
-            } else if (d === 'redacted') {
-              decisionEl.style.background = '#fef9c3';
-              decisionEl.style.border = '1px solid #fef08a';
-              decisionEl.style.color = '#854d0e';
-            } else {
-              decisionEl.style.background = '#e5e7eb';
-              decisionEl.style.border = '1px solid #d1d5db';
-              decisionEl.style.color = '#374151';
-            }
-          }
+          applyActivationObject(actJson);
         } catch (_) {
           activationJsonEl.textContent = activationHeader;
         }

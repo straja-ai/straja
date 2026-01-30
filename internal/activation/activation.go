@@ -59,6 +59,13 @@ type Event struct {
 	PolicyHitCategories []string            `json:"policy_hit_categories,omitempty"`
 	PromptPreview       string              `json:"prompt_preview,omitempty"`
 	CompletionPreview   string              `json:"completion_preview,omitempty"`
+	PostPolicyHits      []PolicyHit         `json:"post_policy_hits,omitempty"`
+	PostPolicyDecisions []PolicyDecision    `json:"post_policy_decisions,omitempty"`
+	PostDecision        string              `json:"post_decision,omitempty"`
+	OutputPreview       string              `json:"output_preview,omitempty"`
+	PostCheckLatencyMs  float64             `json:"post_check_latency_ms,omitempty"`
+	PostSafetyScores    map[string]float32  `json:"post_safety_scores,omitempty"`
+	PostSafetyFlags     []string            `json:"post_safety_flags,omitempty"`
 	IntelStatus         string              `json:"intel_status,omitempty"`
 	IntelBundleVersion  string              `json:"intel_bundle_version,omitempty"`
 	IntelLastValidated  string              `json:"intel_last_validated_at,omitempty"`
@@ -111,6 +118,13 @@ func BuildEvent(params BuildParams) *Event {
 		PolicyHitCategories: cloneStrings(params.Request.PolicyHits),
 		PromptPreview:       redact.String(promptPreview),
 		CompletionPreview:   redact.String(completionPreview),
+		PostPolicyHits:      buildPolicyHits(params.Request.PostPolicyDecisions),
+		PostPolicyDecisions: buildPolicyDecisions(params.Request.PostPolicyDecisions),
+		PostDecision:        params.Request.PostDecision,
+		OutputPreview:       redact.String(params.Request.OutputPreview),
+		PostCheckLatencyMs:  durationMillis(params.Request.PostCheckLatency),
+		PostSafetyScores:    cloneFloatMap(params.Request.PostSafetyScores),
+		PostSafetyFlags:     cloneStrings(params.Request.PostSafetyFlags),
 		IntelStatus:         params.IntelStatus,
 		IntelBundleVersion:  params.IntelBundleVersion,
 		IntelLastValidated:  params.IntelLastValidatedAt,

@@ -26,6 +26,9 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requestID := newRequestID()
+	w.Header().Set("X-Straja-Request-Id", requestID)
+
 	start := time.Now()
 	ctx := r.Context()
 	ctx, root := s.startSpan(ctx, "straja.request", trace.SpanKindServer, map[string]interface{}{
@@ -105,11 +108,13 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	infReq := &inference.Request{
+		RequestID: requestID,
 		ProjectID: project.ID,
 		Model:     model,
 		Messages:  []inference.Message{},
 		Timings:   &inference.Timings{},
 	}
+	s.requestStore.Start(requestID, project.ID)
 	decision := "allow"
 	statusCode := http.StatusOK
 	defer logTimingDebug(project.ID, providerName, decision, infReq.Timings)
@@ -142,6 +147,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	if hasInput {
 		var err error
 		inputVal, infReq, _, _, err = s.hardenResponsesInput(ctx, project.ID, model, inputVal)
+		infReq.RequestID = requestID
 		if err != nil {
 			decision = "blocked_before"
 			statusCode = http.StatusForbidden
@@ -175,24 +181,88 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	if upstreamResp.StatusCode >= 400 {
 		decision = "error_provider"
+		statusCode = upstreamResp.StatusCode
+		copyHeaders(w.Header(), upstreamResp.Header, nil)
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
-	} else {
-		decision = "allow"
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow)
+		w.WriteHeader(upstreamResp.StatusCode)
+		_, _ = io.Copy(w, upstreamResp.Body)
+		return
 	}
-	statusCode = upstreamResp.StatusCode
 
 	if stream {
 		setSSEHeaders(w.Header())
-	} else {
-		copyHeaders(w.Header(), upstreamResp.Header, nil)
+		w.WriteHeader(upstreamResp.StatusCode)
+		capture := newSSECapture(s.cfg.Server.MaxNonStreamResponseBytes)
+		if err := copyUpstreamBodyWithCapture(w, upstreamResp.Body, capture); err != nil && !errors.Is(err, context.Canceled) {
+			cancel()
+			redact.Logf("responses: streaming copy failed: %v", err)
+		}
+		postDecision := runPostCheckForStream(ctx, s, infReq, capture)
+		if postDecision == "blocked" {
+			decision = "blocked_after"
+		} else {
+			decision = "allow"
+		}
+		statusCode = upstreamResp.StatusCode
+		if postDecision == "blocked" {
+			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter)
+		} else {
+			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow)
+		}
+		return
 	}
-	w.WriteHeader(upstreamResp.StatusCode)
 
-	if err := copyUpstreamBody(w, upstreamResp.Body, stream); err != nil && !errors.Is(err, context.Canceled) {
-		cancel()
-		redact.Logf("responses: streaming copy failed: %v", err)
+	respBody, err := readLimited(upstreamResp.Body, s.cfg.Server.MaxNonStreamResponseBytes)
+	if err != nil {
+		decision = "error_provider"
+		statusCode = http.StatusBadGateway
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider)
+		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
+		return
 	}
+
+	updatedBody := respBody
+	postDecision := "allow"
+	if len(respBody) > 0 {
+		var parsed map[string]any
+		if err := json.Unmarshal(respBody, &parsed); err == nil {
+			agg := newPostCheckAggregator(ctx, s, project.ID, model)
+			if _, err := applyPostCheckToResponse(parsed, agg); err != nil {
+				postDecision = "blocked"
+			}
+			post := agg.Result()
+			infReq.PostPolicyHits = post.postReq.PolicyHits
+			infReq.PostPolicyDecisions = post.postReq.PolicyDecisions
+			infReq.PostDecision = post.decision
+			infReq.OutputPreview = outputPreview(post.outputs)
+			infReq.PostCheckLatency = post.latency
+			infReq.PostSafetyScores = post.postReq.SecurityScores
+			infReq.PostSafetyFlags = post.postReq.SecurityFlags
+			postDecision = post.decision
+
+			if postDecision == "blocked" {
+				decision = "blocked_after"
+				statusCode = http.StatusForbidden
+				s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter)
+				writePolicyBlockedError(w, http.StatusForbidden, "Output blocked by Straja policy (after model)")
+				return
+			}
+
+			if postDecision == "redacted" {
+				if body, err := json.Marshal(parsed); err == nil {
+					updatedBody = body
+				}
+			}
+		}
+	}
+
+	decision = "allow"
+	statusCode = upstreamResp.StatusCode
+	copyHeaders(w.Header(), upstreamResp.Header, nil)
+	w.Header().Set("Content-Type", "application/json")
+	s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow)
+	w.WriteHeader(upstreamResp.StatusCode)
+	_, _ = w.Write(updatedBody)
 }
 
 func (s *Server) doResponsesUpstream(ctx context.Context, pcfg config.ProviderConfig, providerName string, incoming http.Header, body []byte) (*http.Response, error) {
@@ -458,6 +528,286 @@ func responsesHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: tr,
 	}
+}
+
+func readLimited(r io.Reader, max int64) ([]byte, error) {
+	if max <= 0 {
+		return io.ReadAll(r)
+	}
+	limited := io.LimitReader(r, max+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("response exceeded limit (%d bytes)", max)
+	}
+	return data, nil
+}
+
+type sseCapture struct {
+	buf       bytes.Buffer
+	limit     int64
+	truncated bool
+}
+
+func newSSECapture(limit int64) *sseCapture {
+	return &sseCapture{limit: limit}
+}
+
+func (c *sseCapture) Write(p []byte) {
+	if c == nil || c.truncated {
+		return
+	}
+	if c.limit > 0 && int64(c.buf.Len()+len(p)) > c.limit {
+		remaining := int64(c.limit - int64(c.buf.Len()))
+		if remaining > 0 {
+			c.buf.Write(p[:remaining])
+		}
+		c.truncated = true
+		return
+	}
+	c.buf.Write(p)
+}
+
+func (c *sseCapture) Bytes() []byte {
+	if c == nil {
+		return nil
+	}
+	return c.buf.Bytes()
+}
+
+func copyUpstreamBodyWithCapture(w http.ResponseWriter, body io.Reader, capture *sseCapture) error {
+	flusher, _ := w.(http.Flusher)
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := body.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			if capture != nil {
+				capture.Write(chunk)
+			}
+			if _, werr := w.Write(chunk); werr != nil {
+				return werr
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+func applyPostCheckToResponse(resp map[string]any, agg *postCheckAggregator) (int, error) {
+	if resp == nil || agg == nil {
+		return 0, nil
+	}
+	output, ok := resp["output"].([]any)
+	if !ok || len(output) == 0 {
+		return 0, nil
+	}
+	processed := 0
+	for i := range output {
+		item, ok := output[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := item["content"].([]any)
+		if !ok {
+			continue
+		}
+		for j := range content {
+			seg, ok := content[j].(map[string]any)
+			if !ok {
+				continue
+			}
+			t, _ := seg["type"].(string)
+			if t == "" {
+				t = "output_text"
+			}
+			if !isOutputContentType(t) {
+				continue
+			}
+			text, ok := seg["text"].(string)
+			if !ok {
+				continue
+			}
+			updated, err := agg.Check(text)
+			seg["text"] = updated
+			processed++
+			if err != nil {
+				return processed, err
+			}
+		}
+	}
+	if processed == 0 {
+		if txt, ok := resp["output_text"].(string); ok {
+			updated, err := agg.Check(txt)
+			resp["output_text"] = updated
+			processed++
+			if err != nil {
+				return processed, err
+			}
+		}
+	}
+	return processed, nil
+}
+
+func isOutputContentType(t string) bool {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "output_text", "summary_text", "refusal", "text":
+		return true
+	default:
+		return false
+	}
+}
+
+func runPostCheckForStream(ctx context.Context, s *Server, infReq *inference.Request, capture *sseCapture) string {
+	if infReq == nil || capture == nil || capture.truncated {
+		if infReq != nil {
+			infReq.PostDecision = "allow"
+		}
+		return "allow"
+	}
+	outputText := extractOutputTextFromSSE(capture.Bytes())
+	if strings.TrimSpace(outputText) == "" {
+		infReq.PostDecision = "allow"
+		return "allow"
+	}
+	agg := newPostCheckAggregator(ctx, s, infReq.ProjectID, infReq.Model)
+	_, _ = agg.Check(outputText)
+	post := agg.Result()
+	infReq.PostPolicyHits = post.postReq.PolicyHits
+	infReq.PostPolicyDecisions = post.postReq.PolicyDecisions
+	infReq.PostDecision = post.decision
+	infReq.OutputPreview = outputPreview(post.outputs)
+	infReq.PostCheckLatency = post.latency
+	infReq.PostSafetyScores = post.postReq.SecurityScores
+	infReq.PostSafetyFlags = post.postReq.SecurityFlags
+	return post.decision
+}
+
+func extractOutputTextFromSSE(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	payload := string(data)
+	events := strings.Split(payload, "\n\n")
+	var builder strings.Builder
+	hasDelta := false
+	fullText := ""
+	for _, e := range events {
+		evt, data := parseSSEEvent(e)
+		if strings.TrimSpace(data) == "" {
+			continue
+		}
+		if data == "[DONE]" {
+			continue
+		}
+		text, fromDelta := extractTextFromSSEData(evt, data)
+		if text == "" {
+			continue
+		}
+		if fromDelta {
+			builder.WriteString(text)
+			hasDelta = true
+			continue
+		}
+		if !hasDelta && fullText == "" {
+			fullText = text
+		}
+	}
+	if hasDelta {
+		return builder.String()
+	}
+	return fullText
+}
+
+func parseSSEEvent(chunk string) (string, string) {
+	event := ""
+	dataLines := []string{}
+	for _, line := range strings.Split(chunk, "\n") {
+		if strings.HasPrefix(line, "event:") {
+			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	return event, strings.Join(dataLines, "\n")
+}
+
+func extractTextFromSSEData(event, data string) (string, bool) {
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(data), &obj); err != nil {
+		return "", false
+	}
+	if t, ok := obj["type"].(string); ok {
+		switch t {
+		case "response.output_text.delta":
+			if delta, ok := obj["delta"].(string); ok {
+				return delta, true
+			}
+		case "response.output_text.done":
+			if txt, ok := obj["text"].(string); ok {
+				return txt, false
+			}
+		case "response.completed":
+			if resp, ok := obj["response"].(map[string]any); ok {
+				return extractOutputTextFromResponse(resp), false
+			}
+		}
+	}
+	if delta, ok := obj["delta"].(map[string]any); ok {
+		if txt, ok := delta["text"].(string); ok {
+			return txt, true
+		}
+	}
+	if txt, ok := obj["output_text"].(string); ok {
+		return txt, false
+	}
+	if txt, ok := obj["text"].(string); ok {
+		return txt, false
+	}
+	return "", false
+}
+
+func extractOutputTextFromResponse(resp map[string]any) string {
+	output, ok := resp["output"].([]any)
+	if !ok {
+		return ""
+	}
+	var builder strings.Builder
+	for _, item := range output {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := obj["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, seg := range content {
+			segObj, ok := seg.(map[string]any)
+			if !ok {
+				continue
+			}
+			t, _ := segObj["type"].(string)
+			if !isOutputContentType(t) {
+				continue
+			}
+			if txt, ok := segObj["text"].(string); ok {
+				builder.WriteString(txt)
+			}
+		}
+	}
+	return builder.String()
 }
 
 func writePolicyBlockedError(w http.ResponseWriter, status int, message string) {

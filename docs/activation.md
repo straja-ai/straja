@@ -1,11 +1,12 @@
 # Activation events and sinks
 
-Sources: `internal/activation/*`, `internal/server/server.go`
+Sources: `internal/activation/*`, `internal/server/server.go`, `internal/server/request_status.go`
 
 Straja emits one activation event per request. Events are:
 
 - Logged to stdout (redacted)
 - Returned in `X-Straja-Activation` response header
+- Available via request status lookup using `X-Straja-Request-Id`
 - Optionally delivered to sinks asynchronously
 
 ## Event shape
@@ -32,6 +33,13 @@ Defined in `internal/activation/activation.go`:
   "strajaguard_bundle_version": "...",
   "strajaguard": {"model":"strajaguard_v1","scores":{},"flags":[]},
   "policy_decisions": [],
+  "post_policy_hits": [{"category":"secrets","action":"redact"}],
+  "post_policy_decisions": [{"category":"secrets","action":"redact"}],
+  "post_decision": "redacted",
+  "output_preview": "...",
+  "post_check_latency_ms": 8.4,
+  "post_safety_scores": {"contains_secrets_maybe": 0.42},
+  "post_safety_flags": ["contains_secrets_maybe"],
   "safety_scores": {},
   "safety_thresholds": {},
   "latencies_ms": {"pre_policy": 1.2, "provider": 30.5}
@@ -42,7 +50,35 @@ Key notes:
 
 - `decision` values are defined in `internal/activation/activation.go`: `allow`, `blocked_before_policy`, `blocked_after_policy`, `error_provider`.
 - `prompt_preview` / `completion_preview` are controlled by `logging.activation_level`.
+- `post_*` fields reflect post-LLM checks on model output and only include redacted previews.
+- `post_safety_scores` / `post_safety_flags` capture StrajaGuard output-side scores when available.
 - `policy_decisions`, `safety_scores`, and `safety_thresholds` are present when the security layer runs.
+
+## Request status API
+
+For streaming responses, post-check results are retrieved via:
+
+```
+GET /v1/straja/requests/{request_id}
+```
+
+Response:
+
+```json
+{
+  "status": "pending",
+  "activation": null
+}
+```
+
+```json
+{
+  "status": "completed",
+  "activation": { "...": "activation event payload" }
+}
+```
+
+The `request_id` is provided in `X-Straja-Request-Id` on inference responses.
 
 ## Sinks
 
