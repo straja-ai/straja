@@ -640,6 +640,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/readyz", s.handleReady)
 	mux.HandleFunc("/v1/chat/completions", s.wrapHandler(s.handleChatCompletions, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/v1/responses", s.wrapHandler(s.handleResponses, handlerOptions{limitBody: true, useLimiter: true}))
 
 	// Serve console + static
 	mux.Handle("/console/", console.Handler())
