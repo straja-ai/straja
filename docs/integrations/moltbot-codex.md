@@ -1,6 +1,6 @@
 # Moltbot + Codex (Responses API) via Straja
 
-Straja exposes the OpenAI Responses API at `/v1/responses` and applies pre-LLM hardening (prompt-injection/jailbreak detection and PII/secrets redaction/blocking). For non-streaming responses, Straja also runs a post-LLM check on output text to redact or block per policy. Streaming responses are passed through byte-for-byte and never include custom SSE events; post-check results are retrieved via the request status API using `X-Straja-Request-Id`. Source: `internal/server/responses_handler.go`, `internal/server/post_check.go`, `internal/server/request_status.go`.
+Straja exposes the OpenAI Responses API at `/v1/responses` and applies pre-LLM hardening (prompt-injection/jailbreak detection and PII/secrets redaction/blocking). Post-LLM checks run for both non-streaming and streaming responses; in streaming mode, output is not modified mid-stream and any redaction that would have applied is reported after completion via `response_note` in the activation summary. Streaming responses are passed through byte-for-byte and never include custom SSE events; post-check results are retrieved via the request status API using `X-Straja-Request-Id`. Source: `internal/server/responses_handler.go`, `internal/server/post_check.go`, `internal/server/request_status.go`.
 
 ## Streaming example (curl)
 
@@ -9,7 +9,7 @@ curl -N http://localhost:8080/v1/responses \
   -H "Authorization: Bearer $STRAJA_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "codex-mini",
+    "model": "gpt-5.2-codex",
     "input": "Stream hello",
     "stream": true
   }'

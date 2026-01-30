@@ -45,6 +45,7 @@ See the documentation below for exact commands and examples.
 - [Docker](docs/docker.md)
 - [StrajaGuard v1](docs/strajaguard-v1.md)
 - [Activation events](docs/activation.md)
+- [Moltbot + Codex integration](docs/integrations/moltbot-codex.md)
 - [Load testing](docs/load-testing.md)
 
 ## Status
