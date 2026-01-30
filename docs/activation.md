@@ -181,6 +181,26 @@ Configure sinks under `activation.sinks` (see `configuration.md`).
 - Per-request timeout defaults to `2s`.
 - Retries twice with backoff (100ms, 300ms) on errors or non-2xx responses.
 
+### OpenTelemetry (OTLP)
+
+OpenTelemetry is **not** an activation sink. It exports telemetry (traces + metrics) about request handling, while activation events are delivered via `X-Straja-Activation` and optional sinks above.
+
+To enable OTLP export:
+
+```yaml
+telemetry:
+  enabled: true
+  endpoint: http://localhost:4317
+  protocol: grpc
+```
+
+You can override the endpoint/protocol via environment variables:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (overrides `telemetry.endpoint`)
+- `OTEL_EXPORTER_OTLP_PROTOCOL` (overrides `telemetry.protocol`, expects `grpc` or `http`)
+
+Source: `internal/telemetry/telemetry.go`, `internal/server/server.go`, `docs/configuration.md`, `docs/environment-variables.md`.
+
 ## Delivery model
 
 Sinks are delivered asynchronously via a bounded in-memory queue (`queue_size`) and a worker pool (`workers`). If the queue is full or the emitter is closed, events are dropped and the request path is not blocked.
