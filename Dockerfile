@@ -58,6 +58,7 @@ FROM gcr.io/distroless/base-debian12
 WORKDIR /app
 
 COPY --from=builder /src/straja.yaml /etc/straja/straja.yaml
+COPY --from=builder /src/configs /app/configs
 COPY --from=builder /out/straja /app/straja
 COPY --from=builder /out/lib/ /usr/local/lib/
 COPY --from=builder /out/lib/ /usr/lib/
