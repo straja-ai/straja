@@ -40,7 +40,7 @@ func newResponsesTestServer(t *testing.T, upstreamBaseURL string, mutate func(*c
 	}
 
 	authz := auth.NewAuth(cfg)
-	return New(cfg, authz)
+	return New(cfg, authz, "")
 }
 
 func TestResponsesNonStreamPassthrough(t *testing.T) {

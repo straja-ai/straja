@@ -57,7 +57,7 @@ func TestConsoleStreamingExposesRequestStatus(t *testing.T) {
 	cfg.Policy.PromptInjection = "block"
 
 	authz := auth.NewAuth(cfg)
-	srv := New(cfg, authz)
+	srv := New(cfg, authz, "")
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 
@@ -146,7 +146,7 @@ func TestConsoleStreamingPreRedaction(t *testing.T) {
 	cfg.Logging.ActivationLevel = "redacted"
 
 	authz := auth.NewAuth(cfg)
-	srv := New(cfg, authz)
+	srv := New(cfg, authz, "")
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 

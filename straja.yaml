@@ -31,7 +31,7 @@ logging:
   activation_level: "redacted"   # metadata | redacted | full
 
 telemetry:
-  enabled: true
+  enabled: false
   endpoint: "127.0.0.1:4317"          # prefer setting OTEL_EXPORTER_OTLP_ENDPOINT in env
   protocol: "grpc"      # grpc | http
 
@@ -53,8 +53,8 @@ policy:
     - "blocked_test"
     - "foo_bar"
     - "forbidden"
-
-  pii: "redact"
+    - sorin
+  pii: redact
   pii_entities:
     email: true
     phone: true
@@ -63,8 +63,8 @@ policy:
     tokens: true
 
   injection: "block"
-  prompt_injection: "block"
-  jailbreak: "block"
+  prompt_injection: block
+  jailbreak: block
   toxicity: "log"
 
 intelligence:
@@ -94,8 +94,8 @@ security:
   prompt_injection:
     regex_enabled: true
     ml_enabled: true
-    ml_warn_threshold: 0.6
-    ml_block_threshold: 0.8
+    ml_warn_threshold: 0.69
+    ml_block_threshold: 0.94
     action_on_block: "block"
   jailbreak:
     regex_enabled: true

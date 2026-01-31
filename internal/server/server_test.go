@@ -55,7 +55,7 @@ func newTestServer(t *testing.T, cfg *config.Config) *Server {
 	t.Helper()
 
 	authz := auth.NewAuth(cfg)
-	return New(cfg, authz)
+	return New(cfg, authz, "")
 }
 
 func TestRequestBodyLimitReturns413(t *testing.T) {

@@ -34,7 +34,7 @@ func main() {
 		addr = *addrFlag
 	}
 
-	srv := server.New(cfg, authz)
+	srv := server.New(cfg, authz, *configPath)
 
 	redact.Logf("Starting Straja on %s...", addr)
 	if err := srv.Start(addr); err != nil {

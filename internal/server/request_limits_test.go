@@ -58,7 +58,7 @@ func baseTestConfig() *config.Config {
 func TestChatCompletion_BlocksTooManyMessages(t *testing.T) {
 	cfg := baseTestConfig()
 	authz := auth.NewAuth(cfg)
-	s := New(cfg, authz)
+	s := New(cfg, authz, "")
 	cp := &countingProvider{}
 	s.providers = map[string]provider.Provider{"fake": cp}
 	s.defaultProvider = "fake"
@@ -86,7 +86,7 @@ func TestChatCompletion_BlocksTooManyChars(t *testing.T) {
 	cfg := baseTestConfig()
 	cfg.Server.MaxTotalMessageChars = 5
 	authz := auth.NewAuth(cfg)
-	s := New(cfg, authz)
+	s := New(cfg, authz, "")
 	cp := &countingProvider{}
 	s.providers = map[string]provider.Provider{"fake": cp}
 	s.defaultProvider = "fake"
@@ -114,7 +114,7 @@ func TestChatCompletion_ModelAllowlistBlocks(t *testing.T) {
 	cfg := baseTestConfig()
 	cfg.Projects[0].AllowedModels = []string{"allowed-model"}
 	authz := auth.NewAuth(cfg)
-	s := New(cfg, authz)
+	s := New(cfg, authz, "")
 	cp := &countingProvider{}
 	s.providers = map[string]provider.Provider{"fake": cp}
 	s.defaultProvider = "fake"
@@ -143,7 +143,7 @@ func TestChatCompletion_WithinLimitsPasses(t *testing.T) {
 	cfg.Server.MaxMessages = 3
 	cfg.Server.MaxRequestBodyBytes = 1024
 	authz := auth.NewAuth(cfg)
-	s := New(cfg, authz)
+	s := New(cfg, authz, "")
 	cp := &countingProvider{}
 	s.providers = map[string]provider.Provider{"fake": cp}
 	s.defaultProvider = "fake"
@@ -176,7 +176,7 @@ func TestChatCompletion_BlocksLargeBody(t *testing.T) {
 	cfg := baseTestConfig()
 	cfg.Server.MaxRequestBodyBytes = 50
 	authz := auth.NewAuth(cfg)
-	s := New(cfg, authz)
+	s := New(cfg, authz, "")
 	cp := &countingProvider{}
 	s.providers = map[string]provider.Provider{"fake": cp}
 	s.defaultProvider = "fake"

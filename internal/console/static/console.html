@@ -6,352 +6,1366 @@
   <meta name="robots" content="noindex, nofollow, noarchive" />
   <title>Straja Console</title>
   <style>
-    * { box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    body { margin: 0; padding: 16px; background: #f5f5f7; }
-    .container { max-width: 1100px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.06); }
-    h1 { margin-top: 0; font-size: 22px; }
-    .config { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-bottom: 16px; }
-    .config .full { grid-column: 1 / -1; }
-    label { display: block; font-size: 13px; margin-bottom: 4px; color: #444; }
-    input, textarea, select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #d0d0d7; font-size: 14px; }
-    input[readonly], input:disabled { background: #f3f4f6; color: #6b7280; cursor: not-allowed; }
-    textarea { resize: vertical; min-height: 80px; }
-    .prompt-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
-    .prompt-row textarea { flex: 1; }
-    .actions { display: flex; flex-direction: column; gap: 8px; min-width: 120px; }
-    button { padding: 8px 12px; border-radius: 8px; border: none; font-size: 14px; cursor: pointer; background: #111827; color: #fff; }
-    button:disabled { opacity: 0.6; cursor: default; }
-    .stop-btn { background: #b91c1c; }
-    .stop-btn:hover { background: #991b1b; }
-    .toggle-row { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; }
-    .toggle-row input { width: auto; }
-    .status { font-size: 12px; color: #555; min-height: 16px; }
-    .post-banner {
+    @font-face {
+      font-family: "Space Grotesk";
+      src: url("/console/static/fonts/SpaceGrotesk-VariableFont_wght.ttf") format("truetype");
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --panel-muted: #f4f5f9;
+      --border: #e3e6ef;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #0f172a;
+      --accent-soft: #eef2ff;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #dc2626;
+      --blue: #2563eb;
+      --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top left, #eef2ff 0%, var(--bg) 55%);
+      min-height: 100vh;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      background: #0b1220;
+      color: #e5e7eb;
+      padding: 24px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .brand img {
+      width: 28px;
+      height: 28px;
+    }
+
+    .brand-name {
+      font-family: "Space Grotesk", "Trebuchet MS", "Segoe UI", sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: lowercase;
+      color: #f8fafc;
+    }
+
+    .nav {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .nav a {
+      text-decoration: none;
+      color: #cbd5f5;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+    }
+
+    .nav a:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #ffffff;
+    }
+
+    .nav a.active {
+      background: #1e293b;
+      color: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.3);
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+
+    .main {
+      padding: 24px 28px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 14px 18px;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .topbar-left {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .topbar-title {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .status-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #0f172a;
+      border: 1px solid #cbd5f5;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      max-width: 100%;
+      white-space: nowrap;
+    }
+
+    .pill.green { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .pill.amber { background: #fef9c3; color: #92400e; border-color: #fde68a; }
+    .pill.red { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+    .pill.blue { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+
+    .topbar-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 13px;
+      background: #fff;
+    }
+
+    .field input[readonly] {
+      background: var(--panel-muted);
+      color: var(--muted);
+    }
+
+    .content {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .view {
+      display: none;
+      animation: fadeIn 0.35s ease;
+    }
+
+    .view.active { display: block; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .prompt-area textarea {
+      min-height: 160px;
+      resize: vertical;
+      font-size: 13px;
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .row .field { flex: 1; min-width: 160px; }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+
+    .btn:disabled { opacity: 0.6; cursor: default; }
+
+    .btn.secondary { background: #f1f5f9; color: #0f172a; border: 1px solid var(--border); }
+    .btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn.danger { background: #b91c1c; }
+
+    .btn:active { transform: translateY(1px); }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .toggle input { width: auto; }
+
+    .status-line {
+      font-size: 12px;
+      color: var(--muted);
+      min-height: 18px;
+    }
+
+    .warning-banner {
       display: none;
       margin-top: 8px;
       padding: 8px 10px;
-      border-radius: 8px;
+      border-radius: 10px;
       font-size: 12px;
-      background: #fff7ed;
-      border: 1px solid #fed7aa;
-      color: #9a3412;
-    }
-    .post-banner.blocked {
-      background: #fee2e2;
-      border: 1px solid #fecaca;
-      color: #b91c1c;
-    }
-    .post-banner.redacted {
-      background: #fef9c3;
-      border: 1px solid #fef08a;
-      color: #854d0e;
-    }
-    .results { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; margin-top: 8px; }
-    .card { border-radius: 10px; border: 1px solid #e3e3ec; padding: 12px; background: #fafafa; overflow: hidden; }
-    .card h2 { margin: 0 0 6px; font-size: 14px; }
-    pre { margin: 0; font-size: 12px; overflow: auto; max-height: 260px; background: #f3f4f6; padding: 8px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
-    .assistant-output { margin-top: 8px; padding: 8px; background: #eff6ff; border-radius: 8px; font-size: 13px; min-height: 32px; white-space: pre-wrap; }
-        .output-block {
-      position: relative;
-      margin-top: 8px;
-    }
-    .json-output { margin-top: 8px; padding: 8px; background: #f3f4f6; border-radius: 8px; font-size: 13px; min-height: 32px; white-space: pre-wrap; }
-        .output-block {
-      position: relative;
-      margin-top: 8px;
+      background: #fef3c7;
+      border: 1px solid #fcd34d;
+      color: #92400e;
     }
 
-    .output-block pre,
-    .output-block .assistant-output {
-      padding-right: 40px; /* space for copy chip on the right */
+    .results-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-top: 12px;
     }
 
-    .copy-chip {
+    .playground-stack {
+      display: block;
+    }
+
+    .decision-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .decision-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
+      background: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .decision-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #334155;
+    }
+
+    .score-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 6px;
+    }
+
+    .score-row {
+      display: grid;
+      gap: 6px;
+    }
+
+    .score-label {
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .score-bar {
+      position: relative;
+      height: 8px;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .score-fill {
+      height: 100%;
+      background: #3b82f6;
+      border-radius: 999px;
+    }
+
+    .marker {
       position: absolute;
-      top: 6px;
-      right: 6px;
+      top: -3px;
+      width: 2px;
+      height: 14px;
+      background: #111827;
+      opacity: 0.5;
+    }
+
+    .marker.warn { background: #f59e0b; }
+    .marker.block { background: #ef4444; }
+
+    .output-box {
+      background: #0f172a;
+      color: #f8fafc;
+      border-radius: 12px;
+      padding: 12px;
+      min-height: 120px;
+      white-space: pre-wrap;
+      font-size: 13px;
+      position: relative;
+    }
+
+    .copy-btn {
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      background: rgba(255, 255, 255, 0.08);
+      color: #e2e8f0;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      position: absolute;
+      top: 10px;
+      right: 10px;
+    }
+
+    details {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px 12px;
+      background: #f8fafc;
+    }
+
+    details summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: #334155;
+      font-weight: 600;
+    }
+
+    pre {
+      margin: 8px 0 0;
+      font-size: 12px;
+      background: #eef2f7;
+      padding: 10px;
+      border-radius: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 260px;
+      overflow: auto;
+    }
+
+    .request-id {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .thresholds {
+      display: grid;
+      gap: 10px;
+    }
+
+    .threshold-row {
+      display: grid;
+      gap: 6px;
+    }
+
+    .threshold-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    .threshold-row input[type="range"] { width: 100%; }
+
+    .threshold-row .row { align-items: center; }
+
+    .config-toggle {
+      display: inline-flex;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      background: #f1f5f9;
+    }
+
+    .config-toggle button {
+      border: none;
+      padding: 6px 12px;
+      font-size: 12px;
+      background: transparent;
+      cursor: pointer;
+      color: var(--muted);
+    }
+
+    .config-toggle button.active {
+      background: #fff;
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .dirty-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #f97316;
+      display: inline-block;
+      margin-left: 6px;
+      opacity: 0;
+    }
+
+    .dirty-dot.active { opacity: 1; }
+
+    .requests-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .requests-table th,
+    .requests-table td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .requests-table tbody tr { cursor: pointer; }
+    .requests-table tbody tr:hover { background: #f8fafc; }
+    .requests-table tbody tr.active {
+      background: #eef2ff;
+      outline: 1px solid #c7d2fe;
+    }
+
+    .drawer {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      background: #f8fafc;
+    }
+
+    .mini {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .summary-tile {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .summary-tile::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(140deg, rgba(148, 163, 184, 0.08), transparent);
+      pointer-events: none;
+    }
+
+    .summary-value {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .summary-label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .summary-tile.allow { border-color: #bbf7d0; background: #f0fdf4; }
+    .summary-tile.redact { border-color: #fde68a; background: #fffbeb; }
+    .summary-tile.block { border-color: #fecaca; background: #fef2f2; }
+
+    .summary-pill {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      padding: 4px 8px;
-      border-radius: 999px;
-      border: 1px solid #e5e7eb;
-      background: #f9fafb;
-      font-size: 11px;
-      color: #374151;
-      cursor: pointer;
+      width: fit-content;
+      background: #e2e8f0;
+      color: #334155;
     }
 
-    .copy-chip:hover {
-      background: #e5e7eb;
+    @media (max-width: 1100px) {
+      .grid-2, .results-grid {
+        grid-template-columns: 1fr;
+      }
+      .app { grid-template-columns: 1fr; }
+      .sidebar {
+        flex-direction: row;
+        align-items: center;
+        gap: 12px;
+        overflow-x: auto;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+      }
+      .nav {
+        flex-direction: row;
+      }
+      .sidebar-footer { display: none; }
     }
 
-    .copy-icon {
-      width: 14px;
-      height: 14px;
-      display: inline-block;
+    @media (max-width: 720px) {
+      .topbar { flex-direction: column; align-items: flex-start; }
+      .topbar-controls { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+      .row { flex-direction: column; }
+      .main { padding: 18px; }
+      .sidebar { padding: 14px 12px; }
+      .nav a { padding: 8px 10px; font-size: 13px; }
+      .card { padding: 14px; }
+      .actions { width: 100%; }
+      .actions .btn { flex: 1 1 120px; }
+      .output-box { min-height: 160px; }
+      details .btn { margin-top: 8px; width: 100%; }
+      #view-playground .grid-2,
+      #view-playground .results-grid { display: contents; }
+      .playground-stack { display: flex; flex-direction: column; gap: 16px; }
+      .request-card { order: 1; }
+      .output-card { order: 2; }
+      .decisions-card { order: 3; }
+      .threshold-card { order: 4; }
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .requests-pagination { flex-direction: row !important; flex-wrap: nowrap; }
+      .requests-pagination .row { flex-direction: row !important; }
     }
 
-    .copy-icon svg {
-      width: 100%;
-      height: 100%;
-      fill: #6b7280;
+    @media (max-width: 520px) {
+      .topbar-controls { flex-direction: column; align-items: stretch; }
+      .topbar-controls .field { width: 100%; }
+      .status-row { gap: 6px; }
+      .pill { font-size: 10px; }
+      .requests-table thead { display: none; }
+      .requests-table, .requests-table tbody, .requests-table tr, .requests-table td { display: block; width: 100%; }
+      .requests-table tr { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; padding: 8px; background: #fff; }
+      .requests-table td { border: none; padding: 4px 0; }
+      .requests-table td::before { content: attr(data-label) \": \"; color: var(--muted); font-weight: 600; }
+      .copy-btn { position: static; margin-top: 8px; display: inline-flex; }
+      .summary-grid { grid-template-columns: 1fr; }
+      .requests-pagination { flex-direction: row; align-items: center; }
     }
-    .small { font-size: 11px; color: #777; }
-    @media (max-width: 900px) {
-      .config, .results { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 640px) {
-      body { padding: 10px; }
-      .container { padding: 16px; border-radius: 10px; }
-      .header { flex-direction: column; align-items: flex-start; gap: 6px; }
-      .logo-mark { height: 20px; }
-      h1 { font-size: 20px; }
-      .prompt-row { flex-direction: column; }
-      .actions { width: 100%; flex-direction: column; }
-      .actions button { width: 100%; }
-      .status { width: 100%; }
-      textarea { min-height: 120px; }
-    }
-    .copy-row {
-      display: flex;
-      gap: 6px;
-      justify-content: flex-end;
-      margin-bottom: 4px;
-    }
-    .copy-btn {
-      font-size: 11px;
-      padding: 4px 8px;
-      border-radius: 6px;
-      border: 1px solid #d0d0d7;
-      background: #f3f4f6;
-      color: #111827;
-      cursor: pointer;
-    }
-    .copy-btn:hover {
-      background: #e5e7eb;
-    }
-    .logo-mark {
-      height: 24px;    /* tweak to taste: 24–32px works well */
-      width: auto;
-      display: block;
-    }
-    .header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 20px;
-    }
-    .header h1 {
-      margin: 0;
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <img src="/console/static/img/straja-mark.svg" alt="Straja logo" class="logo-mark">
-      <h1>Straja Dev Console</h1>
-    </div>
-
-    <div class="config">
-        <div class="full">
-            <label for="gatewayUrl">Console API base URL</label>
-            <input
-            id="gatewayUrl"
-            type="text"
-            value="/console/api"
-            />
-        </div>
-        <div>
-            <label for="projectSelect">Project</label>
-            <select id="projectSelect">
-            <option value="">Loading projects…</option>
-            </select>
-        </div>
-        <div>
-            <label for="model">Model</label>
-            <input
-            id="model"
-            type="text"
-            readonly
-            disabled
-            value="gpt-4.1-mini"
-            />
-        </div>
-        <div class="full">
-            <label for="apiKey">API key (for /v1/straja/requests)</label>
-            <input
-            id="apiKey"
-            type="password"
-            placeholder="sk-…"
-            />
-        </div>
-    </div>
-
-    <div class="prompt-row">
-      <textarea
-        id="prompt"
-        placeholder="Type your prompt here…"
-      ></textarea>
-      <div class="actions">
-        <button id="sendBtn">Send</button>
-        <button id="stopBtn" type="button" class="stop-btn" disabled>Stop</button>
-        <button id="clearBtn" type="button">Clear</button>
-        <label class="toggle-row">
-          <input id="streamToggle" type="checkbox" />
-          Streaming
-        </label>
-        <div class="status" id="status"></div>
-        <div class="post-banner" id="postCheckBanner"></div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="/console/static/img/straja-mark.svg" alt="Straja logo" />
+        <span class="brand-name">straja</span>
       </div>
-    </div>
+      <nav class="nav">
+        <a href="#overview" data-view="overview">Overview</a>
+        <a href="#playground" data-view="playground">Playground</a>
+        <a href="#config" data-view="config">Config</a>
+        <a href="#requests" data-view="requests">Requests</a>
+      </nav>
+      <div class="sidebar-footer">Local-first console</div>
+    </aside>
 
-    <div class="results">
-    <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h2>Completion</h2>
-          <div style="display:flex; gap:6px; align-items:center;">
-            <div
-              id="requestStatusLabel"
-              style="
-                font-size: 11px;
-                padding: 4px 8px;
-                border-radius: 6px;
-                background: #e5e7eb;
-                border: 1px solid #d1d5db;
-                color: #374151;
-                display: none;
-              "
-            ></div>
-            <div
-              id="responseStatusLabel"
-              style="
-                font-size: 11px;
-                padding: 4px 8px;
-                border-radius: 6px;
-                background: #e5e7eb;
-                border: 1px solid #d1d5db;
-                color: #374151;
-                display: none;
-              "
-            ></div>
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="topbar-title">Straja Console</div>
+          <div class="status-row">
+            <span class="pill" id="gatewayStatus">Gateway: --</span>
+            <span class="pill" id="intelStatus">Intel: --</span>
+            <span class="pill" id="bundleStatus">Bundle: --</span>
           </div>
         </div>
-
-        <!-- Assistant text with copy chip -->
-        <div class="output-block">
-        <div class="assistant-output" id="assistantText"></div>
-        <button type="button" class="copy-chip" id="copyAssistantBtn">
-            <span class="copy-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="9" y="9" width="11" height="11" rx="2" ry="2"></rect>
-                <rect x="4" y="4" width="11" height="11" rx="2" ry="2"></rect>
-            </svg>
-            </span>
-            <span>Copy</span>
-        </button>
+        <div class="topbar-controls">
+          <div class="field" style="min-width: 220px;">
+            <label for="projectSelectTop">Project</label>
+            <select id="projectSelectTop">
+              <option value="">Loading projects…</option>
+            </select>
+          </div>
+          <button class="btn secondary" id="refreshStatusBtn" type="button">Refresh</button>
         </div>
+      </header>
 
-        <div class="small">Raw response</div>
+      <div class="content">
+        <section id="view-overview" class="view">
+          <div class="grid-2">
+            <div class="card">
+              <h2>Gateway status</h2>
+              <p class="mini" id="overviewStatus">Checking readiness…</p>
+              <div class="row" style="margin-top: 12px;">
+                <button class="btn" data-jump="#playground" type="button">Open Playground</button>
+                <button class="btn secondary" data-jump="#config" type="button">Edit Config</button>
+              </div>
+            </div>
+            <div class="card">
+              <h2>Intel</h2>
+              <div class="row">
+                <div class="field">
+                  <label>Intel status</label>
+                  <div id="overviewIntel" class="mini">--</div>
+                </div>
+                <div class="field">
+                  <label>Bundle version</label>
+                  <div id="overviewBundle" class="mini">--</div>
+                </div>
+                <div class="field">
+                  <label>Last validated</label>
+                  <div id="overviewValidated" class="mini">--</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="grid-2" style="margin-top: 18px;">
+            <div class="card">
+              <div class="row" style="justify-content: space-between; align-items: center;">
+                <div>
+                  <h2>Request summary</h2>
+                  <div class="mini">Session totals (local browser history)</div>
+                </div>
+                <span class="summary-pill" id="summaryTotalPill">Total: 0</span>
+              </div>
+              <div class="summary-grid" id="summaryGrid">
+                <div class="summary-tile allow">
+                  <div class="summary-label">Allowed</div>
+                  <div class="summary-value" id="summaryAllow">0</div>
+                </div>
+                <div class="summary-tile redact">
+                  <div class="summary-label">Redacted</div>
+                  <div class="summary-value" id="summaryRedact">0</div>
+                </div>
+                <div class="summary-tile block">
+                  <div class="summary-label">Blocked</div>
+                  <div class="summary-value" id="summaryBlock">0</div>
+                </div>
+              <div class="summary-tile">
+                <div class="summary-label">No decision</div>
+                <div class="summary-value" id="summaryUnknown">0</div>
+              </div>
+            </div>
+              <div class="mini" style="margin-top: 8px;">
+                Summary counts are based on your local browser history (saved in localStorage on this device).
+              </div>
+            </div>
+          </div>
+        </section>
 
-        <!-- Raw JSON with copy chip -->
-        <div class="output-block">
-        <div class="json-output" id="completionJson"></div>
-        <button type="button" class="copy-chip" id="copyCompletionBtn">
-            <span class="copy-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="9" y="9" width="11" height="11" rx="2" ry="2"></rect>
-                <rect x="4" y="4" width="11" height="11" rx="2" ry="2"></rect>
-            </svg>
-            </span>
-            <span>Copy</span>
-        </button>
-        </div>
-    </div>
+        <section id="view-playground" class="view">
+          <div class="playground-stack">
+          <div class="grid-2">
+            <div class="card request-card">
+              <h2>Request builder</h2>
+              <div class="row" style="margin-top: 10px;">
+                <div class="field">
+                  <label for="projectSelect">Project</label>
+                  <select id="projectSelect">
+                    <option value="">Loading projects…</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="modelInput">Model</label>
+                  <input id="modelInput" type="text" value="gpt-4.1-mini" readonly />
+                </div>
+                <div class="field">
+                  <label>Streaming</label>
+                  <label class="toggle">
+                    <input id="streamToggle" type="checkbox" />
+                    Enable stream
+                  </label>
+                </div>
+              </div>
+              <div class="field prompt-area" style="margin-top: 10px;">
+                <label for="promptInput">Request</label>
+                <textarea id="promptInput" placeholder="Type your request here…"></textarea>
+              </div>
+              <div class="actions" style="margin-top: 12px;">
+                <button class="btn" id="sendBtn">Send</button>
+                <button class="btn danger" id="stopBtn" disabled type="button">Stop</button>
+                <button class="btn secondary" id="clearBtn" type="button">Clear</button>
+                <button class="btn ghost" id="copyCurlBtn" type="button">Copy curl</button>
+                <span class="status-line" id="statusLine"></span>
+              </div>
+              <div class="warning-banner" id="statusWarning"></div>
+            </div>
 
-    <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h2>Activation event</h2>
-          <div
-            id="responseNoteLabel"
-            style="
-              font-size: 11px;
-              padding: 4px 8px;
-              border-radius: 6px;
-              background: #dbeafe;
-              border: 1px solid #bfdbfe;
-              color: #1e3a8a;
-              display: none;
-            "
-          ></div>
-        </div>
-        <div class="small">
-        Reads JSON from response header
-        <code>X-Straja-Activation</code>.
-        </div>
+            <div class="card threshold-card">
+              <h2>Threshold quick adjust</h2>
+              <p>Adjust thresholds used in the current config and apply to draft.</p>
+              <div class="thresholds" style="margin-top: 12px;">
+                <div class="threshold-row">
+                  <div class="threshold-title">Prompt injection</div>
+                  <div class="row">
+                    <div class="field">
+                      <label>Warn</label>
+                      <input id="piWarn" type="number" min="0" max="1" step="0.01" />
+                      <input id="piWarnRange" type="range" min="0" max="1" step="0.01" />
+                    </div>
+                    <div class="field">
+                      <label>Block</label>
+                      <input id="piBlock" type="number" min="0" max="1" step="0.01" />
+                      <input id="piBlockRange" type="range" min="0" max="1" step="0.01" />
+                    </div>
+                  </div>
+                </div>
+                <div class="threshold-row">
+                  <div class="threshold-title">Jailbreak</div>
+                  <div class="row">
+                    <div class="field">
+                      <label>Warn</label>
+                      <input id="jbWarn" type="number" min="0" max="1" step="0.01" />
+                      <input id="jbWarnRange" type="range" min="0" max="1" step="0.01" />
+                    </div>
+                    <div class="field">
+                      <label>Block</label>
+                      <input id="jbBlock" type="number" min="0" max="1" step="0.01" />
+                      <input id="jbBlockRange" type="range" min="0" max="1" step="0.01" />
+                    </div>
+                  </div>
+                </div>
+                <div class="threshold-row">
+                  <div class="threshold-title">PII</div>
+                  <div class="mini">Scored as 0/1. Threshold adjustment disabled.</div>
+                </div>
+                <div class="actions">
+                  <button class="btn secondary" id="applyThresholdsBtn" type="button">Apply to config draft</button>
+                </div>
+              </div>
+            </div>
+          </div>
 
-        <!-- Activation JSON with copy chip -->
-        <div class="output-block">
-        <div class="json-output" id="activationJson"></div>
-        <button type="button" class="copy-chip" id="copyActivationBtn">
-            <span class="copy-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="9" y="9" width="11" height="11" rx="2" ry="2"></rect>
-                <rect x="4" y="4" width="11" height="11" rx="2" ry="2"></rect>
-            </svg>
-            </span>
-            <span>Copy</span>
-        </button>
-        </div>
-    </div>
-    </div>
+          <div class="results-grid">
+            <div class="card output-card">
+              <div class="row" style="justify-content: space-between; align-items: center;">
+                <div>
+              <h2>Response</h2>
+                  <div class="request-id">
+                    <span id="requestIdLabel">Request ID: --</span>
+                    <button class="btn secondary" id="copyRequestIdBtn" type="button">Copy</button>
+                  </div>
+                </div>
+                <div class="actions">
+                  <button class="btn secondary" id="copyOutputBtn" type="button">Copy response</button>
+                </div>
+              </div>
+              <div class="output-box" id="assistantOutput"></div>
+              <details style="margin-top: 12px; display: none;" id="redactedPromptDetails">
+                <summary>Redacted request preview</summary>
+                <pre id="redactedPrompt"></pre>
+                <button class="btn secondary" id="copyRedactedPromptBtn" type="button">Copy redacted request</button>
+              </details>
+              <details style="margin-top: 12px; display: none;" id="redactedOutputDetails">
+                <summary>Redacted response preview</summary>
+                <pre id="redactedOutput"></pre>
+                <button class="btn secondary" id="copyRedactedOutputBtn" type="button">Copy redacted response</button>
+              </details>
+              <details style="margin-top: 12px;">
+                <summary>Raw response</summary>
+                <pre id="rawResponse"></pre>
+                <button class="btn secondary" id="copyRawBtn" type="button">Copy raw</button>
+              </details>
+              <details style="margin-top: 12px;">
+                <summary>Activation event</summary>
+                <pre id="activationJson"></pre>
+                <button class="btn secondary" id="copyActivationBtn" type="button">Copy activation</button>
+              </details>
+            </div>
+
+            <div class="card decisions-card">
+              <h2>Decisions</h2>
+              <div class="decision-grid" style="margin-top: 10px;">
+                <div class="decision-card">
+                  <div class="decision-row">
+                    <span class="mini">Request decision</span>
+                    <span class="pill" id="requestDecision">--</span>
+                  </div>
+                  <div class="chips" id="requestCategories"></div>
+                </div>
+                <div class="decision-card">
+                  <div class="decision-row">
+                    <span class="mini">Response decision</span>
+                    <span class="pill" id="responseDecision">--</span>
+                  </div>
+                  <div class="chips" id="responseCategories"></div>
+                  <div class="mini" id="responseNote"></div>
+                </div>
+              </div>
+
+              <h2 style="margin-top: 16px;">Scores</h2>
+              <div class="score-list">
+                <div class="score-row">
+                  <div class="score-label">
+                    <span>Request: Prompt injection</span>
+                    <span id="reqPiScore">--</span>
+                  </div>
+                  <div class="score-bar" id="reqPiBar"></div>
+                </div>
+                <div class="score-row">
+                  <div class="score-label">
+                    <span>Request: Jailbreak</span>
+                    <span id="reqJbScore">--</span>
+                  </div>
+                  <div class="score-bar" id="reqJbBar"></div>
+                </div>
+                <div class="score-row">
+                  <div class="score-label">
+                    <span>Request: PII</span>
+                    <span id="reqPiiScore">--</span>
+                  </div>
+                  <div class="score-bar" id="reqPiiBar"></div>
+                </div>
+                <div class="score-row">
+                  <div class="score-label">
+                    <span>Response: Prompt injection</span>
+                    <span id="respPiScore">--</span>
+                  </div>
+                  <div class="score-bar" id="respPiBar"></div>
+                </div>
+                <div class="score-row">
+                  <div class="score-label">
+                    <span>Response: Jailbreak</span>
+                    <span id="respJbScore">--</span>
+                  </div>
+                  <div class="score-bar" id="respJbBar"></div>
+                </div>
+                <div class="score-row">
+                  <div class="score-label">
+                    <span>Response: PII</span>
+                    <span id="respPiiScore">--</span>
+                  </div>
+                  <div class="score-bar" id="respPiiBar"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
+        </section>
+
+        <section id="view-config" class="view">
+          <div class="card">
+            <div class="row" style="justify-content: space-between; align-items: center;">
+              <div>
+                <h2>Gateway config</h2>
+                <p>Edit the active YAML config. Changes are saved server-side.</p>
+              </div>
+              <div class="row" style="align-items: center;">
+                <div class="config-toggle" role="tablist">
+                  <button type="button" id="visualTab" class="active">Visual</button>
+                  <button type="button" id="yamlTab">YAML</button>
+                </div>
+                <span class="dirty-dot" id="dirtyDot"></span>
+              </div>
+            </div>
+
+            <div class="actions" style="margin-top: 12px;">
+              <button class="btn" id="saveConfigBtn" type="button">Save</button>
+              <button class="btn ghost" id="downloadConfigBtn" type="button">Download YAML</button>
+              <span class="status-line" id="configStatus"></span>
+            </div>
+
+            <div id="visualConfig" style="margin-top: 16px;">
+              <div class="grid-2">
+                <div class="card" style="box-shadow:none;">
+                  <h2>Environment</h2>
+                  <div class="field">
+                    <label>Project</label>
+                    <select id="configProject" disabled>
+                      <option value="">Loading…</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="card" style="box-shadow:none;">
+                  <h2>Forbidden words</h2>
+                  <div class="field">
+                    <label>List</label>
+                    <input id="forbiddenInput" type="text" placeholder="Type a word and press Enter" />
+                  </div>
+                  <div class="chips" id="forbiddenList"></div>
+                </div>
+              </div>
+
+              <div class="grid-2" style="margin-top: 12px;">
+                <div class="card" style="box-shadow:none;">
+                  <h2>Thresholds</h2>
+                  <div class="thresholds">
+                    <div class="threshold-row">
+                      <div class="threshold-title">Prompt injection</div>
+                      <div class="row">
+                        <div class="field">
+                          <label>Warn</label>
+                          <input id="cfgPiWarn" type="number" min="0" max="1" step="0.01" />
+                          <input id="cfgPiWarnRange" type="range" min="0" max="1" step="0.01" />
+                        </div>
+                        <div class="field">
+                          <label>Block</label>
+                          <input id="cfgPiBlock" type="number" min="0" max="1" step="0.01" />
+                          <input id="cfgPiBlockRange" type="range" min="0" max="1" step="0.01" />
+                        </div>
+                      </div>
+                    </div>
+                    <div class="threshold-row">
+                      <div class="threshold-title">Jailbreak</div>
+                      <div class="row">
+                        <div class="field">
+                          <label>Warn</label>
+                          <input id="cfgJbWarn" type="number" min="0" max="1" step="0.01" />
+                          <input id="cfgJbWarnRange" type="range" min="0" max="1" step="0.01" />
+                        </div>
+                        <div class="field">
+                          <label>Block</label>
+                          <input id="cfgJbBlock" type="number" min="0" max="1" step="0.01" />
+                          <input id="cfgJbBlockRange" type="range" min="0" max="1" step="0.01" />
+                        </div>
+                      </div>
+                    </div>
+                    <div class="threshold-row">
+                      <div class="threshold-title">PII</div>
+                      <div class="mini">Scored as 0/1. Threshold adjustment disabled.</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="card" style="box-shadow:none;">
+                  <h2>Actions</h2>
+                  <div class="row">
+                    <div class="field">
+                      <label>Prompt injection</label>
+                      <select id="cfgActionPrompt">
+                        <option value="">(unchanged)</option>
+                        <option value="block">block</option>
+                        <option value="redact">redact</option>
+                        <option value="log">log</option>
+                        <option value="ignore">ignore</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>Jailbreak</label>
+                      <select id="cfgActionJailbreak">
+                        <option value="">(unchanged)</option>
+                        <option value="block">block</option>
+                        <option value="redact">redact</option>
+                        <option value="log">log</option>
+                        <option value="ignore">ignore</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>PII</label>
+                      <select id="cfgActionPii">
+                        <option value="">(unchanged)</option>
+                        <option value="block">block</option>
+                        <option value="redact">redact</option>
+                        <option value="log">log</option>
+                        <option value="ignore">ignore</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="yamlConfig" style="margin-top: 16px; display:none;">
+              <textarea id="yamlEditor" style="width:100%; min-height: 380px; font-family: 'Courier New', monospace;"></textarea>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-requests" class="view">
+          <div class="card">
+            <h2>Recent requests</h2>
+            <p>Session history stored in your browser.</p>
+            <table class="requests-table" style="margin-top: 12px;">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Request ID</th>
+                  <th>Project</th>
+                  <th>Request</th>
+                  <th>Response</th>
+                </tr>
+              </thead>
+              <tbody id="requestsTable"></tbody>
+            </table>
+            <div class="row requests-pagination" style="margin-top: 10px; align-items: center; justify-content: space-between;">
+              <div class="mini" id="requestsPageInfo">Page 1</div>
+              <div class="row" style="gap: 8px;">
+                <button class="btn secondary" id="requestsPrevBtn" type="button">Previous</button>
+                <button class="btn secondary" id="requestsNextBtn" type="button">Next</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="drawer" id="requestDrawer" style="margin-top: 12px;">
+            <h2>Request details</h2>
+            <div class="mini" id="drawerMeta">Select a row to view details.</div>
+            <div class="row" style="margin-top: 10px;">
+              <div class="field" style="flex: 1;">
+                <label>Request preview</label>
+                <pre id="drawerPrompt"></pre>
+              </div>
+              <div class="field" style="flex: 1;">
+                <label>Response preview</label>
+                <pre id="drawerOutput"></pre>
+              </div>
+            </div>
+            <div class="row" style="margin-top: 10px;">
+              <div class="field" style="flex: 1;">
+                <label>Request decision</label>
+                <div class="pill" id="drawerRequestDecision">--</div>
+              </div>
+              <div class="field" style="flex: 1;">
+                <label>Response decision</label>
+                <div class="pill" id="drawerResponseDecision">--</div>
+              </div>
+            </div>
+            <div class="field" style="margin-top: 10px;">
+              <label>Activation JSON</label>
+              <pre id="drawerActivation"></pre>
+              <button class="btn secondary" id="copyDrawerActivationBtn" type="button">Copy activation</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
   </div>
 
-    <script>
-    const gatewayUrlInput = document.getElementById('gatewayUrl');
+  <script>
+    const API_BASE = '/console/api';
+    const STORAGE_KEY = 'strajaConsoleState';
+    const HISTORY_KEY = 'strajaConsoleHistory';
+
+    const navLinks = document.querySelectorAll('.nav a');
+    const views = document.querySelectorAll('.view');
+
+    const gatewayStatus = document.getElementById('gatewayStatus');
+    const intelStatus = document.getElementById('intelStatus');
+    const bundleStatus = document.getElementById('bundleStatus');
+
+    const overviewStatus = document.getElementById('overviewStatus');
+    const overviewIntel = document.getElementById('overviewIntel');
+    const overviewBundle = document.getElementById('overviewBundle');
+    const overviewValidated = document.getElementById('overviewValidated');
+    const summaryTotalPill = document.getElementById('summaryTotalPill');
+    const summaryAllow = document.getElementById('summaryAllow');
+    const summaryRedact = document.getElementById('summaryRedact');
+    const summaryBlock = document.getElementById('summaryBlock');
+    const summaryUnknown = document.getElementById('summaryUnknown');
+
+    const projectSelectTop = document.getElementById('projectSelectTop');
     const projectSelect = document.getElementById('projectSelect');
-    const modelInput = document.getElementById('model');
-    const promptInput = document.getElementById('prompt');
+    const configProject = document.getElementById('configProject');
+
+    const modelInput = document.getElementById('modelInput');
+    const streamToggle = document.getElementById('streamToggle');
+    const promptInput = document.getElementById('promptInput');
     const sendBtn = document.getElementById('sendBtn');
     const stopBtn = document.getElementById('stopBtn');
     const clearBtn = document.getElementById('clearBtn');
-    const streamToggle = document.getElementById('streamToggle');
-    streamToggle.checked = true;
-    const apiKeyInput = document.getElementById('apiKey');
-    const statusEl = document.getElementById('status');
-    const completionJsonEl = document.getElementById('completionJson');
-    const activationJsonEl = document.getElementById('activationJson');
-    const postCheckBanner = document.getElementById('postCheckBanner');
-    const assistantTextEl = document.getElementById('assistantText');
-    const requestStatusLabel = document.getElementById('requestStatusLabel');
-    const responseStatusLabel = document.getElementById('responseStatusLabel');
-    const responseNoteLabel = document.getElementById('responseNoteLabel');
+    const copyCurlBtn = document.getElementById('copyCurlBtn');
+    const statusLine = document.getElementById('statusLine');
+    const statusWarning = document.getElementById('statusWarning');
 
-    const copyAssistantBtn = document.getElementById('copyAssistantBtn');
-    const copyCompletionBtn = document.getElementById('copyCompletionBtn');
+    const assistantOutput = document.getElementById('assistantOutput');
+    const rawResponse = document.getElementById('rawResponse');
+    const activationJson = document.getElementById('activationJson');
+    const requestIdLabel = document.getElementById('requestIdLabel');
+    const redactedPrompt = document.getElementById('redactedPrompt');
+    const redactedOutput = document.getElementById('redactedOutput');
+    const redactedPromptDetails = document.getElementById('redactedPromptDetails');
+    const redactedOutputDetails = document.getElementById('redactedOutputDetails');
+
+    const requestDecision = document.getElementById('requestDecision');
+    const responseDecision = document.getElementById('responseDecision');
+    const requestCategories = document.getElementById('requestCategories');
+    const responseCategories = document.getElementById('responseCategories');
+    const responseNote = document.getElementById('responseNote');
+
+    const scoreEls = {
+      reqPi: { label: document.getElementById('reqPiScore'), bar: document.getElementById('reqPiBar') },
+      reqJb: { label: document.getElementById('reqJbScore'), bar: document.getElementById('reqJbBar') },
+      reqPii: { label: document.getElementById('reqPiiScore'), bar: document.getElementById('reqPiiBar') },
+      respPi: { label: document.getElementById('respPiScore'), bar: document.getElementById('respPiBar') },
+      respJb: { label: document.getElementById('respJbScore'), bar: document.getElementById('respJbBar') },
+      respPii: { label: document.getElementById('respPiiScore'), bar: document.getElementById('respPiiBar') }
+    };
+
+    const piWarn = document.getElementById('piWarn');
+    const piBlock = document.getElementById('piBlock');
+    const jbWarn = document.getElementById('jbWarn');
+    const jbBlock = document.getElementById('jbBlock');
+    const piWarnRange = document.getElementById('piWarnRange');
+    const piBlockRange = document.getElementById('piBlockRange');
+    const jbWarnRange = document.getElementById('jbWarnRange');
+    const jbBlockRange = document.getElementById('jbBlockRange');
+    const applyThresholdsBtn = document.getElementById('applyThresholdsBtn');
+
+    const copyOutputBtn = document.getElementById('copyOutputBtn');
+    const copyRawBtn = document.getElementById('copyRawBtn');
     const copyActivationBtn = document.getElementById('copyActivationBtn');
+    const copyRequestIdBtn = document.getElementById('copyRequestIdBtn');
+    const copyRedactedPromptBtn = document.getElementById('copyRedactedPromptBtn');
+    const copyRedactedOutputBtn = document.getElementById('copyRedactedOutputBtn');
 
-    const STORAGE_KEY = 'strajaConsoleConfig';
+    const visualTab = document.getElementById('visualTab');
+    const yamlTab = document.getElementById('yamlTab');
+    const visualConfig = document.getElementById('visualConfig');
+    const yamlConfig = document.getElementById('yamlConfig');
+    const yamlEditor = document.getElementById('yamlEditor');
+    const dirtyDot = document.getElementById('dirtyDot');
+    const saveConfigBtn = document.getElementById('saveConfigBtn');
+    const downloadConfigBtn = document.getElementById('downloadConfigBtn');
+    const configStatus = document.getElementById('configStatus');
 
-    async function copyFromElement(el) {
-      const text = (el && (el.textContent || el.value || '')).trim();
-      if (!text) {
-        statusEl.textContent = 'Nothing to copy.';
-        statusEl.style.color = '#b91c1c'; // red
-        setTimeout(() => {
-          statusEl.textContent = '';
-          statusEl.style.color = '';
-        }, 3000);
+    const forbiddenInput = document.getElementById('forbiddenInput');
+    const forbiddenList = document.getElementById('forbiddenList');
+    const cfgPiWarn = document.getElementById('cfgPiWarn');
+    const cfgPiBlock = document.getElementById('cfgPiBlock');
+    const cfgJbWarn = document.getElementById('cfgJbWarn');
+    const cfgJbBlock = document.getElementById('cfgJbBlock');
+    const cfgPiWarnRange = document.getElementById('cfgPiWarnRange');
+    const cfgPiBlockRange = document.getElementById('cfgPiBlockRange');
+    const cfgJbWarnRange = document.getElementById('cfgJbWarnRange');
+    const cfgJbBlockRange = document.getElementById('cfgJbBlockRange');
+    const cfgActionPrompt = document.getElementById('cfgActionPrompt');
+    const cfgActionJailbreak = document.getElementById('cfgActionJailbreak');
+    const cfgActionPii = document.getElementById('cfgActionPii');
+
+    const requestsTable = document.getElementById('requestsTable');
+    const drawerMeta = document.getElementById('drawerMeta');
+    const drawerPrompt = document.getElementById('drawerPrompt');
+    const drawerOutput = document.getElementById('drawerOutput');
+    const drawerActivation = document.getElementById('drawerActivation');
+    const drawerRequestDecision = document.getElementById('drawerRequestDecision');
+    const drawerResponseDecision = document.getElementById('drawerResponseDecision');
+    const copyDrawerActivationBtn = document.getElementById('copyDrawerActivationBtn');
+    const requestsPageInfo = document.getElementById('requestsPageInfo');
+    const requestsPrevBtn = document.getElementById('requestsPrevBtn');
+    const requestsNextBtn = document.getElementById('requestsNextBtn');
+
+    const refreshStatusBtn = document.getElementById('refreshStatusBtn');
+
+    let activeController = null;
+    let activationCache = null;
+    let configDraft = '';
+    let configDirty = false;
+    let forbiddenWords = [];
+    let requestsPage = 1;
+    const requestsPageSize = 10;
+
+    const defaultThresholds = {
+      prompt_injection: { warn: 0.6, block: 0.8 },
+      jailbreak: { warn: 0.6, block: 0.8 }
+    };
+
+    function setActiveView(name) {
+      views.forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+      navLinks.forEach(link => link.classList.toggle('active', link.dataset.view === name));
+    }
+
+    function applyHashRoute() {
+      const hash = (window.location.hash || '#playground').replace('#', '');
+      setActiveView(hash || 'playground');
+    }
+
+    function setPill(el, label, tone) {
+      el.textContent = label;
+      el.className = `pill ${tone || ''}`.trim();
+    }
+
+    function colorForDecision(decision) {
+      if (decision === 'block' || decision === 'blocked') return 'red';
+      if (decision === 'redact' || decision === 'redacted') return 'amber';
+      if (decision === 'allow') return 'green';
+      return 'blue';
+    }
+
+    function updateDecision(el, decision) {
+      const text = decision ? decision.replace(/_/g, ' ') : '--';
+      setPill(el, text, colorForDecision(decision));
+    }
+
+    function renderChips(container, items) {
+      container.innerHTML = '';
+      if (!items || items.length === 0) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = 'none';
+        container.appendChild(chip);
         return;
       }
+      items.forEach(item => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = item;
+        container.appendChild(chip);
+      });
+    }
 
+    function renderScore(el, score, thresholds) {
+      if (!el) return;
+      const val = typeof score === 'number' ? score : null;
+      el.label.textContent = val === null ? '--' : val.toFixed(2);
+      el.bar.innerHTML = '';
+      const fill = document.createElement('div');
+      fill.className = 'score-fill';
+      fill.style.width = val === null ? '0%' : `${Math.min(100, Math.max(0, val * 100))}%`;
+      el.bar.appendChild(fill);
+      if (thresholds) {
+        if (typeof thresholds.warn === 'number') {
+          const marker = document.createElement('span');
+          marker.className = 'marker warn';
+          marker.style.left = `${Math.min(100, thresholds.warn * 100)}%`;
+          el.bar.appendChild(marker);
+        }
+        if (typeof thresholds.block === 'number') {
+          const marker = document.createElement('span');
+          marker.className = 'marker block';
+          marker.style.left = `${Math.min(100, thresholds.block * 100)}%`;
+          el.bar.appendChild(marker);
+        }
+      }
+    }
+
+    function clearPlaygroundOutputs() {
+      assistantOutput.textContent = '';
+      rawResponse.textContent = '';
+      activationJson.textContent = '';
+      redactedPrompt.textContent = '';
+      redactedOutput.textContent = '';
+      if (redactedPromptDetails) {
+        redactedPromptDetails.open = false;
+        redactedPromptDetails.style.display = 'none';
+      }
+      if (redactedOutputDetails) {
+        redactedOutputDetails.open = false;
+        redactedOutputDetails.style.display = 'none';
+      }
+      requestIdLabel.textContent = 'Request ID: --';
+      activationCache = null;
+      updateDecision(requestDecision, null);
+      updateDecision(responseDecision, null);
+      responseNote.textContent = '';
+      renderChips(requestCategories, []);
+      renderChips(responseCategories, []);
+      Object.values(scoreEls).forEach(el => renderScore(el, null, null));
+    }
+
+    async function copyText(text, label) {
+      const trimmed = (text || '').trim();
+      if (!trimmed) {
+        statusLine.textContent = 'Nothing to copy.';
+        return;
+      }
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(trimmed);
         } else {
           const tmp = document.createElement('textarea');
-          tmp.value = text;
+          tmp.value = trimmed;
           tmp.style.position = 'fixed';
           tmp.style.left = '-9999px';
           document.body.appendChild(tmp);
@@ -360,51 +1374,39 @@
           document.execCommand('copy');
           document.body.removeChild(tmp);
         }
-
-        statusEl.textContent = 'Copied to clipboard.';
-        statusEl.style.color = '#16a34a'; // green
-        setTimeout(() => {
-          statusEl.textContent = '';
-          statusEl.style.color = '';
-        }, 3000);
+        statusLine.textContent = `${label || 'Copied'} copied.`;
       } catch (err) {
-        console.error('Copy failed', err);
-        statusEl.textContent = 'Copy failed.';
-        statusEl.style.color = '#b91c1c'; // red
-        setTimeout(() => {
-          statusEl.textContent = '';
-          statusEl.style.color = '';
-        }, 3000);
+        statusLine.textContent = 'Copy failed.';
       }
     }
 
-    function loadConfig() {
+    function loadState() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
         const cfg = JSON.parse(raw);
-        if (cfg.baseUrl) gatewayUrlInput.value = cfg.baseUrl;
-        if (cfg.model) modelInput.value = cfg.model;
         if (cfg.projectId) {
-          // we'll select this after projects load
           projectSelect.dataset.selected = cfg.projectId;
+          projectSelectTop.dataset.selected = cfg.projectId;
+        }
+        if (cfg.model) {
+          modelInput.value = cfg.model;
         }
         if (typeof cfg.streaming === 'boolean') {
           streamToggle.checked = cfg.streaming;
+        } else {
+          streamToggle.checked = true;
         }
-        if (cfg.apiKey) {
-          apiKeyInput.value = cfg.apiKey;
-        }
-      } catch (_) {}
+      } catch (_) {
+        streamToggle.checked = true;
+      }
     }
 
-    function saveConfig() {
+    function saveState() {
       const cfg = {
-        baseUrl: gatewayUrlInput.value.trim(),
-        model: modelInput.value.trim(),
         projectId: projectSelect.value,
-        streaming: streamToggle.checked,
-        apiKey: apiKeyInput.value
+        model: modelInput.value,
+        streaming: streamToggle.checked
       };
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
@@ -412,237 +1414,133 @@
     }
 
     async function loadProjects() {
-      const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
       try {
-        const res = await fetch(baseUrl + '/projects');
-        if (!res.ok) {
-          projectSelect.innerHTML = '<option value="">Error loading projects</option>';
-          return;
-        }
+        const res = await fetch(`${API_BASE}/projects`);
+        if (!res.ok) throw new Error('projects failed');
         const projects = await res.json();
+        const storedId = projectSelect.dataset.selected;
+        projectSelect.innerHTML = '';
+        projectSelectTop.innerHTML = '';
+        configProject.innerHTML = '';
         if (!Array.isArray(projects) || projects.length === 0) {
-          projectSelect.innerHTML = '<option value="">No projects in config</option>';
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = 'No projects';
+          projectSelect.appendChild(opt);
+          projectSelectTop.appendChild(opt.cloneNode(true));
+          configProject.appendChild(opt.cloneNode(true));
           return;
         }
-        projectSelect.innerHTML = '';
-        const storedId = projectSelect.dataset.selected;
         projects.forEach(p => {
-          const opt = document.createElement('option');
-          opt.value = p.id;
-          opt.textContent = p.id + (p.provider ? ` (${p.provider})` : '');
-          projectSelect.appendChild(opt);
+          const label = p.provider ? `${p.id} (${p.provider})` : p.id;
+          const opt1 = document.createElement('option');
+          opt1.value = p.id;
+          opt1.textContent = label;
+          projectSelect.appendChild(opt1);
+          const opt2 = document.createElement('option');
+          opt2.value = p.id;
+          opt2.textContent = label;
+          projectSelectTop.appendChild(opt2);
+          const opt3 = document.createElement('option');
+          opt3.value = p.id;
+          opt3.textContent = label;
+          configProject.appendChild(opt3);
         });
         if (storedId) {
-          const found = Array.from(projectSelect.options).some(o => o.value === storedId);
-          if (found) {
-            projectSelect.value = storedId;
-          }
+          projectSelect.value = storedId;
+          projectSelectTop.value = storedId;
+          configProject.value = storedId;
         }
       } catch (err) {
         projectSelect.innerHTML = '<option value="">Error loading projects</option>';
+        projectSelectTop.innerHTML = '<option value="">Error loading projects</option>';
+        configProject.innerHTML = '<option value="">Error loading projects</option>';
       }
     }
 
-    let activeController = null;
-
-    async function sendRequest() {
-      if (streamToggle.checked) {
-        await sendStreamRequest();
-        return;
-      }
-      await sendNonStreamRequest();
-    }
-
-    async function sendNonStreamRequest() {
-      const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
-      const projectId = projectSelect.value;
-      const model = modelInput.value.trim() || 'gpt-4.1-mini';
-      const prompt = promptInput.value.trim();
-
-      if (!projectId) {
-        statusEl.textContent = 'Please select a project.';
-        return;
-      }
-      if (!prompt) {
-        statusEl.textContent = 'Please enter a prompt.';
-        return;
-      }
-
-      saveConfig();
-
-      sendBtn.disabled = true;
-      stopBtn.disabled = true;
-      clearBtn.disabled = true;
-      statusEl.textContent = 'Sending request…';
-      completionJsonEl.textContent = '';
-      activationJsonEl.textContent = '';
-      assistantTextEl.textContent = '';
-      clearStatusLabels();
-
-      const body = {
-        project_id: projectId,
-        model: model,
-        messages: [
-          { role: 'user', content: prompt }
-        ]
-      };
-
+    async function refreshStatus() {
       try {
-        const res = await fetch(baseUrl + '/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(body)
-        });
+        const res = await fetch('/readyz');
+        const data = await res.json();
+        const gateway = data.status || 'unknown';
+        const intel = data.intel_status || 'unknown';
+        const bundle = data.active_bundle_version || 'n/a';
 
-        const text = await res.text();
-        let json;
-        try {
-          json = JSON.parse(text);
-        } catch (_) {
-          completionJsonEl.textContent = text;
-          assistantTextEl.textContent = '';
-        }
+        setPill(gatewayStatus, `Gateway: ${gateway}`, gateway === 'ready' ? 'green' : 'amber');
+        setPill(intelStatus, `Intel: ${intel}`, intel.includes('disabled') ? 'amber' : 'green');
+        setPill(bundleStatus, `Bundle: ${bundle}`, 'blue');
 
-        if (json) {
-          completionJsonEl.textContent = JSON.stringify(json, null, 2);
-
-          const assistantMessage =
-            json.choices &&
-            json.choices[0] &&
-            json.choices[0].message &&
-            json.choices[0].message.content;
-
-          assistantTextEl.textContent = assistantMessage || '(no assistant message found)';
-        }
-
-        applyActivationHeader(res.headers.get('x-straja-activation'));
-
-        statusEl.textContent = `HTTP ${res.status} ${res.statusText}`;
+        overviewStatus.textContent = gateway === 'ready' ? 'Gateway ready for traffic.' : `Gateway status: ${gateway}`;
+        overviewIntel.textContent = intel;
+        overviewBundle.textContent = bundle;
+        overviewValidated.textContent = data.intel_last_validated_at || 'n/a';
       } catch (err) {
-        statusEl.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
-        completionJsonEl.textContent = '';
-        activationJsonEl.textContent = '';
-        assistantTextEl.textContent = '';
-
-        clearStatusLabels();
-      } finally {
-        sendBtn.disabled = false;
-        stopBtn.disabled = true;
-        clearBtn.disabled = false;
+        setPill(gatewayStatus, 'Gateway: offline', 'red');
+        setPill(intelStatus, 'Intel: offline', 'red');
+        setPill(bundleStatus, 'Bundle: --', 'blue');
+        overviewStatus.textContent = 'Unable to reach /readyz.';
       }
     }
 
-    async function sendStreamRequest() {
-      const baseUrl = gatewayUrlInput.value.trim() || '/console/api';
-      const projectId = projectSelect.value;
-      const model = modelInput.value.trim() || 'gpt-4.1-mini';
-      const prompt = promptInput.value.trim();
-
-      if (!projectId) {
-        statusEl.textContent = 'Please select a project.';
-        return;
-      }
-      if (!prompt) {
-        statusEl.textContent = 'Please enter a prompt.';
-        return;
-      }
-
-      saveConfig();
-
-      sendBtn.disabled = true;
-      stopBtn.disabled = false;
-      clearBtn.disabled = true;
-      statusEl.textContent = 'Streaming…';
-      completionJsonEl.textContent = '';
-      activationJsonEl.textContent = '';
-      assistantTextEl.textContent = '';
-      clearStatusLabels();
-
-      const body = {
-        project_id: projectId,
-        model: model,
-        stream: true,
-        messages: [
-          { role: 'user', content: prompt }
-        ]
+    function buildRequestBody() {
+      return {
+        project_id: projectSelect.value,
+        model: modelInput.value,
+        messages: [{ role: 'user', content: promptInput.value.trim() }]
       };
+    }
 
-      const controller = new AbortController();
-      activeController = controller;
+    function applyActivationObject(actJson) {
+      activationCache = actJson;
+      activationJson.textContent = actJson ? JSON.stringify(actJson, null, 2) : '';
 
-      let rawSSE = '';
-      let assistantText = '';
+      const summary = actJson && actJson.summary ? actJson.summary : {};
+      updateDecision(requestDecision, summary.request_final);
+      updateDecision(responseDecision, summary.response_final);
+      responseNote.textContent = summary.response_note ? `Note: ${summary.response_note.replace(/_/g, ' ')}` : '';
 
-      try {
-        const res = await fetch(baseUrl + '/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream'
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal
-        });
+      const reqCats = actJson?.request?.decision?.reason_categories || [];
+      const respCats = actJson?.response?.decision?.reason_categories || [];
+      renderChips(requestCategories, reqCats);
+      renderChips(responseCategories, respCats);
 
-        applyActivationHeader(res.headers.get('x-straja-activation'));
+      const redactedPromptText = actJson?.request?.preview?.prompt || '';
+      const redactedOutputText = actJson?.response?.preview?.output || '';
+      redactedPrompt.textContent = redactedPromptText || '(no redacted request preview)';
+      redactedOutput.textContent = redactedOutputText || '(no redacted response preview)';
+      if (redactedPromptDetails) {
+        const showPrompt = summary.request_final === 'redact';
+        redactedPromptDetails.open = false;
+        redactedPromptDetails.style.display = showPrompt ? 'block' : 'none';
+      }
+      if (redactedOutputDetails) {
+        const showOutput = summary.response_final === 'redact';
+        redactedOutputDetails.open = false;
+        redactedOutputDetails.style.display = showOutput ? 'block' : 'none';
+      }
 
-        if (!res.ok || !res.body) {
-          const errText = await res.text();
-          statusEl.textContent = `HTTP ${res.status} ${res.statusText}`;
-          completionJsonEl.textContent = errText;
-          stopBtn.disabled = true;
-          return;
-        }
+      const thresholds = actJson?.intel?.thresholds || {};
+      const reqScores = actJson?.request?.scores || {};
+      const respScores = actJson?.response?.scores || {};
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
-        let done = false;
+      renderScore(scoreEls.reqPi, reqScores.prompt_injection, thresholds.prompt_injection || defaultThresholds.prompt_injection);
+      renderScore(scoreEls.reqJb, reqScores.jailbreak, thresholds.jailbreak || defaultThresholds.jailbreak);
+      renderScore(scoreEls.reqPii, reqScores.contains_personal_data, thresholds.pii ? { warn: thresholds.pii } : null);
+      renderScore(scoreEls.respPi, respScores.prompt_injection, thresholds.prompt_injection || defaultThresholds.prompt_injection);
+      renderScore(scoreEls.respJb, respScores.jailbreak, thresholds.jailbreak || defaultThresholds.jailbreak);
+      renderScore(scoreEls.respPii, respScores.contains_personal_data, thresholds.pii ? { warn: thresholds.pii } : null);
 
-        while (!done) {
-          const { value, done: readDone } = await reader.read();
-          done = readDone;
-          if (value) {
-            buffer += decoder.decode(value, { stream: true });
-            let idx;
-            while ((idx = buffer.indexOf('\n\n')) !== -1) {
-              const chunk = buffer.slice(0, idx);
-              buffer = buffer.slice(idx + 2);
-              if (!chunk.trim()) {
-                continue;
-              }
-              rawSSE += chunk + '\n\n';
-              const parsed = parseSSEEvent(chunk);
-              const delta = extractDeltaFromSSE(parsed);
-              if (delta) {
-                assistantText += delta;
-                assistantTextEl.textContent = assistantText;
-              }
-              completionJsonEl.textContent = rawSSE;
-            }
-          }
-        }
-
-        statusEl.textContent = 'Streaming complete';
-        const reqId = res.headers.get('x-straja-request-id');
-        if (reqId) {
-          await fetchRequestStatus(reqId);
-        } else {
-          statusEl.textContent = 'Streaming complete (no request id)';
-        }
-      } catch (err) {
-        if (err && err.name === 'AbortError') {
-          statusEl.textContent = 'Streaming stopped';
-        } else {
-          statusEl.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
-        }
-      } finally {
-        sendBtn.disabled = false;
-        stopBtn.disabled = true;
-        clearBtn.disabled = false;
-        activeController = null;
+      if (thresholds.prompt_injection) {
+        piWarn.value = thresholds.prompt_injection.warn ?? defaultThresholds.prompt_injection.warn;
+        piBlock.value = thresholds.prompt_injection.block ?? defaultThresholds.prompt_injection.block;
+        piWarnRange.value = piWarn.value;
+        piBlockRange.value = piBlock.value;
+      }
+      if (thresholds.jailbreak) {
+        jbWarn.value = thresholds.jailbreak.warn ?? defaultThresholds.jailbreak.warn;
+        jbBlock.value = thresholds.jailbreak.block ?? defaultThresholds.jailbreak.block;
+        jbWarnRange.value = jbWarn.value;
+        jbBlockRange.value = jbBlock.value;
       }
     }
 
@@ -661,192 +1559,762 @@
     }
 
     function extractDeltaFromSSE(parsed) {
-      if (!parsed || !parsed.data) return '';
-      const data = parsed.data;
-      if (data === '[DONE]') return '';
+      if (!parsed || !parsed.data) return null;
+      if (parsed.data === '[DONE]') return null;
       try {
-        const obj = JSON.parse(data);
+        const obj = JSON.parse(parsed.data);
         if (obj && typeof obj === 'object') {
-          if (typeof obj.delta === 'string') return obj.delta;
-          if (typeof obj.text === 'string') return obj.text;
-          if (typeof obj.output_text === 'string') return obj.output_text;
-          if (obj.delta && typeof obj.delta.text === 'string') return obj.delta.text;
+          if (parsed.event === 'response.output_text.delta') {
+            if (typeof obj.delta === 'string') return { text: obj.delta, mode: 'delta' };
+          }
+          if (parsed.event === 'response.output_text.done' && typeof obj.text === 'string') {
+            return { text: obj.text, mode: 'full' };
+          }
+          if (parsed.event === 'response.content_part.done' && obj.part && typeof obj.part.text === 'string') {
+            return { text: obj.part.text, mode: 'full' };
+          }
+          if (parsed.event === 'response.output_item.done') {
+            const content = obj.item && Array.isArray(obj.item.content) ? obj.item.content : [];
+            const textPart = content.find(part => part && part.type === 'output_text');
+            if (textPart && typeof textPart.text === 'string') return { text: textPart.text, mode: 'full' };
+          }
+          if (parsed.event === 'response.completed') {
+            const output = obj.response && Array.isArray(obj.response.output) ? obj.response.output : [];
+            const msg = output.find(item => item && item.type === 'message');
+            const content = msg && Array.isArray(msg.content) ? msg.content : [];
+            const textPart = content.find(part => part && part.type === 'output_text');
+            if (textPart && typeof textPart.text === 'string') return { text: textPart.text, mode: 'full' };
+          }
         }
       } catch (_) {
-        return '';
+        return null;
+      }
+      return null;
+    }
+
+    async function sendRequest() {
+      const prompt = promptInput.value.trim();
+      if (!projectSelect.value) {
+        statusLine.textContent = 'Select a project first.';
+        return;
+      }
+      if (!prompt) {
+      statusLine.textContent = 'Enter a request.';
+        return;
+      }
+
+      saveState();
+      statusWarning.style.display = 'none';
+      clearPlaygroundOutputs();
+
+      sendBtn.disabled = true;
+      clearBtn.disabled = true;
+      stopBtn.disabled = !streamToggle.checked;
+
+      if (streamToggle.checked) {
+        await sendStreamRequest();
+      } else {
+        await sendNonStreamRequest();
+      }
+
+      sendBtn.disabled = false;
+      clearBtn.disabled = false;
+      stopBtn.disabled = true;
+    }
+
+    async function sendNonStreamRequest() {
+      statusLine.textContent = 'Sending request…';
+      const body = buildRequestBody();
+      try {
+        const res = await fetch(`${API_BASE}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const requestId = res.headers.get('x-straja-request-id');
+        if (requestId) requestIdLabel.textContent = `Request ID: ${requestId}`;
+
+        const text = await res.text();
+        rawResponse.textContent = text;
+        let json = null;
+        try { json = JSON.parse(text); } catch (_) {}
+        if (json && json.choices && json.choices[0] && json.choices[0].message) {
+          assistantOutput.textContent = json.choices[0].message.content || '';
+        }
+
+        const activationHeader = res.headers.get('x-straja-activation');
+        if (activationHeader) {
+          try {
+            applyActivationObject(JSON.parse(activationHeader));
+          } catch (_) {
+            activationJson.textContent = activationHeader;
+          }
+        }
+
+        statusLine.textContent = `HTTP ${res.status} ${res.statusText}`;
+        storeHistoryEntry({ requestId, prompt, output: assistantOutput.textContent, activation: activationCache });
+      } catch (err) {
+        statusLine.textContent = `Error: ${err.message || err}`;
+      }
+    }
+
+    async function sendStreamRequest() {
+      statusLine.textContent = 'Streaming…';
+      const body = { ...buildRequestBody(), stream: true };
+      const controller = new AbortController();
+      activeController = controller;
+      let rawSSE = '';
+      let assistantText = '';
+      let lastFullText = '';
+      let finalized = false;
+      try {
+        const res = await fetch(`${API_BASE}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+
+        const requestId = res.headers.get('x-straja-request-id');
+        if (requestId) requestIdLabel.textContent = `Request ID: ${requestId}`;
+
+        const activationHeader = res.headers.get('x-straja-activation');
+        if (activationHeader) {
+          try { applyActivationObject(JSON.parse(activationHeader)); } catch (_) {}
+        }
+
+        if (!res.ok || !res.body) {
+          rawResponse.textContent = await res.text();
+          statusLine.textContent = `HTTP ${res.status} ${res.statusText}`;
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let done = false;
+
+        while (!done) {
+          const { value, done: readDone } = await reader.read();
+          done = readDone;
+          if (value) {
+            buffer += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buffer.indexOf('\n\n')) !== -1) {
+              const chunk = buffer.slice(0, idx);
+              buffer = buffer.slice(idx + 2);
+              if (!chunk.trim()) continue;
+              rawSSE += chunk + '\n\n';
+              const parsed = parseSSEEvent(chunk);
+              const delta = extractDeltaFromSSE(parsed);
+              if (delta && delta.text) {
+                if (delta.mode === 'full') {
+                  if (!finalized || delta.text.length >= assistantText.length) {
+                    assistantText = delta.text;
+                    lastFullText = assistantText;
+                    finalized = true;
+                  }
+                } else {
+                  if (finalized) {
+                    // Ignore late deltas after a full snapshot.
+                  } else {
+                    const maybeFull = delta.text.length > assistantText.length && delta.text.startsWith(assistantText);
+                    if (maybeFull) {
+                      assistantText = delta.text;
+                      lastFullText = assistantText;
+                    } else if (lastFullText && assistantText === lastFullText && lastFullText.endsWith(delta.text)) {
+                    // Skip duplicate delta when a full snapshot already included it.
+                    } else {
+                      assistantText += delta.text;
+                    }
+                  }
+                }
+                assistantOutput.textContent = assistantText;
+              }
+              rawResponse.textContent = rawSSE;
+            }
+          }
+        }
+
+        statusLine.textContent = 'Streaming complete.';
+        if (requestId) {
+          await fetchRequestStatus(requestId, promptInput.value.trim(), assistantText);
+        } else {
+          statusLine.textContent = 'Streaming complete (no request id).';
+        }
+      } catch (err) {
+        if (err && err.name === 'AbortError') {
+          statusLine.textContent = 'Streaming stopped.';
+        } else {
+          statusLine.textContent = `Error: ${err.message || err}`;
+        }
+      } finally {
+        activeController = null;
+      }
+    }
+
+    async function fetchRequestStatus(requestId, prompt, output) {
+      const projectId = projectSelect.value;
+      try {
+        const res = await fetch(`${API_BASE}/requests/${encodeURIComponent(requestId)}?project_id=${encodeURIComponent(projectId)}`);
+        if (!res.ok) throw new Error('status failed');
+        const data = await res.json();
+        if (data.status === 'completed' && data.activation) {
+          applyActivationObject(data.activation);
+          storeHistoryEntry({ requestId, prompt, output, activation: data.activation });
+          return;
+        }
+        statusWarning.textContent = 'Request status pending; activation not available yet.';
+        statusWarning.style.display = 'block';
+      } catch (err) {
+        statusWarning.textContent = 'Failed to fetch activation for streamed request.';
+        statusWarning.style.display = 'block';
+      }
+    }
+
+    function storeHistoryEntry(entry) {
+      if (!entry || !entry.requestId) return;
+      const history = getHistory();
+      history.unshift({
+        requestId: entry.requestId,
+        projectId: projectSelect.value,
+        model: modelInput.value,
+        prompt: entry.prompt || '',
+        output: entry.output || '',
+        activation: entry.activation || null,
+        ts: Date.now()
+      });
+      const trimmed = history.slice(0, 30);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+      requestsPage = 1;
+      renderHistory();
+    }
+
+    function getHistory() {
+      try {
+        const raw = localStorage.getItem(HISTORY_KEY);
+        if (!raw) return [];
+        return JSON.parse(raw) || [];
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function renderHistory() {
+      const history = getHistory();
+      requestsTable.innerHTML = '';
+      const totalPages = Math.max(1, Math.ceil(history.length / requestsPageSize));
+      if (requestsPage > totalPages) requestsPage = totalPages;
+      if (requestsPage < 1) requestsPage = 1;
+      const start = (requestsPage - 1) * requestsPageSize;
+      const pageItems = history.slice(start, start + requestsPageSize);
+      if (history.length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td colspan="5">No requests yet.</td>';
+        requestsTable.appendChild(row);
+        if (requestsPageInfo) requestsPageInfo.textContent = 'Page 1';
+        if (requestsPrevBtn) requestsPrevBtn.disabled = true;
+        if (requestsNextBtn) requestsNextBtn.disabled = true;
+        return;
+      }
+      pageItems.forEach(entry => {
+        const row = document.createElement('tr');
+        row.dataset.requestId = entry.requestId;
+        const date = new Date(entry.ts || Date.now()).toLocaleTimeString();
+        const reqDecision = entry.activation?.summary?.request_final || '--';
+        const respDecision = entry.activation?.summary?.response_final || '--';
+        row.innerHTML = `
+          <td data-label="Time">${date}</td>
+          <td data-label="Request ID">${entry.requestId}</td>
+          <td data-label="Project">${entry.projectId || '--'}</td>
+          <td data-label="Request">${reqDecision}</td>
+          <td data-label="Response">${respDecision}</td>
+        `;
+        row.addEventListener('click', () => showHistory(entry));
+        requestsTable.appendChild(row);
+      });
+      if (requestsPageInfo) requestsPageInfo.textContent = `Page ${requestsPage} of ${totalPages}`;
+      if (requestsPrevBtn) requestsPrevBtn.disabled = requestsPage <= 1;
+      if (requestsNextBtn) requestsNextBtn.disabled = requestsPage >= totalPages;
+      renderSummary();
+    }
+
+    function renderSummary() {
+      const history = getHistory();
+      let allow = 0;
+      let redact = 0;
+      let block = 0;
+      let unknown = 0;
+      history.forEach(entry => {
+        const decision = entry.activation?.summary?.request_final || entry.activation?.summary?.response_final || '';
+        if (decision === 'allow') allow += 1;
+        else if (decision === 'redact' || decision === 'redacted') redact += 1;
+        else if (decision === 'block' || decision === 'blocked') block += 1;
+        else unknown += 1;
+      });
+      const total = history.length;
+      if (summaryTotalPill) summaryTotalPill.textContent = `Total: ${total}`;
+      if (summaryAllow) summaryAllow.textContent = String(allow);
+      if (summaryRedact) summaryRedact.textContent = String(redact);
+      if (summaryBlock) summaryBlock.textContent = String(block);
+      if (summaryUnknown) summaryUnknown.textContent = String(unknown);
+    }
+
+    function showHistory(entry) {
+      Array.from(requestsTable.querySelectorAll('tr')).forEach(tr => tr.classList.remove('active'));
+      const activeRow = requestsTable.querySelector(`tr[data-request-id="${entry.requestId}"]`);
+      if (activeRow) activeRow.classList.add('active');
+      drawerMeta.textContent = `${entry.requestId} • ${entry.projectId || '--'} • ${entry.model || '--'}`;
+      drawerPrompt.textContent = entry.prompt || '';
+      drawerOutput.textContent = entry.output || '';
+      drawerActivation.textContent = entry.activation ? JSON.stringify(entry.activation, null, 2) : '(no activation)';
+      if (drawerRequestDecision) {
+        const reqDecision = entry.activation?.summary?.request_final || '--';
+        updateDecision(drawerRequestDecision, reqDecision);
+      }
+      if (drawerResponseDecision) {
+        const respDecision = entry.activation?.summary?.response_final || '--';
+        updateDecision(drawerResponseDecision, respDecision);
+      }
+    }
+
+    function setDirty(isDirty) {
+      configDirty = isDirty;
+      dirtyDot.classList.toggle('active', isDirty);
+    }
+
+    function switchConfigMode(mode) {
+      const visual = mode === 'visual';
+      visualTab.classList.toggle('active', visual);
+      yamlTab.classList.toggle('active', !visual);
+      visualConfig.style.display = visual ? 'block' : 'none';
+      yamlConfig.style.display = visual ? 'none' : 'block';
+    }
+
+    function normalizeYamlLines(yaml) {
+      return yaml.split(/\r?\n/);
+    }
+
+    function findSection(lines, path) {
+      let start = 0;
+      let indent = -1;
+      for (const key of path) {
+        let found = false;
+        for (let i = start; i < lines.length; i += 1) {
+          const line = lines[i];
+          if (!line.trim() || line.trim().startsWith('#')) continue;
+          const match = line.match(/^(\s*)([^:]+):\s*(.*)$/);
+          if (!match) continue;
+          const lineIndent = match[1].length;
+          const lineKey = match[2].trim();
+          if (lineIndent <= indent) continue;
+          if (lineKey === key) {
+            indent = lineIndent;
+            start = i + 1;
+            found = true;
+            break;
+          }
+        }
+        if (!found) return null;
+      }
+      return { start, indent };
+    }
+
+    function readScalar(lines, path) {
+      if (path.length === 0) return '';
+      const parent = findSection(lines, path.slice(0, -1));
+      const targetKey = path[path.length - 1];
+      const startIndex = parent ? parent.start : 0;
+      const minIndent = parent ? parent.indent : -1;
+      for (let i = startIndex; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+        const match = line.match(/^(\s*)([^:]+):\s*(.*)$/);
+        if (!match) continue;
+        const indent = match[1].length;
+        const key = match[2].trim();
+        const value = match[3].trim();
+        if (indent <= minIndent) break;
+        if (key === targetKey) return value.replace(/['"]/g, '');
       }
       return '';
     }
 
-    function clearStatusLabels() {
-      if (requestStatusLabel) {
-        requestStatusLabel.style.display = 'none';
-        requestStatusLabel.textContent = '';
+    function readList(lines, path) {
+      const section = findSection(lines, path);
+      if (!section) return [];
+      const items = [];
+      for (let i = section.start; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+        const indent = line.match(/^(\s*)/)[1].length;
+        if (indent <= section.indent) break;
+        const itemMatch = line.match(/^-\s*(.+)$/) || line.trim().match(/^-\s*(.+)$/);
+        if (itemMatch) items.push(itemMatch[1].trim());
       }
-      if (responseStatusLabel) {
-        responseStatusLabel.style.display = 'none';
-        responseStatusLabel.textContent = '';
-      }
-      if (responseNoteLabel) {
-        responseNoteLabel.style.display = 'none';
-        responseNoteLabel.textContent = '';
-      }
+      return items;
     }
 
-    function mapStatusLabel(status) {
-      if (status === 'redact') return 'redacted';
-      if (status === 'block') return 'blocked';
-      return 'allow';
-    }
-
-    function styleStatusLabel(el, status) {
-      if (!el) return;
-      if (status === 'block') {
-        el.style.background = '#fee2e2';
-        el.style.border = '1px solid #fecaca';
-        el.style.color = '#b91c1c';
-      } else if (status === 'allow') {
-        el.style.background = '#dcfce7';
-        el.style.border = '1px solid #bbf7d0';
-        el.style.color = '#166534';
-      } else if (status === 'redact') {
-        el.style.background = '#fef9c3';
-        el.style.border = '1px solid #fef08a';
-        el.style.color = '#854d0e';
-      } else {
-        el.style.background = '#e5e7eb';
-        el.style.border = '1px solid #d1d5db';
-        el.style.color = '#374151';
+    function upsertScalar(lines, path, value) {
+      const parent = findSection(lines, path.slice(0, -1));
+      const targetKey = path[path.length - 1];
+      if (!parent) {
+        let indent = 0;
+        for (let i = 0; i < path.length - 1; i += 1) {
+          lines.push(`${' '.repeat(indent)}${path[i]}:`);
+          indent += 2;
+        }
+        lines.push(`${' '.repeat(indent)}${targetKey}: ${value}`);
+        return lines;
       }
-    }
-
-    function applySummaryLabels(summary) {
-      if (!summary) return;
-      const reqFinal = summary.request_final ? String(summary.request_final) : '';
-      const respFinal = summary.response_final ? String(summary.response_final) : '';
-      const respNote = summary.response_note ? String(summary.response_note) : '';
-
-      if (requestStatusLabel && reqFinal) {
-        requestStatusLabel.textContent = `Request: ${mapStatusLabel(reqFinal)}`;
-        requestStatusLabel.style.display = 'inline-block';
-        styleStatusLabel(requestStatusLabel, reqFinal);
-      }
-      if (responseStatusLabel && respFinal) {
-        responseStatusLabel.textContent = `Response: ${mapStatusLabel(respFinal)}`;
-        responseStatusLabel.style.display = 'inline-block';
-        styleStatusLabel(responseStatusLabel, respFinal);
-      }
-      if (responseNoteLabel && respNote) {
-        const noteText = respNote.replace(/_/g, ' ');
-        responseNoteLabel.textContent = `Note: ${noteText}`;
-        responseNoteLabel.style.display = 'inline-block';
-      }
-    }
-
-    function applyActivationObject(actJson) {
-      if (!actJson) return;
-      activationJsonEl.textContent = JSON.stringify(actJson, null, 2);
-      clearStatusLabels();
-      if (actJson.summary) {
-        applySummaryLabels(actJson.summary);
-      }
-    }
-
-    function resolveGatewayBase() {
-      const base = gatewayUrlInput.value.trim();
-      if (!base || base === '/console/api') {
-        return '';
-      }
-      if (base.endsWith('/console/api')) {
-        return base.slice(0, -'/console/api'.length);
-      }
-      return base;
-    }
-
-    async function fetchRequestStatus(requestId) {
-      const base = resolveGatewayBase();
-      const projectId = projectSelect.value;
-      let url = '';
-      let headers = {};
-      const apiKey = apiKeyInput.value.trim();
-      if (apiKey) {
-        url = `${base}/v1/straja/requests/${encodeURIComponent(requestId)}`;
-        headers = { 'Authorization': `Bearer ${apiKey}` };
-      } else {
-        url = `${base}/console/api/requests/${encodeURIComponent(requestId)}?project_id=${encodeURIComponent(projectId)}`;
-      }
-      for (let i = 0; i < 20; i += 1) {
-        try {
-          const res = await fetch(url, {
-            headers
-          });
-          if (res.status === 404) {
-            statusEl.textContent = 'Request status not found.';
-            return;
-          }
-          const data = await res.json();
-          if (data && data.status === 'completed' && data.activation) {
-            applyActivationObject(data.activation);
-            return;
-          }
-          if (data && data.status === 'pending') {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            continue;
-          }
-          statusEl.textContent = 'Unexpected request status response.';
-          return;
-        } catch (err) {
-          statusEl.textContent = 'Status check failed.';
-          return;
+      const insertIndent = parent.indent + 2;
+      const startIndex = parent.start;
+      const minIndent = parent.indent;
+      for (let i = startIndex; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+        const match = line.match(/^(\s*)([^:]+):\s*(.*)$/);
+        if (!match) continue;
+        const indent = match[1].length;
+        const key = match[2].trim();
+        if (indent <= minIndent) break;
+        if (key === targetKey) {
+          lines[i] = `${' '.repeat(indent)}${targetKey}: ${value}`;
+          return lines;
         }
       }
-      statusEl.textContent = 'Request status still pending.';
+      if (!parent) {
+        return lines;
+      }
+      lines.splice(startIndex, 0, `${' '.repeat(insertIndent)}${targetKey}: ${value}`);
+      return lines;
     }
 
-    function applyActivationHeader(activationHeader) {
-      clearStatusLabels();
-
-      if (activationHeader) {
-        try {
-          const actJson = JSON.parse(activationHeader);
-          applyActivationObject(actJson);
-        } catch (_) {
-          activationJsonEl.textContent = activationHeader;
+    function upsertList(lines, path, items) {
+      const section = findSection(lines, path);
+      const baseIndent = section ? section.indent : null;
+      const listIndent = baseIndent === null ? 0 : baseIndent + 2;
+      const listKey = path[path.length - 1];
+      if (!section) {
+        const parent = findSection(lines, path.slice(0, -1));
+        if (!parent) {
+          lines.push(`${' '.repeat(0)}${path[0]}:`);
+          lines.push(`${' '.repeat(2)}${listKey}:`);
+          items.forEach(item => lines.push(`${' '.repeat(4)}- ${item}`));
+          return lines;
         }
-      } else {
-        activationJsonEl.textContent = '(no activation header present)';
+        lines.splice(parent.start, 0, `${' '.repeat(parent.indent + 2)}${listKey}:`);
+        items.forEach((item, idx) => {
+          lines.splice(parent.start + 1 + idx, 0, `${' '.repeat(parent.indent + 4)}- ${item}`);
+        });
+        return lines;
+      }
+
+      let end = section.start;
+      while (end < lines.length) {
+        const line = lines[end];
+        if (!line.trim() || line.trim().startsWith('#')) { end += 1; continue; }
+        const indent = line.match(/^(\s*)/)[1].length;
+        if (indent <= baseIndent) break;
+        end += 1;
+      }
+      lines.splice(section.start, end - section.start, ...items.map(item => `${' '.repeat(listIndent)}- ${item}`));
+      return lines;
+    }
+
+    function loadConfigToVisual() {
+      const lines = normalizeYamlLines(configDraft);
+      forbiddenWords = readList(lines, ['policy', 'banned_words_list']);
+      renderForbiddenWords();
+
+      cfgPiWarn.value = readScalar(lines, ['security', 'prompt_injection', 'ml_warn_threshold']) || defaultThresholds.prompt_injection.warn;
+      cfgPiBlock.value = readScalar(lines, ['security', 'prompt_injection', 'ml_block_threshold']) || defaultThresholds.prompt_injection.block;
+      cfgJbWarn.value = readScalar(lines, ['security', 'jailbreak', 'ml_warn_threshold']) || defaultThresholds.jailbreak.warn;
+      cfgJbBlock.value = readScalar(lines, ['security', 'jailbreak', 'ml_block_threshold']) || defaultThresholds.jailbreak.block;
+      cfgPiWarnRange.value = cfgPiWarn.value;
+      cfgPiBlockRange.value = cfgPiBlock.value;
+      cfgJbWarnRange.value = cfgJbWarn.value;
+      cfgJbBlockRange.value = cfgJbBlock.value;
+
+      cfgActionPrompt.value = readScalar(lines, ['policy', 'prompt_injection']);
+      cfgActionJailbreak.value = readScalar(lines, ['policy', 'jailbreak']);
+      cfgActionPii.value = readScalar(lines, ['policy', 'pii']);
+
+      syncPlaygroundThresholdsFromConfig();
+    }
+
+    function renderForbiddenWords() {
+      forbiddenList.innerHTML = '';
+      if (forbiddenWords.length === 0) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = 'none';
+        forbiddenList.appendChild(chip);
+        return;
+      }
+      forbiddenWords.forEach(word => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = word;
+        chip.addEventListener('click', () => {
+          forbiddenWords = forbiddenWords.filter(w => w !== word);
+          renderForbiddenWords();
+          setDirty(true);
+        });
+        forbiddenList.appendChild(chip);
+      });
+    }
+
+    function applyVisualToYaml() {
+      let lines = normalizeYamlLines(configDraft || '');
+      lines = upsertList(lines, ['policy', 'banned_words_list'], forbiddenWords);
+      lines = upsertScalar(lines, ['security', 'prompt_injection', 'ml_warn_threshold'], cfgPiWarn.value || defaultThresholds.prompt_injection.warn);
+      lines = upsertScalar(lines, ['security', 'prompt_injection', 'ml_block_threshold'], cfgPiBlock.value || defaultThresholds.prompt_injection.block);
+      lines = upsertScalar(lines, ['security', 'jailbreak', 'ml_warn_threshold'], cfgJbWarn.value || defaultThresholds.jailbreak.warn);
+      lines = upsertScalar(lines, ['security', 'jailbreak', 'ml_block_threshold'], cfgJbBlock.value || defaultThresholds.jailbreak.block);
+      if (cfgActionPrompt.value) lines = upsertScalar(lines, ['policy', 'prompt_injection'], cfgActionPrompt.value);
+      if (cfgActionJailbreak.value) lines = upsertScalar(lines, ['policy', 'jailbreak'], cfgActionJailbreak.value);
+      if (cfgActionPii.value) lines = upsertScalar(lines, ['policy', 'pii'], cfgActionPii.value);
+      configDraft = lines.join('\n');
+      yamlEditor.value = configDraft;
+    }
+
+    async function fetchConfig() {
+      try {
+        const res = await fetch(`${API_BASE}/config`);
+        if (!res.ok) throw new Error('config fetch failed');
+        configDraft = await res.text();
+        yamlEditor.value = configDraft;
+        loadConfigToVisual();
+        setDirty(false);
+        configStatus.textContent = 'Config loaded.';
+      } catch (err) {
+        configDraft = '';
+        yamlEditor.value = '';
+        configStatus.textContent = 'Config endpoint not available.';
       }
     }
 
-    function clearAll() {
-      promptInput.value = '';
-      completionJsonEl.textContent = '';
-      activationJsonEl.textContent = '';
-      assistantTextEl.textContent = '';
-      statusEl.textContent = '';
-      clearStatusLabels();
+    async function saveConfig() {
+      if (visualConfig.style.display !== 'none') {
+        applyVisualToYaml();
+      } else {
+        configDraft = yamlEditor.value || '';
+      }
+      if (!configDraft.trim()) {
+        configStatus.textContent = 'Config is empty.';
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/yaml' },
+          body: configDraft
+        });
+        if (!res.ok) {
+          const msg = await res.text();
+          configStatus.textContent = `Save failed: ${msg}`;
+          return;
+        }
+        setDirty(false);
+        configStatus.textContent = 'Saved. Restart gateway to apply changes.';
+      } catch (err) {
+        configStatus.textContent = 'Save failed.';
+      }
     }
 
+    function downloadConfig() {
+      const blob = new Blob([configDraft || yamlEditor.value || ''], { type: 'text/yaml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'straja.yaml';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function setThresholdInputsFromActivation() {
+      piWarn.value = defaultThresholds.prompt_injection.warn;
+      piBlock.value = defaultThresholds.prompt_injection.block;
+      jbWarn.value = defaultThresholds.jailbreak.warn;
+      jbBlock.value = defaultThresholds.jailbreak.block;
+      piWarnRange.value = piWarn.value;
+      piBlockRange.value = piBlock.value;
+      jbWarnRange.value = jbWarn.value;
+      jbBlockRange.value = jbBlock.value;
+    }
+
+    function applyThresholdsToConfig() {
+      cfgPiWarn.value = piWarn.value || cfgPiWarn.value;
+      cfgPiBlock.value = piBlock.value || cfgPiBlock.value;
+      cfgJbWarn.value = jbWarn.value || cfgJbWarn.value;
+      cfgJbBlock.value = jbBlock.value || cfgJbBlock.value;
+      syncConfigRangesFromInputs();
+      setDirty(true);
+    }
+
+    function syncPlaygroundThresholdsFromConfig() {
+      piWarn.value = cfgPiWarn.value || defaultThresholds.prompt_injection.warn;
+      piBlock.value = cfgPiBlock.value || defaultThresholds.prompt_injection.block;
+      jbWarn.value = cfgJbWarn.value || defaultThresholds.jailbreak.warn;
+      jbBlock.value = cfgJbBlock.value || defaultThresholds.jailbreak.block;
+      piWarnRange.value = piWarn.value;
+      piBlockRange.value = piBlock.value;
+      jbWarnRange.value = jbWarn.value;
+      jbBlockRange.value = jbBlock.value;
+    }
+
+    function syncConfigRangesFromInputs() {
+      cfgPiWarnRange.value = cfgPiWarn.value;
+      cfgPiBlockRange.value = cfgPiBlock.value;
+      cfgJbWarnRange.value = cfgJbWarn.value;
+      cfgJbBlockRange.value = cfgJbBlock.value;
+    }
+
+    function setupNavigation() {
+      navLinks.forEach(link => {
+        link.addEventListener('click', () => {
+          const view = link.dataset.view;
+          setActiveView(view);
+        });
+      });
+      document.querySelectorAll('[data-jump]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          window.location.hash = btn.dataset.jump;
+        });
+      });
+      window.addEventListener('hashchange', applyHashRoute);
+      applyHashRoute();
+    }
+
+    function syncProjectSelect(value) {
+      projectSelect.value = value;
+      projectSelectTop.value = value;
+      configProject.value = value;
+      saveState();
+    }
+
+    // Event bindings
     sendBtn.addEventListener('click', sendRequest);
-    clearBtn.addEventListener('click', clearAll);
-    stopBtn.addEventListener('click', () => {
-      if (activeController) {
-        activeController.abort();
-      }
+    clearBtn.addEventListener('click', () => {
+      promptInput.value = '';
+      clearPlaygroundOutputs();
+      statusLine.textContent = '';
     });
-    promptInput.addEventListener('keydown', (e) => {
+    stopBtn.addEventListener('click', () => {
+      if (activeController) activeController.abort();
+    });
+    copyCurlBtn.addEventListener('click', () => {
+      const body = buildRequestBody();
+      const curl = `curl -s -X POST '${API_BASE}/chat' -H 'Content-Type: application/json' ${streamToggle.checked ? "-H 'Accept: text/event-stream'" : ''} -d '${JSON.stringify(body)}'`;
+      copyText(curl, 'curl');
+    });
+    copyOutputBtn.addEventListener('click', () => copyText(assistantOutput.textContent, 'Response'));
+    copyRawBtn.addEventListener('click', () => copyText(rawResponse.textContent, 'Raw response'));
+    copyActivationBtn.addEventListener('click', () => copyText(activationJson.textContent, 'Activation'));
+    copyRequestIdBtn.addEventListener('click', () => copyText(requestIdLabel.textContent.replace('Request ID: ', ''), 'Request ID'));
+    copyRedactedPromptBtn.addEventListener('click', () => copyText(redactedPrompt.textContent, 'Redacted request'));
+    copyRedactedOutputBtn.addEventListener('click', () => copyText(redactedOutput.textContent, 'Redacted response'));
+    if (copyDrawerActivationBtn) {
+      copyDrawerActivationBtn.addEventListener('click', () => copyText(drawerActivation.textContent, 'Activation'));
+    }
+
+    projectSelect.addEventListener('change', () => syncProjectSelect(projectSelect.value));
+    projectSelectTop.addEventListener('change', () => syncProjectSelect(projectSelectTop.value));
+
+    promptInput.addEventListener('keydown', e => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         sendRequest();
       }
     });
 
-    copyAssistantBtn.addEventListener('click', () => copyFromElement(assistantTextEl));
-    copyCompletionBtn.addEventListener('click', () => copyFromElement(completionJsonEl));
-    copyActivationBtn.addEventListener('click', () => copyFromElement(activationJsonEl));
+    refreshStatusBtn.addEventListener('click', refreshStatus);
 
-    loadConfig();
+    visualTab.addEventListener('click', () => switchConfigMode('visual'));
+    yamlTab.addEventListener('click', () => switchConfigMode('yaml'));
+
+    yamlEditor.addEventListener('input', () => setDirty(true));
+    forbiddenInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const val = forbiddenInput.value.trim();
+        if (val && !forbiddenWords.includes(val)) {
+          forbiddenWords.push(val);
+          forbiddenInput.value = '';
+          renderForbiddenWords();
+          setDirty(true);
+        }
+      }
+    });
+
+    [cfgPiWarn, cfgPiBlock, cfgJbWarn, cfgJbBlock, cfgActionPrompt, cfgActionJailbreak, cfgActionPii].forEach(el => {
+      el.addEventListener('input', () => {
+        syncConfigRangesFromInputs();
+        syncPlaygroundThresholdsFromConfig();
+        setDirty(true);
+      });
+    });
+
+    saveConfigBtn.addEventListener('click', saveConfig);
+    downloadConfigBtn.addEventListener('click', downloadConfig);
+    applyThresholdsBtn.addEventListener('click', applyThresholdsToConfig);
+    if (requestsPrevBtn) {
+      requestsPrevBtn.addEventListener('click', () => {
+        requestsPage = Math.max(1, requestsPage - 1);
+        renderHistory();
+      });
+    }
+    if (requestsNextBtn) {
+      requestsNextBtn.addEventListener('click', () => {
+        requestsPage += 1;
+        renderHistory();
+      });
+    }
+
+    function clampThreshold(val) {
+      const num = Number(val);
+      if (Number.isNaN(num)) return 0;
+      return Math.min(1, Math.max(0, num));
+    }
+
+    function bindThresholdPair(numberEl, rangeEl, onChange) {
+      if (!numberEl || !rangeEl) return;
+      const syncFromNumber = () => {
+        const val = clampThreshold(numberEl.value);
+        numberEl.value = val.toFixed(2);
+        rangeEl.value = val;
+        if (onChange) onChange();
+      };
+      const syncFromRange = () => {
+        const val = clampThreshold(rangeEl.value);
+        rangeEl.value = val;
+        numberEl.value = val.toFixed(2);
+        if (onChange) onChange();
+      };
+      numberEl.addEventListener('input', syncFromNumber);
+      rangeEl.addEventListener('input', syncFromRange);
+    }
+
+    bindThresholdPair(piWarn, piWarnRange);
+    bindThresholdPair(piBlock, piBlockRange);
+    bindThresholdPair(jbWarn, jbWarnRange);
+    bindThresholdPair(jbBlock, jbBlockRange);
+
+    bindThresholdPair(cfgPiWarn, cfgPiWarnRange, () => setDirty(true));
+    bindThresholdPair(cfgPiBlock, cfgPiBlockRange, () => setDirty(true));
+    bindThresholdPair(cfgJbWarn, cfgJbWarnRange, () => setDirty(true));
+    bindThresholdPair(cfgJbBlock, cfgJbBlockRange, () => setDirty(true));
+
+    // Init
+    loadState();
+    setupNavigation();
     loadProjects();
+    refreshStatus();
+    fetchConfig();
+    renderHistory();
+    renderSummary();
+    setThresholdInputsFromActivation();
   </script>
 </body>
 </html>

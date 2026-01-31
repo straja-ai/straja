@@ -37,7 +37,7 @@ func TestChatCompletion_SimplePath(t *testing.T) {
 	authz := auth.NewAuth(cfg)
 
 	// ---- 3) Override provider registry for this test ----
-	s := New(cfg, authz)
+	s := New(cfg, authz, "")
 	s.providers = map[string]provider.Provider{
 		"fake": provider.NewFake("Hello from fake"),
 	}

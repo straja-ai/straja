@@ -49,6 +49,7 @@ type Server struct {
 	mux                *http.ServeMux
 	cfg                *config.Config
 	auth               *auth.Auth
+	configPath         string
 	policy             policy.Engine
 	providers          map[string]provider.Provider // name -> provider
 	defaultProvider    string                       // name of default provider
@@ -404,7 +405,7 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 }
 
 // New creates a new Straja server with all routes registered.
-func New(cfg *config.Config, authz *auth.Auth) *Server {
+func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	mux := http.NewServeMux()
 
 	// robots.txt served at root so crawlers see demo protections before any auth/other routes.
@@ -723,6 +724,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		mux:                mux,
 		cfg:                cfg,
 		auth:               authz,
+		configPath:         configPath,
 		policy:             pol,
 		providers:          provs,
 		defaultProvider:    cfg.DefaultProvider,
@@ -788,6 +790,8 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	mux.HandleFunc("/console/api/projects", s.handleConsoleProjects)
 	mux.HandleFunc("/console/api/chat", s.wrapHandler(s.handleConsoleChat, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/console/api/requests/", s.wrapHandler(s.handleConsoleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
+	mux.HandleFunc("/console/api/config", s.wrapHandler(s.handleConsoleConfig, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/console/api/reload", s.wrapHandler(s.handleConsoleReload, handlerOptions{limitBody: false, useLimiter: true}))
 
 	if s.intelEnabled {
 		if err := s.ValidateLicenseOnline(context.Background()); err != nil {
@@ -1166,7 +1170,7 @@ func (s *Server) readiness() (readinessResponse, bool) {
 		return resp, false
 	}
 
-	if s.requireML && s.strajaGuardModel == nil {
+	if s.requireML && s.strajaGuardModel == nil && s.specialistsEngine == nil {
 		resp.Status = "not_ready"
 		resp.Reason = "strajaguard_ml_inactive"
 		return resp, false

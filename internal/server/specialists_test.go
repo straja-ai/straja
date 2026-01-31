@@ -62,7 +62,7 @@ func newSpecialistsResponsesServer(t *testing.T, upstreamBaseURL string, fake *f
 	cfg.Intel.StrajaGuardV1.RequireML = false
 
 	authz := auth.NewAuth(cfg)
-	srv := New(cfg, authz)
+	srv := New(cfg, authz, "")
 	srv.policy = policy.NewBasic(cfg.Policy, cfg.Security, intel.NewNoop(), nil, fake, trace.NewNoopTracerProvider().Tracer("test"), cfg.StrajaGuard)
 	srv.specialistsEngine = fake
 	srv.strajaGuardStatus = "online_validated"

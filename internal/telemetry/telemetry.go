@@ -16,6 +16,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/straja-ai/straja/internal/redact"
 )
 
 // Config controls telemetry setup.
@@ -56,6 +58,8 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 		no.initInstruments()
 		return no, nil
 	}
+
+	redact.Logf("telemetry enabled (OpenTelemetry OTLP %s) endpoint=%s; if no collector is listening, periodic 'failed to upload metrics' warnings are expected", strings.ToLower(cfg.Protocol), cfg.Endpoint)
 
 	res, err := resource.New(ctx,
 		resource.WithFromEnv(),
