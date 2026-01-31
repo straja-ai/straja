@@ -125,6 +125,6 @@ security:
 
 strajaguard:
   intel_dir: /var/lib/straja/intel
-  max_sessions: 2
-  intra_threads: 4
-  inter_threads: 1
+  max_sessions: 1 # recommended value: 2
+  intra_threads: 1 # recommended value: number of CPU cores / 2 (4 for apple M3)
+  inter_threads: 1 # recommended value: 1
