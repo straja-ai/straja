@@ -140,6 +140,7 @@ type BuildParams struct {
 	IntelCachePresent    bool
 	StrajaGuardStatus    string
 	StrajaGuardBundleVer string
+	StrajaGuardModel     string
 	SecurityThresholds   map[string]float32
 	IncludeStrajaGuard   bool
 	RequestID            string
@@ -195,10 +196,14 @@ func BuildEvent(params BuildParams) *Event {
 		Thresholds:      buildThresholds(params.SecurityThresholds),
 	}
 	if params.IncludeStrajaGuard || params.StrajaGuardStatus != "" || params.StrajaGuardBundleVer != "" {
+		model := strings.TrimSpace(params.StrajaGuardModel)
+		if model == "" {
+			model = "strajaguard_v1"
+		}
 		intel.StrajaGuard = &StrajaGuardInfo{
 			Status:        params.StrajaGuardStatus,
 			BundleVersion: params.StrajaGuardBundleVer,
-			Model:         "strajaguard_v1",
+			Model:         model,
 		}
 	}
 

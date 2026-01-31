@@ -33,7 +33,13 @@ type Config struct {
 
 // IntelConfig holds ML bundle + license settings.
 type IntelConfig struct {
-	StrajaGuardV1 StrajaGuardV1Config `yaml:"strajaguard_v1"`
+	StrajaGuardV1 StrajaGuardV1Config     `yaml:"strajaguard_v1"`
+	StrajaGuard   StrajaGuardFamilyConfig `yaml:"strajaguard"`
+}
+
+// StrajaGuardFamilyConfig selects which StrajaGuard bundle family to use.
+type StrajaGuardFamilyConfig struct {
+	Family string `yaml:"family"`
 }
 
 // StrajaGuardV1Config controls StrajaGuard bundle fetching + validation.
@@ -599,6 +605,9 @@ func applyDefaults(cfg *Config) {
 		cfg.Intel.applyDefaults()
 	}
 
+	family := ResolveStrajaGuardFamily(cfg)
+	defaultBundleDir := filepath.Join("./intel", family)
+
 	bundleDirFromEnv := false
 	if v, ok := envString("STRAJA_BUNDLE_DIR"); ok && v != "" {
 		cfg.Security.BundleDir = v
@@ -606,14 +615,19 @@ func applyDefaults(cfg *Config) {
 	}
 	if v, ok := envString("STRAJA_INTEL_DIR"); ok && v != "" {
 		cfg.Intel.StrajaGuardV1.IntelDir = v
-		if !bundleDirFromEnv && (cfg.Security.BundleDir == "" || cfg.Security.BundleDir == defaultSecurityConfig().BundleDir) {
-			cfg.Security.BundleDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, "strajaguard_v1")
+		if !bundleDirFromEnv && (cfg.Security.BundleDir == "" || cfg.Security.BundleDir == defaultSecurityConfig().BundleDir || cfg.Security.BundleDir == defaultBundleDir) {
+			cfg.Security.BundleDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, family)
 		}
 	}
 
 	// Align bundle dir with intel dir if user omitted bundle_dir.
 	if cfg.Security.BundleDir == "" && cfg.Intel.StrajaGuardV1.IntelDir != "" {
-		cfg.Security.BundleDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, "strajaguard_v1")
+		cfg.Security.BundleDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, family)
+	}
+
+	// Adjust default bundle dir for non-default family.
+	if cfg.Security.BundleDir == defaultSecurityConfig().BundleDir && family != "strajaguard_v1" {
+		cfg.Security.BundleDir = defaultBundleDir
 	}
 
 	resolveLicense(cfg)
@@ -705,6 +719,7 @@ func defaultIntelConfig() IntelConfig {
 			UpdateOnStart:                 true,
 			RequireML:                     true,
 		},
+		StrajaGuard: StrajaGuardFamilyConfig{},
 	}
 }
 
@@ -713,7 +728,6 @@ func (c *IntelConfig) applyDefaults() {
 
 	if c.StrajaGuardV1 == (StrajaGuardV1Config{}) {
 		c.StrajaGuardV1 = def.StrajaGuardV1
-		return
 	}
 
 	if c.StrajaGuardV1.LicenseServerBaseURL == "" {
@@ -757,6 +771,18 @@ func (c *IntelConfig) applyDefaults() {
 	if v, ok := envInt("STRAJA_BUNDLE_DOWNLOAD_TIMEOUT_SECONDS"); ok && v > 0 {
 		c.StrajaGuardV1.BundleDownloadTimeoutSeconds = v
 	}
+}
+
+// ResolveStrajaGuardFamily returns the configured bundle family or the default.
+func ResolveStrajaGuardFamily(cfg *Config) string {
+	if cfg == nil {
+		return "strajaguard_v1"
+	}
+	family := strings.TrimSpace(cfg.Intel.StrajaGuard.Family)
+	if family == "" {
+		return "strajaguard_v1"
+	}
+	return family
 }
 
 func envBool(name string) (bool, bool) {

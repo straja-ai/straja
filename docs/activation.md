@@ -138,6 +138,8 @@ Key notes:
 - `meta.mode` is `stream` or `non_stream`. In streaming mode, Straja never mutates the response; if post-check would have redacted in non-stream mode, `response.decision.note` is `redaction_suggested` and `response.decision.final` remains `allow`.
 - `request.preview.prompt` and `response.preview.output` are controlled by `logging.activation_level` and are always redacted previews.
 - ML scores appear only in `request.scores` and `response.scores`. Thresholds appear only in `intel.thresholds`.
+- When `intel.strajaguard.family: strajaguard_v1_specialists` is enabled, `intel.strajaguard.model` is `strajaguard_v1_specialists` and ML scores include `prompt_injection`, `jailbreak`, and `contains_personal_data`.
+- Specialists hits carry sources: `ml:protectai/deberta-v3-base-prompt-injection-v2`, `ml:madhurjindal/Jailbreak-Detector`, and `ner:ab-ai/pii_model`.
 
 ## Request status API
 

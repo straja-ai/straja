@@ -13,27 +13,79 @@ import (
 	"github.com/straja-ai/straja/internal/redact"
 )
 
-func bundleDirLooksValid(dir string) bool {
+func bundleDirLooksValid(dir, family string) bool {
 	required := []string{
 		"manifest.json",
 		"manifest.sig",
-		"strajaguard_v1.onnx",
-		"label_map.json",
-		"thresholds.yaml",
-		filepath.Join("tokenizer", "vocab.txt"),
 	}
 	for _, p := range required {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			return false
 		}
 	}
+
+	switch normalizeBundleFamily(family) {
+	case "strajaguard_v1_specialists":
+		for _, name := range []string{"prompt_injection", "jailbreak", "pii_ner"} {
+			if !specialistDirLooksValid(filepath.Join(dir, name)) {
+				return false
+			}
+		}
+	default:
+		required = []string{
+			"strajaguard_v1.onnx",
+			"label_map.json",
+			"thresholds.yaml",
+			filepath.Join("tokenizer", "vocab.txt"),
+		}
+		for _, p := range required {
+			if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+				return false
+			}
+		}
+	}
 	return true
 }
 
+func specialistDirLooksValid(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "model.int8.onnx")); err != nil {
+		if _, err := os.Stat(filepath.Join(dir, "model.onnx")); err != nil {
+			return false
+		}
+	}
+	if !tokenizerAssetsPresent(dir) {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil && !os.IsNotExist(err) {
+		return false
+	}
+	return true
+}
+
+func tokenizerAssetsPresent(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "vocab.txt")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tokenizer", "vocab.txt")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tokenizer.json")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tokenizer", "tokenizer.json")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tokenizer")); err == nil {
+		return true
+	}
+	return false
+}
+
 // EnsureStrajaGuardVersion downloads, verifies, and activates a version under baseDir/version.
-func EnsureStrajaGuardVersion(ctx context.Context, baseDir, version, manifestURL, signatureURL, fileBaseURL, token string, timeoutSeconds int) (string, error) {
+func EnsureStrajaGuardVersion(ctx context.Context, baseDir, family, version, manifestURL, signatureURL, fileBaseURL, token string, timeoutSeconds int) (string, error) {
 	baseDir = strings.TrimSpace(baseDir)
 	version = strings.TrimSpace(version)
+	family = normalizeBundleFamily(family)
 	if baseDir == "" {
 		return "", errors.New("baseDir is empty")
 	}
@@ -55,7 +107,7 @@ func EnsureStrajaGuardVersion(ctx context.Context, baseDir, version, manifestURL
 	defer cancel()
 
 	finalDir := filepath.Join(baseDir, version)
-	if bundleDirLooksValid(finalDir) {
+	if bundleDirLooksValid(finalDir, family) {
 		return finalDir, nil
 	}
 

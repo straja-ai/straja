@@ -32,6 +32,8 @@ type Request struct {
 	SecurityScores map[string]float32
 	// SecurityFlags contains thresholded flags (e.g. prompt_injection_high).
 	SecurityFlags []string
+	// PIIEntities holds detected PII spans with byte offsets.
+	PIIEntities []safety.PIIEntity
 	// PostPolicyHits captures policy categories triggered on model output.
 	PostPolicyHits []string
 	// PostPolicyDecisions captures merged per-category actions for output.

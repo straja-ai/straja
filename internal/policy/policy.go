@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,6 +57,7 @@ func parseAction(v string, def action) action {
 type Basic struct {
 	intel  intel.Engine
 	sg     *strajaguard.StrajaGuardModel
+	sp     strajaguard.SpecialistsEngine
 	tracer trace.Tracer
 	sgCfg  config.StrajaGuardConfig
 
@@ -71,13 +73,14 @@ type Basic struct {
 }
 
 // NewBasic builds the Basic policy engine using config.PolicyConfig.
-func NewBasic(pc config.PolicyConfig, sc config.SecurityConfig, eng intel.Engine, sg *strajaguard.StrajaGuardModel, tracer trace.Tracer, sgCfg config.StrajaGuardConfig) Engine {
+func NewBasic(pc config.PolicyConfig, sc config.SecurityConfig, eng intel.Engine, sg *strajaguard.StrajaGuardModel, sp strajaguard.SpecialistsEngine, tracer trace.Tracer, sgCfg config.StrajaGuardConfig) Engine {
 	if tracer == nil {
 		tracer = trace.NewNoopTracerProvider().Tracer("noop")
 	}
 	return &Basic{
 		intel:  eng,
 		sg:     sg,
+		sp:     sp,
 		tracer: tracer,
 		sgCfg:  sgCfg,
 
@@ -172,8 +175,49 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 	// Collect regex-based detection signals for downstream merging.
 	req.DetectionSignals = append(req.DetectionSignals, detectionSignalsFromRegex(cats)...)
 
-	// Run StrajaGuard if available.
-	if p.securityCfg.Enabled && p.sg != nil {
+	// Run specialists if available; otherwise run StrajaGuard v1.
+	if p.securityCfg.Enabled && p.sp != nil {
+		sgCtx, sgSpan := p.tracer.Start(ctx, "straja.strajaguard.specialists")
+		sgAttrs := map[string]interface{}{
+			"straja.strajaguard.seq_len":       p.securityCfg.SeqLen,
+			"straja.strajaguard.max_sessions":  p.sgCfg.MaxSessions,
+			"straja.strajaguard.intra_threads": p.sgCfg.IntraThreads,
+			"straja.strajaguard.inter_threads": p.sgCfg.InterThreads,
+		}
+		sgSpan.SetAttributes(telemetry.SafeAttributes(sgAttrs)...)
+		sgStart := time.Now()
+		sgCtx = strajaguard.WithRequestID(sgCtx, req.RequestID)
+		res, evalErr := p.sp.AnalyzeText(sgCtx, content)
+		sgElapsed := time.Since(sgStart)
+		if req.Timings != nil {
+			req.Timings.StrajaGuard += sgElapsed
+		}
+		if evalErr != nil {
+			sgSpan.SetAttributes(telemetry.SafeAttributes(map[string]interface{}{
+				"straja.strajaguard.verdict": "error",
+				"straja.strajaguard.error":   evalErr.Error(),
+			})...)
+			redact.Logf("strajaguard specialists evaluate failed after %s: %v", sgElapsed, evalErr)
+		}
+		if res != nil {
+			if req.SecurityScores == nil {
+				req.SecurityScores = make(map[string]float32, len(res.Scores))
+			}
+			for k, v := range res.Scores {
+				req.SecurityScores[k] = v
+			}
+			req.PIIEntities = append(req.PIIEntities, res.PIIEntities...)
+			req.DetectionSignals = append(req.DetectionSignals, detectionSignalsFromSpecialists(res)...)
+			sgSpan.SetAttributes(telemetry.SafeAttributes(map[string]interface{}{
+				"straja.strajaguard.score_max": maxScore(req.SecurityScores),
+				"straja.strajaguard.verdict":   verdict(req.SecurityFlags),
+			})...)
+			redact.Logf("debug: strajaguard_specialists_ms=%.2f project=%s",
+				float64(sgElapsed.Microseconds())/1000, req.ProjectID)
+		}
+		sgSpan.End()
+		ctx = sgCtx
+	} else if p.securityCfg.Enabled && p.sg != nil {
 		sgCtx, sgSpan := p.tracer.Start(ctx, "straja.strajaguard.inference")
 		sgAttrs := map[string]interface{}{
 			"straja.strajaguard.seq_len":       p.securityCfg.SeqLen,
@@ -452,6 +496,35 @@ func detectionSignalsFromML(res *strajaguard.StrajaGuardResult, cfg config.Secur
 	return signals
 }
 
+func detectionSignalsFromSpecialists(res *strajaguard.SpecialistsResult) []safety.DetectionSignal {
+	signals := []safety.DetectionSignal{}
+	if res == nil || res.Scores == nil {
+		return signals
+	}
+	if score, ok := res.Scores["prompt_injection"]; ok {
+		signals = append(signals, safety.DetectionSignal{
+			Category:   "prompt_injection",
+			Source:     strajaguard.SpecialistSourcePromptInjection,
+			Confidence: score,
+		})
+	}
+	if score, ok := res.Scores["jailbreak"]; ok {
+		signals = append(signals, safety.DetectionSignal{
+			Category:   "jailbreak",
+			Source:     strajaguard.SpecialistSourceJailbreak,
+			Confidence: score,
+		})
+	}
+	if score, ok := res.Scores["contains_personal_data"]; ok {
+		signals = append(signals, safety.DetectionSignal{
+			Category:   "contains_personal_data",
+			Source:     strajaguard.SpecialistSourcePIINER,
+			Confidence: score,
+		})
+	}
+	return signals
+}
+
 func maxScore(scores map[string]float32) float32 {
 	var max float32
 	for _, v := range scores {
@@ -483,7 +556,15 @@ func extractSystemPrompt(msgs []inference.Message) string {
 }
 
 func (p *Basic) tryRedact(req *inference.Request, category, content string) string {
-	if req == nil || content == "" || p.intel == nil {
+	if req == nil || content == "" {
+		return ""
+	}
+	if (category == "pii" || category == "contains_personal_data") && len(req.PIIEntities) > 0 {
+		if redacted, changed := redactWithEntities(content, req.PIIEntities); changed {
+			return redacted
+		}
+	}
+	if p.intel == nil {
 		return ""
 	}
 	bundle, ok := p.intel.(interface {
@@ -499,4 +580,72 @@ func (p *Basic) tryRedact(req *inference.Request, category, content string) stri
 		return sanitized
 	}
 	return ""
+}
+
+func redactWithEntities(text string, entities []safety.PIIEntity) (string, bool) {
+	if text == "" || len(entities) == 0 {
+		return "", false
+	}
+	type span struct {
+		start int
+		end   int
+		kind  string
+	}
+	spans := make([]span, 0, len(entities))
+	for _, e := range entities {
+		if e.StartByte < 0 || e.EndByte <= e.StartByte || e.EndByte > len(text) {
+			continue
+		}
+		spans = append(spans, span{
+			start: e.StartByte,
+			end:   e.EndByte,
+			kind:  e.EntityType,
+		})
+	}
+	if len(spans) == 0 {
+		return "", false
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i].start == spans[j].start {
+			return spans[i].end < spans[j].end
+		}
+		return spans[i].start < spans[j].start
+	})
+
+	var b strings.Builder
+	cursor := 0
+	for _, s := range spans {
+		if s.start < cursor {
+			continue
+		}
+		b.WriteString(text[cursor:s.start])
+		b.WriteString(piiPlaceholder(s.kind))
+		cursor = s.end
+	}
+	if cursor < len(text) {
+		b.WriteString(text[cursor:])
+	}
+	redacted := b.String()
+	if redacted == text {
+		return "", false
+	}
+	return redacted, true
+}
+
+func piiPlaceholder(kind string) string {
+	k := strings.ToLower(kind)
+	switch {
+	case strings.Contains(k, "email"):
+		return "[REDACTED_EMAIL]"
+	case strings.Contains(k, "phone"):
+		return "[REDACTED_PHONE]"
+	case strings.Contains(k, "credit"):
+		return "[REDACTED_CREDIT_CARD]"
+	case strings.Contains(k, "iban"):
+		return "[REDACTED_IBAN]"
+	case strings.Contains(k, "token"), strings.Contains(k, "secret"), strings.Contains(k, "key"):
+		return "[REDACTED_TOKEN]"
+	default:
+		return "[REDACTED]"
+	}
 }

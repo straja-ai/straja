@@ -35,8 +35,8 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		"straja.version":                    version,
 		"http.method":                       r.Method,
 		"http.route":                        "/v1/responses",
-		"straja.strajaguard.enabled":        s.strajaGuardModel != nil,
-		"straja.strajaguard.loaded":         s.strajaGuardModel != nil,
+		"straja.strajaguard.enabled":        s.strajaGuardEnabled(),
+		"straja.strajaguard.loaded":         s.strajaGuardEnabled(),
 		"straja.strajaguard.bundle_version": s.activeBundleVer,
 	})
 	defer root.End()
@@ -240,7 +240,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	if len(respBody) > 0 {
 		var parsed map[string]any
 		if err := json.Unmarshal(respBody, &parsed); err == nil {
-			agg := newPostCheckAggregator(ctx, s, project.ID, model)
+			agg := newPostCheckAggregator(ctx, s, project.ID, model, infReq.RequestID)
 			if _, err := applyPostCheckToResponse(parsed, agg); err != nil {
 				postDecision = "blocked"
 			}
@@ -501,6 +501,10 @@ func mergeInferenceRequest(dst, src *inference.Request) {
 			dst.SecurityFlags = append(dst.SecurityFlags, flag)
 		}
 	}
+
+	if len(src.PIIEntities) > 0 {
+		dst.PIIEntities = mergePIIEntities(dst.PIIEntities, src.PIIEntities)
+	}
 }
 
 func hasPolicyDecision(decisions []safety.PolicyHit, category string) bool {
@@ -510,6 +514,31 @@ func hasPolicyDecision(decisions []safety.PolicyHit, category string) bool {
 		}
 	}
 	return false
+}
+
+func mergePIIEntities(dst, src []safety.PIIEntity) []safety.PIIEntity {
+	if len(src) == 0 {
+		return dst
+	}
+	if len(dst) == 0 {
+		out := make([]safety.PIIEntity, len(src))
+		copy(out, src)
+		return out
+	}
+	exists := make(map[string]struct{}, len(dst))
+	for _, e := range dst {
+		key := fmt.Sprintf("%s:%d:%d:%s", e.EntityType, e.StartByte, e.EndByte, e.Source)
+		exists[key] = struct{}{}
+	}
+	for _, e := range src {
+		key := fmt.Sprintf("%s:%d:%d:%s", e.EntityType, e.StartByte, e.EndByte, e.Source)
+		if _, ok := exists[key]; ok {
+			continue
+		}
+		dst = append(dst, e)
+		exists[key] = struct{}{}
+	}
+	return dst
 }
 
 func setSSEHeaders(h http.Header) {
@@ -737,7 +766,7 @@ func runPostCheckForStream(ctx context.Context, s *Server, infReq *inference.Req
 		infReq.PostDecision = "allow"
 		return "allow"
 	}
-	agg := newPostCheckAggregator(ctx, s, infReq.ProjectID, infReq.Model)
+	agg := newPostCheckAggregator(ctx, s, infReq.ProjectID, infReq.Model, infReq.RequestID)
 	_, _ = agg.Check(outputText)
 	post := agg.Result()
 	infReq.PostPolicyHits = post.postReq.PolicyHits

@@ -52,7 +52,7 @@ func EvaluateCategory(category string, signals []DetectionSignal, cfg config.Sec
 				sources = append(sources, s.Source)
 			}
 		}
-		if s.Source == "ml_strajaguard_v1" && cfg.MLEnabled {
+		if isMLSource(s.Source) && cfg.MLEnabled {
 			if s.Confidence > mlConf {
 				mlConf = s.Confidence
 			}
@@ -115,7 +115,7 @@ func EvaluatePII(signals []DetectionSignal, cfg config.PIICategoryConfig) *Polic
 				sources = append(sources, s.Source)
 			}
 		}
-		if (s.Category == "contains_personal_data" || s.Category == "pii") && cfg.MLEnabled && s.Source == "ml_strajaguard_v1" {
+		if (s.Category == "contains_personal_data" || s.Category == "pii") && cfg.MLEnabled && (isMLSource(s.Source) || isNERSource(s.Source)) {
 			if s.Confidence > mlConf {
 				mlConf = s.Confidence
 			}
@@ -158,7 +158,7 @@ func EvaluateSecrets(signals []DetectionSignal, cfg config.SecretsCategoryConfig
 				sources = append(sources, s.Source)
 			}
 		}
-		if s.Category == "contains_secrets_maybe" && cfg.MLEnabled && s.Source == "ml_strajaguard_v1" {
+		if s.Category == "contains_secrets_maybe" && cfg.MLEnabled && isMLSource(s.Source) {
 			if s.Confidence > mlConf {
 				mlConf = s.Confidence
 			}
@@ -203,4 +203,15 @@ func categoryMatches(target, candidate string) bool {
 		return true
 	}
 	return false
+}
+
+func isMLSource(source string) bool {
+	if source == "ml_strajaguard_v1" {
+		return true
+	}
+	return strings.HasPrefix(source, "ml:")
+}
+
+func isNERSource(source string) bool {
+	return strings.HasPrefix(source, "ner:")
 }

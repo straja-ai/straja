@@ -70,7 +70,9 @@ type Server struct {
 	httpClient         *http.Client
 	inFlightLimiter    chan struct{}
 	strajaGuardModel   *strajaguard.StrajaGuardModel
+	specialistsEngine  strajaguard.SpecialistsEngine
 	activeBundleVer    string
+	strajaGuardFamily  string
 	requireML          bool
 	allowRegexOnly     bool
 	providerTypes      map[string]string
@@ -95,6 +97,13 @@ func isNetworkyError(err error) bool {
 	default:
 		return false
 	}
+}
+
+func (s *Server) strajaGuardEnabled() bool {
+	if s == nil {
+		return false
+	}
+	return s.strajaGuardModel != nil || s.specialistsEngine != nil
 }
 
 func setConsoleRobotsHeader(w http.ResponseWriter) {
@@ -153,8 +162,8 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		"straja.version":                    version,
 		"http.method":                       r.Method,
 		"http.route":                        "/console/api/chat",
-		"straja.strajaguard.enabled":        s.strajaGuardModel != nil,
-		"straja.strajaguard.loaded":         s.strajaGuardModel != nil,
+		"straja.strajaguard.enabled":        s.strajaGuardEnabled(),
+		"straja.strajaguard.loaded":         s.strajaGuardEnabled(),
 		"straja.strajaguard.bundle_version": s.activeBundleVer,
 	})
 	defer root.End()
@@ -454,6 +463,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	// Build StrajaGuard model (optional, offline-first)
 	var (
 		sgModel             *strajaguard.StrajaGuardModel
+		sgSpecialists       strajaguard.SpecialistsEngine
 		activeBundleVersion string
 		intelMeta           *strajaguard.ValidationMeta
 		sgStatus            string
@@ -461,9 +471,10 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		sgMeta              *strajaguard.ValidationMeta
 	)
 	sgStatus = "disabled_missing_bundle"
+	sgFamily := config.ResolveStrajaGuardFamily(cfg)
 	strajaGuardDir := cfg.Security.BundleDir
 	if cfg.Intel.StrajaGuardV1.IntelDir != "" {
-		strajaGuardDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, "strajaguard_v1")
+		strajaGuardDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, sgFamily)
 		cfg.Security.BundleDir = strajaGuardDir
 	}
 
@@ -506,39 +517,68 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		} else {
 			ctx := context.Background()
 
-			valRes, outcome, err := strajaguard.ValidateLicense(ctx, cfg.Intel.StrajaGuardV1.LicenseServerBaseURL, sgLicenseKey, currentVersion, cfg.Intel.StrajaGuardV1.LicenseValidateTimeoutSeconds)
+			valRes, outcome, err := strajaguard.ValidateLicense(ctx, cfg.Intel.StrajaGuardV1.LicenseServerBaseURL, sgLicenseKey, currentVersion, sgFamily, cfg.Intel.StrajaGuardV1.LicenseValidateTimeoutSeconds)
+			if err != nil || outcome != strajaguard.ValidateOK {
+				redact.Logf("strajaguard: license validate failed outcome=%s err=%v family=%s current_version=%s", outcome, err, sgFamily, currentVersion)
+			}
 			if err == nil && valRes != nil && outcome == strajaguard.ValidateOK {
 				redact.Logf("strajaguard: license validate returned version=%s update_available=%t", valRes.BundleInfo.Version, valRes.BundleInfo.UpdateAvailable)
-				dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
+				dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, sgFamily, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
 				if err != nil {
 					redact.Logf("strajaguard: bundle version=%s verification failed: %v", valRes.BundleInfo.Version, err)
 					sgStatus = "disabled_invalid_bundle"
 					sgReason = "invalid_bundle"
-				} else if model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt); loadErr != nil {
-					redact.Logf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
-					sgStatus = "disabled_invalid_bundle"
-					sgReason = "invalid_bundle"
 				} else {
-					state.PreviousVersion = state.CurrentVersion
-					state.CurrentVersion = valRes.BundleInfo.Version
-					_ = strajaguard.SaveBundleState(strajaGuardDir, state)
-					fp := licenseFingerprint(sgLicenseKey)
-					meta := strajaguard.ValidationMeta{
-						Version:            state.CurrentVersion,
-						LastValidatedAt:    time.Now().UTC().Format(time.RFC3339),
-						LicenseFingerprint: fp,
-						Source:             "online",
+					loadFailed := false
+					switch sgFamily {
+					case "strajaguard_v1_specialists":
+						engine, loadErr := strajaguard.LoadSpecialistsEngine(dir, cfg.Security.SeqLen, rt, "configs/strajaguard_specialists.yaml")
+						if loadErr != nil {
+							redact.Logf("strajaguard: specialists bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
+							sgStatus = "disabled_invalid_bundle"
+							sgReason = "invalid_bundle"
+							loadFailed = true
+							break
+						}
+						sgSpecialists = engine
+					default:
+						model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt)
+						if loadErr != nil {
+							redact.Logf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
+							sgStatus = "disabled_invalid_bundle"
+							sgReason = "invalid_bundle"
+							loadFailed = true
+							break
+						}
+						sgModel = model
 					}
-					if err := strajaguard.SaveValidationMeta(strajaGuardDir, meta); err == nil {
-						sgMeta = &meta
+
+					if !loadFailed {
+						state.PreviousVersion = state.CurrentVersion
+						state.CurrentVersion = valRes.BundleInfo.Version
+						_ = strajaguard.SaveBundleState(strajaGuardDir, state)
+						fp := licenseFingerprint(sgLicenseKey)
+						meta := strajaguard.ValidationMeta{
+							Version:            state.CurrentVersion,
+							LastValidatedAt:    time.Now().UTC().Format(time.RFC3339),
+							LicenseFingerprint: fp,
+							Source:             "online",
+						}
+						if err := strajaguard.SaveValidationMeta(strajaGuardDir, meta); err == nil {
+							sgMeta = &meta
+						}
+						activeBundleVersion = state.CurrentVersion
+						sgStatus = "online_validated"
+						sgReason = "online_ok"
+						redact.Logf("strajaguard: bundle version=%s verified and activated", state.CurrentVersion)
+						switch sgFamily {
+						case "strajaguard_v1_specialists":
+							redact.Logf("strajaguard: specialists loaded seq_len=%d", cfg.Security.SeqLen)
+						default:
+							redact.Logf("strajaguard: pool_size=%d intra_threads=%d inter_threads=%d seq_len=%d",
+								sgModel.PoolSize(), sgModel.IntraThreads(), sgModel.InterThreads(), cfg.Security.SeqLen)
+						}
 					}
-					sgModel = model
-					activeBundleVersion = state.CurrentVersion
-					sgStatus = "online_validated"
-					sgReason = "online_ok"
-					redact.Logf("strajaguard: bundle version=%s verified and activated", state.CurrentVersion)
-					redact.Logf("strajaguard: pool_size=%d intra_threads=%d inter_threads=%d seq_len=%d",
-						sgModel.PoolSize(), sgModel.IntraThreads(), sgModel.InterThreads(), cfg.Security.SeqLen)
 				}
 			} else {
 				switch outcome {
@@ -551,19 +591,38 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 						break
 					}
 					if integErr := strajaguard.VerifyBundleIntegrity(strajaGuardDir, currentVersion); integErr == nil {
-						model, loadErr := strajaguard.LoadModel(filepath.Join(strajaGuardDir, currentVersion), cfg.Security.SeqLen, rt)
-						if loadErr != nil {
-							sgStatus = "disabled_invalid_bundle"
-							sgReason = "invalid_bundle"
-						} else {
-							sgModel = model
-							activeBundleVersion = currentVersion
-							sgStatus = "offline_cached_bundle"
-							sgReason = "network_error"
-							if cachedMeta != nil {
-								sgMeta = cachedMeta
+						bundleDir := filepath.Join(strajaGuardDir, currentVersion)
+						switch sgFamily {
+						case "strajaguard_v1_specialists":
+							engine, loadErr := strajaguard.LoadSpecialistsEngine(bundleDir, cfg.Security.SeqLen, rt, "configs/strajaguard_specialists.yaml")
+							if loadErr != nil {
+								sgStatus = "disabled_invalid_bundle"
+								sgReason = "invalid_bundle"
+							} else {
+								sgSpecialists = engine
+								activeBundleVersion = currentVersion
+								sgStatus = "offline_cached_bundle"
+								sgReason = "network_error"
+								if cachedMeta != nil {
+									sgMeta = cachedMeta
+								}
+								redact.Logf("strajaguard: using offline cached bundle version=%s (reason=validate_network_error)", currentVersion)
 							}
-							redact.Logf("strajaguard: using offline cached bundle version=%s (reason=validate_network_error)", currentVersion)
+						default:
+							model, loadErr := strajaguard.LoadModel(bundleDir, cfg.Security.SeqLen, rt)
+							if loadErr != nil {
+								sgStatus = "disabled_invalid_bundle"
+								sgReason = "invalid_bundle"
+							} else {
+								sgModel = model
+								activeBundleVersion = currentVersion
+								sgStatus = "offline_cached_bundle"
+								sgReason = "network_error"
+								if cachedMeta != nil {
+									sgMeta = cachedMeta
+								}
+								redact.Logf("strajaguard: using offline cached bundle version=%s (reason=validate_network_error)", currentVersion)
+							}
 						}
 					} else {
 						sgStatus = "disabled_invalid_bundle"
@@ -587,6 +646,23 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 				} else {
 					redact.Logf("strajaguard: warmup inference ok duration_ms=%.2f", float64(dur.Microseconds())/1000)
 				}
+			} else if sgSpecialists != nil {
+				if warmable, ok := sgSpecialists.(interface {
+					Warmup(sample string) (time.Duration, error)
+				}); ok {
+					if dur, err := warmable.Warmup("hello"); err != nil {
+						if mustExit {
+							redact.Fatalf("strajaguard: specialists warmup inference failed: %v", err)
+						}
+						redact.Logf("strajaguard: specialists warmup inference failed: %v; running regex-only", err)
+						sgSpecialists = nil
+						activeBundleVersion = ""
+						sgStatus = "disabled_invalid_bundle"
+						sgReason = "invalid_bundle"
+					} else {
+						redact.Logf("strajaguard: specialists warmup inference ok duration_ms=%.2f", float64(dur.Microseconds())/1000)
+					}
+				}
 			}
 		}
 	}
@@ -602,7 +678,7 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 	})
 
 	// Build policy engine (consumes intelEngine)
-	pol := policy.NewBasic(cfg.Policy, cfg.Security, intelEngine, sgModel, telProvider.Tracer(), cfg.StrajaGuard)
+	pol := policy.NewBasic(cfg.Policy, cfg.Security, intelEngine, sgModel, sgSpecialists, telProvider.Tracer(), cfg.StrajaGuard)
 
 	// Build providers
 	provs, provErr := buildProviderRegistry(cfg)
@@ -665,7 +741,9 @@ func New(cfg *config.Config, authz *auth.Auth) *Server {
 		httpClient:         &http.Client{Timeout: licenseHTTPTimeout},
 		inFlightLimiter:    limiter,
 		strajaGuardModel:   sgModel,
+		specialistsEngine:  sgSpecialists,
 		activeBundleVer:    activeBundleVersion,
+		strajaGuardFamily:  sgFamily,
 		strajaGuardStatus:  sgStatus,
 		strajaGuardReason:  sgReason,
 		strajaGuardMeta:    sgMeta,
@@ -875,7 +953,7 @@ func (s *Server) disableIntelligence(reason string) {
 	if s.telemetry != nil {
 		tr = s.telemetry.Tracer()
 	}
-	s.policy = policy.NewBasic(s.cfg.Policy, s.cfg.Security, intel.NewRegexBundle(s.cfg.Policy), s.strajaGuardModel, tr, s.cfg.StrajaGuard)
+	s.policy = policy.NewBasic(s.cfg.Policy, s.cfg.Security, intel.NewRegexBundle(s.cfg.Policy), s.strajaGuardModel, s.specialistsEngine, tr, s.cfg.StrajaGuard)
 	s.intelStatus = "regex_only_invalid_license"
 }
 
@@ -1159,8 +1237,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		"straja.version":                    version,
 		"http.method":                       r.Method,
 		"http.route":                        "/v1/chat/completions",
-		"straja.strajaguard.enabled":        s.strajaGuardModel != nil,
-		"straja.strajaguard.loaded":         s.strajaGuardModel != nil,
+		"straja.strajaguard.enabled":        s.strajaGuardEnabled(),
+		"straja.strajaguard.loaded":         s.strajaGuardEnabled(),
 		"straja.strajaguard.bundle_version": s.activeBundleVer,
 	})
 	defer root.End()
@@ -1554,8 +1632,9 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 		IntelCachePresent:    s.intelMeta != nil || s.strajaGuardMeta != nil,
 		StrajaGuardStatus:    s.strajaGuardStatus,
 		StrajaGuardBundleVer: s.activeBundleVer,
+		StrajaGuardModel:     s.strajaGuardFamily,
 		SecurityThresholds:   s.securityThresholds,
-		IncludeStrajaGuard:   s.strajaGuardModel != nil && !strings.HasPrefix(s.strajaGuardStatus, "disabled"),
+		IncludeStrajaGuard:   s.strajaGuardEnabled() && !strings.HasPrefix(s.strajaGuardStatus, "disabled"),
 		RequestID:            req.RequestID,
 		Mode:                 mode,
 	})

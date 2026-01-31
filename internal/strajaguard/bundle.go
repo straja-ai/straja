@@ -79,7 +79,7 @@ const (
 )
 
 // ValidateLicense contacts straja-site to validate the license and obtain bundle metadata.
-func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion string, timeoutSeconds int) (*ValidationResult, LicenseValidationOutcome, error) {
+func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion, family string, timeoutSeconds int) (*ValidationResult, LicenseValidationOutcome, error) {
 	baseURL = strings.TrimSuffix(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		return nil, ValidateOtherError, errors.New("license server base url is empty")
@@ -87,6 +87,7 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 	if strings.TrimSpace(licenseKey) == "" {
 		return nil, ValidateOtherError, errors.New("license key is empty")
 	}
+	family = normalizeBundleFamily(family)
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 10
 	}
@@ -116,9 +117,12 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 		ClientID:   "",
 		Bundles: map[string]struct {
 			CurrentVersion *string `json:"current_version"`
-		}{
-			"strajaguard_v1": {CurrentVersion: current},
-		},
+		}{},
+	}
+	for _, key := range bundleFamilyVariants(family) {
+		body.Bundles[key] = struct {
+			CurrentVersion *string `json:"current_version"`
+		}{CurrentVersion: current}
 	}
 
 	payload, err := json.Marshal(body)
@@ -162,11 +166,15 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 		return nil, ValidateInvalidLicense, errors.New(msg)
 	}
 
-	if !lr.License.Models.StrajaGuardV1.Enabled {
+	model, ok := lookupModelInfo(lr.License.Models, family)
+	if !ok || !model.Enabled {
 		return nil, ValidateInvalidLicense, errors.New("strajaguard model not enabled on license")
 	}
 
-	info := lr.Bundles.StrajaGuardV1
+	info, ok := lookupBundleInfo(lr.Bundles, family)
+	if !ok {
+		return nil, ValidateOtherError, errors.New("bundle info missing in license response")
+	}
 	info.Version = strings.TrimSpace(info.Version)
 	info.ManifestURL = strings.TrimSpace(info.ManifestURL)
 	info.SignatureURL = strings.TrimSpace(info.SignatureURL)
@@ -180,7 +188,7 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion st
 	}
 
 	return &ValidationResult{
-		LatestVersion: lr.License.Models.StrajaGuardV1.LatestVersion,
+		LatestVersion: model.LatestVersion,
 		BundleInfo:    info,
 		BundleToken:   lr.BundleToken,
 	}, ValidateOK, nil
@@ -288,20 +296,31 @@ func ReadLocalBundleVersion(bundleDir, versionFileName string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// BundleFilesPresent checks that the key files exist on disk.
-func BundleFilesPresent(bundleDir string) bool {
-	required := []string{
-		"strajaguard_v1.onnx",
-		"label_map.json",
-		"thresholds.yaml",
-		filepath.Join("tokenizer", "vocab.txt"),
-	}
-	for _, p := range required {
-		if _, err := os.Stat(filepath.Join(bundleDir, p)); err != nil {
-			return false
+// BundleFilesPresent checks that the key files exist on disk for the given family.
+func BundleFilesPresent(bundleDir, family string) bool {
+	family = normalizeBundleFamily(family)
+	switch family {
+	case "strajaguard_v1_specialists":
+		for _, name := range []string{"prompt_injection", "jailbreak", "pii_ner"} {
+			if !specialistDirLooksValid(filepath.Join(bundleDir, name)) {
+				return false
+			}
 		}
+		return true
+	default:
+		required := []string{
+			"strajaguard_v1.onnx",
+			"label_map.json",
+			"thresholds.yaml",
+			filepath.Join("tokenizer", "vocab.txt"),
+		}
+		for _, p := range required {
+			if _, err := os.Stat(filepath.Join(bundleDir, p)); err != nil {
+				return false
+			}
+		}
+		return true
 	}
-	return true
 }
 
 func manifestPublicKey() ([]byte, error) {
@@ -572,20 +591,77 @@ type licenseValidateResponse struct {
 }
 
 type licenseSection struct {
-	Tier       string       `json:"tier"`
-	ValidUntil string       `json:"valid_until"`
-	Models     modelSection `json:"models"`
+	Tier       string               `json:"tier"`
+	ValidUntil string               `json:"valid_until"`
+	Models     map[string]modelInfo `json:"models"`
 }
 
-type modelSection struct {
-	StrajaGuardV1 struct {
-		Enabled       bool   `json:"enabled"`
-		LatestVersion string `json:"latest_version"`
-	} `json:"strajaguard_v1"`
+type modelInfo struct {
+	Enabled       bool   `json:"enabled"`
+	LatestVersion string `json:"latest_version"`
 }
 
-type bundleSection struct {
-	StrajaGuardV1 BundleInfo `json:"strajaguard_v1"`
+type bundleSection map[string]BundleInfo
+
+func normalizeBundleFamily(family string) string {
+	family = strings.TrimSpace(family)
+	if family == "" {
+		return "strajaguard_v1"
+	}
+	return strings.Trim(family, "/")
+}
+
+func bundleFamilyVariants(family string) []string {
+	normalized := normalizeBundleFamily(family)
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	add(normalized)
+	add(normalized + "/")
+	add(normalized + "//")
+	return out
+}
+
+func lookupModelInfo(models map[string]modelInfo, family string) (modelInfo, bool) {
+	if len(models) == 0 {
+		return modelInfo{}, false
+	}
+	family = normalizeBundleFamily(family)
+	if v, ok := models[family]; ok {
+		return v, true
+	}
+	for k, v := range models {
+		if normalizeBundleFamily(k) == family {
+			return v, true
+		}
+	}
+	return modelInfo{}, false
+}
+
+func lookupBundleInfo(bundles map[string]BundleInfo, family string) (BundleInfo, bool) {
+	if len(bundles) == 0 {
+		return BundleInfo{}, false
+	}
+	family = normalizeBundleFamily(family)
+	if v, ok := bundles[family]; ok {
+		return v, true
+	}
+	for k, v := range bundles {
+		if normalizeBundleFamily(k) == family {
+			return v, true
+		}
+	}
+	return BundleInfo{}, false
 }
 
 type progressLogger struct {

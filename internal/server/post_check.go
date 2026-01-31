@@ -25,7 +25,7 @@ type postCheckAggregator struct {
 	result  postCheckResult
 }
 
-func newPostCheckAggregator(ctx context.Context, s *Server, projectID, model string) *postCheckAggregator {
+func newPostCheckAggregator(ctx context.Context, s *Server, projectID, model, requestID string) *postCheckAggregator {
 	return &postCheckAggregator{
 		ctx:     ctx,
 		server:  s,
@@ -33,6 +33,7 @@ func newPostCheckAggregator(ctx context.Context, s *Server, projectID, model str
 		model:   model,
 		result: postCheckResult{
 			postReq: &inference.Request{
+				RequestID: requestID,
 				ProjectID: projectID,
 				Model:     model,
 				Messages:  []inference.Message{},
@@ -44,6 +45,7 @@ func newPostCheckAggregator(ctx context.Context, s *Server, projectID, model str
 
 func (a *postCheckAggregator) Check(text string) (string, error) {
 	req := &inference.Request{
+		RequestID: a.result.postReq.RequestID,
 		ProjectID: a.project,
 		Model:     a.model,
 		Messages: []inference.Message{
@@ -88,7 +90,11 @@ func (a *postCheckAggregator) Result() postCheckResult {
 }
 
 func (s *Server) postCheckText(ctx context.Context, req *inference.Request, text string) (string, postCheckResult) {
-	agg := newPostCheckAggregator(ctx, s, req.ProjectID, req.Model)
+	reqID := ""
+	if req != nil {
+		reqID = req.RequestID
+	}
+	agg := newPostCheckAggregator(ctx, s, req.ProjectID, req.Model, reqID)
 	updated, _ := agg.Check(text)
 	res := agg.Result()
 	return updated, res

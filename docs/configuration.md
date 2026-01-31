@@ -163,8 +163,10 @@ Notes:
 Source: `internal/config/config.go`, `internal/safety/policy_eval.go`
 
 - `enabled` (bool, default `true`)
-- `bundle_dir` (string, default `"./intel/strajaguard_v1"`)
+- `bundle_dir` (string, default `"./intel/strajaguard_v1"`; if `intel.strajaguard.family` is set to `strajaguard_v1_specialists`, the default becomes `"./intel/strajaguard_v1_specialists"`)
 - `seq_len` (int, default `256`)
+
+`security.seq_len` also acts as the default max token length for StrajaGuard specialists (unless a specialist overrides `max_tokens` in `configs/strajaguard_specialists.yaml`).
 
 ### `security.prompt_injection`, `security.jailbreak`, `security.data_exfil`
 
@@ -212,8 +214,20 @@ Source: `internal/config/config.go`
 
 ```yaml
 intel:
+  strajaguard: {}
   strajaguard_v1: {}
 ```
+
+`intel.strajaguard` options:
+
+- `family` (string, default `"strajaguard_v1"`)
+
+Supported families:
+
+- `strajaguard_v1` (legacy multi-label model)
+- `strajaguard_v1_specialists` (prompt injection + jailbreak + PII NER specialists)
+
+When the specialists family is enabled, the gateway loads `configs/strajaguard_specialists.yaml` at startup.
 
 `intel.strajaguard_v1` options:
 

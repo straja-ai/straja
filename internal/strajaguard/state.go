@@ -22,7 +22,7 @@ func stateFilePath(baseDir string) string {
 	return filepath.Join(baseDir, "state.json")
 }
 
-// LoadBundleState reads intel/strajaguard_v1/state.json.
+// LoadBundleState reads <intel_dir>/<family>/state.json.
 func LoadBundleState(baseDir string) (BundleState, error) {
 	baseDir = strings.TrimSpace(baseDir)
 	if baseDir == "" {
@@ -44,7 +44,7 @@ func LoadBundleState(baseDir string) (BundleState, error) {
 	return state, nil
 }
 
-// SaveBundleState writes intel/strajaguard_v1/state.json atomically.
+// SaveBundleState writes <intel_dir>/<family>/state.json atomically.
 func SaveBundleState(baseDir string, state BundleState) error {
 	baseDir = strings.TrimSpace(baseDir)
 	if baseDir == "" {

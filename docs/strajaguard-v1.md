@@ -1,8 +1,8 @@
-# StrajaGuard v1 intel bundle
+# StrajaGuard bundles
 
 Sources: `internal/strajaguard/*`, `internal/server/server.go`, `internal/config/config.go`
 
-StrajaGuard v1 is the local ML classifier used by the security layer. It runs via ONNX Runtime and uses a signed bundle downloaded from the license server.
+StrajaGuard is the local ML classifier used by the security layer. It runs via ONNX Runtime and uses a signed bundle downloaded from the license server.
 
 ## Enablement
 
@@ -13,7 +13,26 @@ StrajaGuard is enabled only when both are true:
 
 If either is false, StrajaGuard ML is disabled and the gateway runs regex-only detection.
 
+## Bundle family selection
+
+The bundle family is selected via:
+
+```yaml
+intel:
+  strajaguard:
+    family: strajaguard_v1_specialists
+```
+
+Supported values:
+
+- `strajaguard_v1` (legacy multi-label classifier)
+- `strajaguard_v1_specialists` (prompt injection + jailbreak + PII NER specialists)
+
+If omitted, StrajaGuard defaults to `strajaguard_v1`.
+
 ## Bundle layout
+
+### `strajaguard_v1`
 
 A bundle directory is considered valid when these files exist (`internal/strajaguard/lifecycle.go`):
 
@@ -24,10 +43,26 @@ A bundle directory is considered valid when these files exist (`internal/strajag
 - `thresholds.yaml`
 - `tokenizer/vocab.txt`
 
+### `strajaguard_v1_specialists`
+
+A specialists bundle contains three model subdirectories:
+
+- `prompt_injection/` (sequence classification)
+- `jailbreak/` (sequence classification)
+- `pii_ner/` (token classification / NER)
+
+Each specialist directory must include:
+
+- `model.int8.onnx` or `model.onnx`
+- `tokenizer/` assets (tokenizer config + vocab)
+- `config.json` (Hugging Face model config)
+
+The specialists definitions are loaded from `configs/strajaguard_specialists.yaml`.
+
 ## Paths
 
 - `intel.strajaguard_v1.intel_dir` (default `./intel`) controls the base directory.
-- The bundle path is `<intel_dir>/strajaguard_v1` unless `security.bundle_dir` is explicitly set.
+- The bundle path is `<intel_dir>/<family>` unless `security.bundle_dir` is explicitly set.
 - `security.bundle_dir` is used by the model loader; it is aligned to `intel_dir` when needed.
 
 See `internal/config/config.go` and `internal/server/server.go` for the path resolution logic.

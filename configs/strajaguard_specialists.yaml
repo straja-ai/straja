@@ -1,0 +1,13 @@
+specialists:
+  prompt_injection:
+    kind: sequence_classification
+    onnx: prompt_injection/model.onnx
+    tokenizer_dir: prompt_injection/
+  jailbreak:
+    kind: sequence_classification
+    onnx: jailbreak/model.onnx
+    tokenizer_dir: jailbreak/
+  pii_ner:
+    kind: token_classification
+    onnx: pii_ner/model.onnx
+    tokenizer_dir: pii_ner/
