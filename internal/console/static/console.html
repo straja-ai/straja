@@ -1307,7 +1307,15 @@
 
     function renderScore(el, score, thresholds) {
       if (!el) return;
-      const val = typeof score === 'number' ? score : null;
+      let val = null;
+      if (typeof score === 'number') {
+        val = score;
+      } else if (typeof score === 'string') {
+        const parsed = Number(score);
+        if (!Number.isNaN(parsed)) {
+          val = parsed;
+        }
+      }
       el.label.textContent = val === null ? '--' : val.toFixed(2);
       el.bar.innerHTML = '';
       const fill = document.createElement('div');
