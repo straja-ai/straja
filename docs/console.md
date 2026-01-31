@@ -7,8 +7,12 @@ The Straja console is served by the gateway at:
 - `/console/` (UI)
 - `/console/api/projects` (list projects)
 - `/console/api/chat` (send a test chat request; supports streaming)
+- `/console/api/requests/{request_id}?project_id=...` (request status for console streaming)
+- `/console/api/config` (get/save YAML config used by the gateway)
+- `/console/api/reload` (reload config; currently returns 501)
 
 The console is intended for local debugging. It does not require an API key; instead you send a `project_id` in the request body.
+The UI also stores a local request history in the browser (localStorage) for the Requests and Overview pages.
 
 ## API: list projects
 
@@ -37,6 +41,7 @@ curl -X POST http://localhost:8080/console/api/chat \
 The response matches the OpenAI-style JSON shape used by `/v1/chat/completions`.
 
 The console also displays activation payloads via the `X-Straja-Activation` response header.
+When available, the UI uses activation `request.preview.prompt` and `response.preview.output` as redacted previews.
 
 ## UI status labels
 
@@ -69,3 +74,33 @@ Status lookup after completion:
 curl -H "Authorization: Bearer $STRAJA_KEY" \
   http://localhost:8080/v1/straja/requests/<request_id>
 ```
+
+Console helper (no API key, requires `project_id`):
+
+```bash
+curl http://localhost:8080/console/api/requests/<request_id>?project_id=default
+```
+
+## API: config (get/save)
+
+Fetch current gateway config (YAML):
+
+```bash
+curl http://localhost:8080/console/api/config
+```
+
+Save updated YAML (validated server-side):
+
+```bash
+curl -X POST http://localhost:8080/console/api/config \
+  -H "Content-Type: text/yaml" \
+  --data-binary @straja.yaml
+```
+
+## API: reload (not supported)
+
+```bash
+curl -X POST http://localhost:8080/console/api/reload
+```
+
+Currently responds with `501` and `reload not supported; restart gateway`.
