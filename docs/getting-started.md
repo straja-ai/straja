@@ -36,7 +36,15 @@ fi
 grep "  ${asset}$" checksums.txt | $sha_cmd -c -
 ```
 
-## 2) Export your provider API key
+## 2) Set your Straja license key
+
+```bash
+export STRAJA_LICENSE_KEY="STRAJA-FREE-..."
+```
+
+If you do not have a license key, get a free one at `https://straja.ai`.
+
+## 3) Export your provider API key
 
 Straja reads upstream provider keys from environment variables.
 
@@ -44,7 +52,7 @@ Straja reads upstream provider keys from environment variables.
 export OPENAI_API_KEY="sk-..."
 ```
 
-## 3) Set a console session secret
+## 4) Set a console session secret
 
 The built-in console requires a session secret for signing cookies. Set it in your environment before starting Straja.
 
@@ -52,39 +60,19 @@ The built-in console requires a session secret for signing cookies. Set it in yo
 export STRAJA_CONSOLE_SESSION_SECRET="replace-with-a-random-string"
 ```
 
-## 4) Create a minimal `straja.yaml`
+## 5) Review the included `straja.yaml`
 
-```yaml
-server:
-  addr: ":8080"
+The release archive includes a starter `straja.yaml`. It should work out of the box, but review it and tweak defaults (ports, project IDs, API keys) if needed.
 
-default_provider: "openai_default"
-
-providers:
-  openai_default:
-    type: "openai"
-    base_url: "https://api.openai.com/v1"
-    api_key_env: "OPENAI_API_KEY"
-
-projects:
-  - id: "default"
-    provider: "openai_default"
-    api_keys:
-      - "local-dev-key-123"
-```
-
-## 5) Run the gateway
+## 6) Run the gateway
 
 ```bash
-./straja/run.sh --config straja.yaml
+./straja/run.sh
 ```
 
-Flags are defined in `cmd/straja/main.go`:
+## 7) Open the console or send your first request
 
-- `--config` (default: `straja.yaml`)
-- `--addr` (overrides `server.addr`)
-
-## 6) Send your first request
+Open the console at `http://localhost:8080/console/`, or send an API request:
 
 ```bash
 curl -X POST http://localhost:8080/v1/chat/completions \
