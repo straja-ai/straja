@@ -125,23 +125,24 @@ func EvaluatePII(signals []DetectionSignal, cfg config.PIICategoryConfig) *Polic
 		}
 	}
 
-	if regexHit && cfg.ActionOnRegexHit != "" {
-		return &PolicyHit{
-			Category:   "pii",
-			Action:     cfg.ActionOnRegexHit,
-			Confidence: 1.0,
-			Sources:    sources,
-		}
+	hit := regexHit || (cfg.MLEnabled && mlConf >= cfg.MLWarnThreshold && cfg.MLWarnThreshold > 0)
+	if !hit {
+		return nil
 	}
-	if cfg.MLEnabled && mlConf >= cfg.MLWarnThreshold && cfg.MLWarnThreshold > 0 {
-		return &PolicyHit{
-			Category:   "pii",
-			Action:     cfg.ActionOnMLOnly,
-			Confidence: mlConf,
-			Sources:    sources,
-		}
+	confidence := mlConf
+	if regexHit {
+		confidence = 1.0
 	}
-	return nil
+	action := strings.TrimSpace(cfg.Action)
+	if action == "" {
+		action = "redact"
+	}
+	return &PolicyHit{
+		Category:   "pii",
+		Action:     action,
+		Confidence: confidence,
+		Sources:    sources,
+	}
 }
 
 // EvaluateSecrets merges regex and ML secret signals.

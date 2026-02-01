@@ -194,8 +194,9 @@ Type: `PIICategoryConfig`
 - `regex_enabled` (bool, default `true`)
 - `ml_enabled` (bool, default `true`)
 - `ml_warn_threshold` (float32, default `0.50`)
-- `action_on_regex_hit` (string, default `"redact"`)
-- `action_on_ml_only` (string, default `"log"`)
+- `action` (string, default `"redact"`)
+
+If `action` is omitted, legacy `action_on_regex_hit` / `action_on_ml_only` values are still honored (in that order).
 
 ### `security.secrets`
 

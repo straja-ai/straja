@@ -42,7 +42,7 @@ func TestBasicPolicy_SpecialistsHits(t *testing.T) {
 			RegexEnabled:    false,
 			MLEnabled:       true,
 			MLWarnThreshold: 0.5,
-			ActionOnMLOnly:  "redact",
+			Action:          "redact",
 		},
 	}
 

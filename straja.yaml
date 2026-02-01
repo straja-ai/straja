@@ -53,7 +53,6 @@ policy:
     - "blocked_test"
     - "foo_bar"
     - "forbidden"
-    - sorin
   pii: redact
   pii_entities:
     email: true
@@ -113,8 +112,7 @@ security:
     regex_enabled: true
     ml_enabled: true
     ml_warn_threshold: 0.5
-    action_on_regex_hit: "redact"
-    action_on_ml_only: "redact"
+    action: "redact"
   secrets:
     regex_enabled: true
     ml_enabled: true

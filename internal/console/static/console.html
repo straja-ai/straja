@@ -680,24 +680,36 @@
       margin: 0;
       min-width: 48px;
       text-align: left;
+      white-space: nowrap;
+      flex: 0 0 auto;
     }
 
     .threshold-row .field input[type="number"] {
-      width: 56px;
+      width: 52px;
       padding: 6px 6px;
       font-size: 12px;
       text-align: center;
+      flex: 0 0 auto;
     }
 
     .threshold-row .field input[type="range"] {
       flex: 1 1 auto;
-      min-width: 120px;
+      min-width: 0;
+      max-width: 100%;
       margin: 0;
     }
 
     @media (max-width: 720px) {
       .threshold-row .field {
         justify-content: flex-start;
+      }
+      .threshold-row .row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .threshold-row .field {
+        width: 100%;
       }
     }
 

@@ -254,8 +254,7 @@ func defaultSecurityConfig() SecurityConfig {
 			RegexEnabled:     true,
 			MLEnabled:        true,
 			MLWarnThreshold:  0.50,
-			ActionOnRegexHit: "redact",
-			ActionOnMLOnly:   "log",
+			Action:           "redact",
 		},
 		Secrets: SecretsCategoryConfig{
 			RegexEnabled:     true,
@@ -346,11 +345,14 @@ func (c *SecurityConfig) applyDefaults() {
 		if c.PII.MLWarnThreshold == 0 {
 			c.PII.MLWarnThreshold = def.PII.MLWarnThreshold
 		}
-		if c.PII.ActionOnRegexHit == "" {
-			c.PII.ActionOnRegexHit = def.PII.ActionOnRegexHit
-		}
-		if c.PII.ActionOnMLOnly == "" {
-			c.PII.ActionOnMLOnly = def.PII.ActionOnMLOnly
+		if c.PII.Action == "" {
+			if c.PII.ActionOnRegexHit != "" {
+				c.PII.Action = c.PII.ActionOnRegexHit
+			} else if c.PII.ActionOnMLOnly != "" {
+				c.PII.Action = c.PII.ActionOnMLOnly
+			} else {
+				c.PII.Action = def.PII.Action
+			}
 		}
 	}
 	if c.Secrets == (SecretsCategoryConfig{}) {
@@ -408,13 +410,14 @@ type SecurityCategoryConfig struct {
 	ActionOnRegexHit string  `yaml:"action_on_regex_hit,omitempty"`
 }
 
-// PIICategoryConfig controls how PII signals are handled.
+// PIICategoryConfig controls how PII signals are handled (single action regardless of source).
 type PIICategoryConfig struct {
 	RegexEnabled     bool    `yaml:"regex_enabled"`
 	MLEnabled        bool    `yaml:"ml_enabled"`
 	MLWarnThreshold  float32 `yaml:"ml_warn_threshold"`
-	ActionOnRegexHit string  `yaml:"action_on_regex_hit"`
-	ActionOnMLOnly   string  `yaml:"action_on_ml_only"`
+	Action          string  `yaml:"action"`
+	ActionOnRegexHit string  `yaml:"action_on_regex_hit,omitempty"` // legacy
+	ActionOnMLOnly   string  `yaml:"action_on_ml_only,omitempty"`   // legacy
 }
 
 // SecretsCategoryConfig controls secret-related signals.

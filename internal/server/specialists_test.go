@@ -55,7 +55,7 @@ func newSpecialistsResponsesServer(t *testing.T, upstreamBaseURL string, fake *f
 		RegexEnabled:    false,
 		MLEnabled:       true,
 		MLWarnThreshold: 0.5,
-		ActionOnMLOnly:  "redact",
+		Action:          "redact",
 	}
 	cfg.Intelligence.Enabled = false
 	cfg.Intel.StrajaGuardV1.Enabled = false
