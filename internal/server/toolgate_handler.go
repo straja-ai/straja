@@ -155,6 +155,7 @@ func (s *Server) handleToolgateCheck(w http.ResponseWriter, r *http.Request) {
 		decision = activation.DecisionBlockedBefore
 	}
 	s.emitActivation(ctx, w, infReq, nil, "toolgate", decision, "toolgate_check")
+	s.setActivationHeaderFromStore(w, requestID)
 
 	if res.Action == toolgate.ActionBlock {
 		writeToolgateBlockedError(w, requestID, res.Hits)
@@ -262,6 +263,7 @@ func (s *Server) handleToolgateExplain(w http.ResponseWriter, r *http.Request) {
 		decision = activation.DecisionBlockedBefore
 	}
 	s.emitActivation(ctx, w, infReq, nil, "toolgate", decision, "toolgate_check")
+	s.setActivationHeaderFromStore(w, requestID)
 
 	if res.Action == toolgate.ActionBlock {
 		writeToolgateBlockedError(w, requestID, res.Hits)
@@ -443,6 +445,19 @@ func writeToolgateBlockedError(w http.ResponseWriter, requestID string, hits []t
 			RequestID: requestID,
 		},
 	})
+}
+
+func (s *Server) setActivationHeaderFromStore(w http.ResponseWriter, requestID string) {
+	if w == nil || s.requestStore == nil || requestID == "" {
+		return
+	}
+	entry, ok := s.requestStore.Get(requestID)
+	if !ok || entry.activation == nil {
+		return
+	}
+	if b, err := json.Marshal(entry.activation); err == nil {
+		w.Header().Set("X-Straja-Activation", redact.String(string(b)))
+	}
 }
 
 func getStringArg(args map[string]any, key string) (string, bool) {

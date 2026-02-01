@@ -53,6 +53,7 @@
       display: flex;
       flex-direction: column;
       gap: 24px;
+      overflow: hidden;
     }
 
     .brand {
@@ -181,6 +182,18 @@
       margin-bottom: 4px;
     }
 
+    .field-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .field-header label {
+      margin: 0;
+    }
+
     .field input,
     .field select,
     .field textarea {
@@ -190,6 +203,11 @@
       padding: 8px 10px;
       font-size: 13px;
       background: #fff;
+    }
+
+    #toolgateArgs {
+      width: 100%;
+      display: block;
     }
 
     .field input[readonly] {
@@ -271,6 +289,8 @@
       background: var(--accent);
       color: #fff;
       transition: transform 0.12s ease, box-shadow 0.12s ease;
+      font-weight: 500;
+      line-height: 1.1;
     }
 
     .btn:disabled { opacity: 0.6; cursor: default; }
@@ -280,6 +300,7 @@
     .btn.danger { background: #b91c1c; }
 
     .btn:active { transform: translateY(1px); }
+    .btn.secondary:hover { background: #e2e8f0; }
 
     .toggle {
       display: inline-flex;
@@ -320,8 +341,15 @@
     }
 
     .template-field {
-      max-width: 360px;
       width: 100%;
+    }
+
+    .request-controls {
+      align-items: flex-end;
+    }
+
+    .request-controls .field {
+      flex: 1 1 220px;
     }
 
     .decision-grid {
@@ -350,6 +378,7 @@
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
+      margin-top: 8px;
     }
 
     .chip {
@@ -358,6 +387,19 @@
       border-radius: 999px;
       background: #e2e8f0;
       color: #334155;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chip-remove {
+      border: none;
+      background: transparent;
+      color: #64748b;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+      padding: 0;
     }
 
     .score-list {
@@ -424,11 +466,14 @@
       background: #0f172a;
       color: #f8fafc;
       border-radius: 12px;
-      padding: 12px;
+      padding: 16px;
       min-height: 120px;
       white-space: pre-wrap;
       font-size: 13px;
       position: relative;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .copy-btn {
@@ -476,11 +521,138 @@
       gap: 6px;
       font-size: 12px;
       color: var(--muted);
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .request-id .btn {
+      margin-left: auto;
+    }
+
+    .request-id-text {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .truncate {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .response-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .response-title {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+      flex: 1 1 280px;
+    }
+
+    .response-title h2 {
+      margin: 0;
+    }
+
+    .response-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex: 1 1 200px;
+    }
+
+    .response-actions .btn {
+      width: auto;
+    }
+
+    .copy-response-mobile {
+      display: none;
+    }
+
+    .status-pills {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 8px 16px;
+    }
+
+    .status-pair {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .accordion {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #f8fafc;
+      margin-top: 12px;
+      overflow: hidden;
+      padding: 0;
+    }
+
+    details.accordion {
+      padding: 0;
+    }
+
+    .accordion summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: #334155;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 10px 12px;
+      list-style: none;
+    }
+
+    .accordion summary::-webkit-details-marker { display: none; }
+
+    .accordion summary::after {
+      content: "v";
+      margin-left: auto;
+      font-size: 12px;
+      color: #64748b;
+      transition: transform 0.2s ease;
+    }
+
+    .accordion[open] summary::after {
+      content: "^";
+    }
+
+    .accordion-body {
+      padding: 0 12px 12px;
+    }
+
+    .toolgate-result-row {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
     }
 
     .thresholds {
       display: grid;
       gap: 10px;
+      padding-bottom: 2px;
+      flex: 1 1 auto;
+    }
+
+    .thresholds .actions {
+      margin-top: auto;
+    }
+
+    .threshold-card {
+      display: flex;
+      flex-direction: column;
     }
 
     .threshold-row {
@@ -497,6 +669,37 @@
     .threshold-row input[type="range"] { width: 100%; }
 
     .threshold-row .row { align-items: center; }
+
+    .threshold-row .field {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .threshold-row .field label {
+      margin: 0;
+      min-width: 48px;
+      text-align: left;
+    }
+
+    .threshold-row .field input[type="number"] {
+      width: 56px;
+      padding: 6px 6px;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .threshold-row .field input[type="range"] {
+      flex: 1 1 auto;
+      min-width: 120px;
+      margin: 0;
+    }
+
+    @media (max-width: 720px) {
+      .threshold-row .field {
+        justify-content: flex-start;
+      }
+    }
 
     .config-toggle {
       display: inline-flex;
@@ -532,6 +735,22 @@
     }
 
     .dirty-dot.active { opacity: 1; }
+
+    .config-header-title h2 {
+      margin-bottom: 6px;
+    }
+
+    .config-header-main {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+    }
+
+    .config-header-controls {
+      margin-left: auto;
+    }
 
     .requests-table {
       width: 100%;
@@ -619,6 +838,18 @@
       color: #334155;
     }
 
+    @media (max-width: 520px) {
+      .summary-header {
+        justify-content: flex-start !important;
+        align-items: flex-start !important;
+      }
+
+      .summary-header h2,
+      .summary-header .mini {
+        text-align: left;
+      }
+    }
+
     @media (max-width: 1100px) {
       .grid-2, .grid-3, .results-grid {
         grid-template-columns: 1fr;
@@ -628,14 +859,21 @@
         flex-direction: row;
         align-items: center;
         gap: 12px;
-        overflow-x: auto;
+        overflow-x: hidden;
         position: sticky;
         top: 0;
         z-index: 20;
       }
       .nav {
         flex-direction: row;
+        overflow-x: auto;
+        flex: 1 1 auto;
+        gap: 6px;
+        padding-bottom: 4px;
+        scrollbar-width: none;
       }
+      .nav::-webkit-scrollbar { display: none; }
+      .brand { flex: 0 0 auto; }
       .sidebar-footer { display: none; }
     }
 
@@ -650,7 +888,54 @@
       .actions { width: 100%; }
       .actions .btn { flex: 1 1 120px; }
       .output-box { min-height: 160px; }
-      details .btn { margin-top: 8px; width: 100%; }
+      .response-actions { width: 100%; }
+      .response-actions .btn { width: 100%; }
+      .response-actions .btn { font-weight: 500; }
+      .output-box { padding: 16px; max-height: 45vh; overflow: auto; }
+      .accordion .btn { width: 100%; margin-top: 8px; }
+      .request-controls {
+        flex-direction: row;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .toolgate-result-row {
+        flex-direction: row;
+      }
+      .config-header {
+        flex-direction: row;
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+      .config-header-title {
+        text-align: left;
+        flex: 1 1 auto;
+      }
+      .config-header-controls {
+        margin-left: auto;
+        align-self: flex-start;
+      }
+      .config-header-main {
+        align-items: center;
+      }
+      .request-controls .field {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+      .request-controls .toggle {
+        width: auto;
+      }
+      .copy-response-mobile {
+        display: block;
+        margin: 10px 0 12px;
+      }
+      .copy-response-mobile .btn {
+        width: 100%;
+        font-weight: 500;
+      }
+      .response-actions {
+        display: none;
+      }
       #view-inference .grid-2,
       #view-inference .results-grid { display: contents; }
       .inference-stack { display: flex; flex-direction: column; gap: 16px; }
@@ -677,6 +962,10 @@
       .copy-btn { position: static; margin-top: 8px; display: inline-flex; }
       .summary-grid { grid-template-columns: 1fr; }
       .requests-pagination { flex-direction: row; align-items: center; }
+    }
+
+    @media (min-width: 900px) {
+      .output-box { padding: 20px; }
     }
 
     @keyframes fadeIn {
@@ -752,7 +1041,7 @@
           </div>
           <div class="grid-2" style="margin-top: 18px;">
             <div class="card">
-              <div class="row" style="justify-content: space-between; align-items: center;">
+              <div class="row summary-header" style="justify-content: space-between; align-items: center;">
                 <div>
                   <h2>Request summary</h2>
                   <div class="mini">Session totals (local browser history)</div>
@@ -789,13 +1078,7 @@
           <div class="grid-2">
             <div class="card request-card">
               <h2>Request builder</h2>
-              <div class="row" style="margin-top: 10px;">
-                <div class="field">
-                  <label for="projectSelect">Project</label>
-                  <select id="projectSelect">
-                    <option value="">Loading projects…</option>
-                  </select>
-                </div>
+              <div class="row request-controls" style="margin-top: 10px;">
                 <div class="field">
                   <label for="modelInput">Model</label>
                   <input id="modelInput" type="text" value="gpt-4.1-mini" readonly />
@@ -817,7 +1100,7 @@
               </div>
               <div class="field prompt-area" style="margin-top: 10px;">
                 <label for="promptInput">Request</label>
-                <textarea id="promptInput" placeholder="Type your request here…"></textarea>
+                <textarea id="promptInput" placeholder="Type your prompt here…"></textarea>
               </div>
               <div class="actions" style="margin-top: 12px;">
                 <button class="btn" id="sendBtn">Send</button>
@@ -867,6 +1150,10 @@
                   <div class="threshold-title">PII</div>
                   <div class="mini">Scored as 0/1. Threshold adjustment disabled.</div>
                 </div>
+                <div class="threshold-row">
+                  <div class="threshold-title">Data exfiltration</div>
+                  <div class="mini">Scored as 0/1. Threshold adjustment disabled.</div>
+                </div>
                 <div class="actions">
                   <button class="btn secondary" id="applyThresholdsBtn" type="button">Apply to config draft</button>
                 </div>
@@ -876,47 +1163,65 @@
 
           <div class="results-grid">
             <div class="card output-card">
-              <div class="row" style="justify-content: space-between; align-items: center;">
-                <div>
-              <h2>Response</h2>
+              <div class="response-header">
+                <div class="response-title">
+                  <h2>Response</h2>
                   <div class="request-id">
-                    <span id="requestIdLabel">Request ID: --</span>
-                    <button class="btn secondary" id="copyRequestIdBtn" type="button">Copy</button>
+                    <span class="request-id-text truncate" id="requestIdLabel">Request ID: --</span>
                   </div>
                 </div>
-                <div class="actions">
+                <div class="actions response-actions">
                   <button class="btn secondary" id="copyOutputBtn" type="button">Copy response</button>
                 </div>
               </div>
-              <div class="mini" style="margin-bottom: 6px;">
-                Request: <span class="pill" id="outputRequestDecision">--</span>
-                Response: <span class="pill" id="outputResponseDecision">--</span>
+              <div class="status-pills" style="margin-bottom: 8px;">
+                <div class="status-pair">
+                  <span class="mini">Request:</span>
+                  <span class="pill" id="outputRequestDecision">--</span>
+                </div>
+                <div class="status-pair">
+                  <span class="mini">Response:</span>
+                  <span class="pill" id="outputResponseDecision">--</span>
+                </div>
               </div>
               <div class="output-box" id="assistantOutput"></div>
-              <details style="margin-top: 12px; display: none;" id="redactedPromptDetails">
+              <div class="copy-response-mobile">
+                <button class="btn secondary" id="copyOutputBtnMobile" type="button">Copy response</button>
+              </div>
+              <details class="accordion" style="display: none;" id="redactedPromptDetails">
                 <summary>Redacted request preview</summary>
-                <pre id="redactedPrompt"></pre>
-                <button class="btn secondary" id="copyRedactedPromptBtn" type="button">Copy redacted request</button>
+                <div class="accordion-body">
+                  <pre id="redactedPrompt"></pre>
+                  <button class="btn secondary" id="copyRedactedPromptBtn" type="button">Copy redacted request</button>
+                </div>
               </details>
-              <details style="margin-top: 12px; display: none;" id="redactedOutputDetails">
+              <details class="accordion" style="display: none;" id="redactedOutputDetails">
                 <summary>Redacted response preview</summary>
-                <pre id="redactedOutput"></pre>
-                <button class="btn secondary" id="copyRedactedOutputBtn" type="button">Copy redacted response</button>
+                <div class="accordion-body">
+                  <pre id="redactedOutput"></pre>
+                  <button class="btn secondary" id="copyRedactedOutputBtn" type="button">Copy redacted response</button>
+                </div>
               </details>
-              <details style="margin-top: 12px;">
+              <details class="accordion">
                 <summary>Raw response</summary>
-                <pre id="rawResponse"></pre>
-                <button class="btn secondary" id="copyRawBtn" type="button">Copy raw</button>
+                <div class="accordion-body">
+                  <pre id="rawResponse"></pre>
+                  <button class="btn secondary" id="copyRawBtn" type="button">Copy raw</button>
+                </div>
               </details>
               <div class="mini" id="activationResponseNote"></div>
-              <details style="margin-top: 12px;">
+              <details class="accordion">
                 <summary>Activation event</summary>
-                <pre id="activationJson"></pre>
-                <button class="btn secondary" id="copyActivationBtn" type="button">Copy activation</button>
+                <div class="accordion-body">
+                  <pre id="activationJson"></pre>
+                  <button class="btn secondary" id="copyActivationBtn" type="button">Copy activation</button>
+                </div>
               </details>
-              <details style="margin-top: 12px; display: none;" id="responseGuardMatches">
+              <details class="accordion" style="display: none;" id="responseGuardMatches">
                 <summary>Response guard matches</summary>
-                <div class="mini" id="responseGuardMatchesBody"></div>
+                <div class="accordion-body">
+                  <div class="mini" id="responseGuardMatchesBody"></div>
+                </div>
               </details>
             </div>
 
@@ -1029,14 +1334,10 @@
 
             <div class="card">
               <h2>Result</h2>
-              <div class="row" style="align-items: center;">
+              <div class="row toolgate-result-row" style="align-items: center;">
                 <span class="pill" id="toolgateDecisionPill">--</span>
-                <span class="mini" id="toolgateLatency"></span>
-              </div>
-              <div class="row" style="margin-top: 8px; align-items: center;">
                 <span class="mini" id="toolgateRequestId">Request ID: --</span>
-                <button class="btn secondary" id="toolgateCopyRequestId" type="button">Copy</button>
-                <button class="btn secondary" id="toolgateFetchStatus" type="button">Fetch status</button>
+                <span class="mini" id="toolgateLatency"></span>
               </div>
               <div class="mini" id="toolgateNormalized"></div>
               <div class="toolgate-hits" id="toolgateHits"></div>
@@ -1050,17 +1351,19 @@
 
         <section id="view-config" class="view">
           <div class="card">
-            <div class="row" style="justify-content: space-between; align-items: center;">
-              <div>
-                <h2>Gateway config</h2>
-                <p>Edit the active YAML config. Changes are saved server-side.</p>
-              </div>
-              <div class="row" style="align-items: center;">
-                <div class="config-toggle" role="tablist">
-                  <button type="button" id="visualTab" class="active">Visual</button>
-                  <button type="button" id="yamlTab">YAML</button>
+            <div class="row config-header" style="justify-content: space-between; align-items: center;">
+              <div class="config-header-main">
+                <div class="config-header-title">
+                  <h2>Gateway config</h2>
+                  <p>Edit the active YAML config. Changes are saved server-side.</p>
                 </div>
-                <span class="dirty-dot" id="dirtyDot"></span>
+                <div class="row config-header-controls" style="align-items: center;">
+                  <div class="config-toggle" role="tablist">
+                    <button type="button" id="visualTab" class="active">Visual</button>
+                    <button type="button" id="yamlTab">YAML</button>
+                  </div>
+                  <span class="dirty-dot" id="dirtyDot"></span>
+                </div>
               </div>
             </div>
 
@@ -1127,6 +1430,10 @@
                     </div>
                     <div class="threshold-row">
                       <div class="threshold-title">PII</div>
+                      <div class="mini">Scored as 0/1. Threshold adjustment disabled.</div>
+                    </div>
+                    <div class="threshold-row">
+                      <div class="threshold-title">Data exfiltration</div>
                       <div class="mini">Scored as 0/1. Threshold adjustment disabled.</div>
                     </div>
                   </div>
@@ -1206,22 +1513,18 @@
             <div class="mini" id="drawerMeta">Select a row to view details.</div>
             <div class="row" style="margin-top: 10px;">
               <div class="field" style="flex: 1;">
-                <label>Request preview</label>
+                <div class="field-header">
+                  <label>Request preview</label>
+                  <div class="pill" id="drawerRequestDecision">--</div>
+                </div>
                 <pre id="drawerPrompt"></pre>
               </div>
               <div class="field" style="flex: 1;">
-                <label>Response preview</label>
+                <div class="field-header">
+                  <label>Response preview</label>
+                  <div class="pill" id="drawerResponseDecision">--</div>
+                </div>
                 <pre id="drawerOutput"></pre>
-              </div>
-            </div>
-            <div class="row" style="margin-top: 10px;">
-              <div class="field" style="flex: 1;">
-                <label>Request decision</label>
-                <div class="pill" id="drawerRequestDecision">--</div>
-              </div>
-              <div class="field" style="flex: 1;">
-                <label>Response decision</label>
-                <div class="pill" id="drawerResponseDecision">--</div>
               </div>
             </div>
             <div class="field" style="margin-top: 10px;">
@@ -1315,9 +1618,9 @@
     const applyThresholdsBtn = document.getElementById('applyThresholdsBtn');
 
     const copyOutputBtn = document.getElementById('copyOutputBtn');
+    const copyOutputBtnMobile = document.getElementById('copyOutputBtnMobile');
     const copyRawBtn = document.getElementById('copyRawBtn');
     const copyActivationBtn = document.getElementById('copyActivationBtn');
-    const copyRequestIdBtn = document.getElementById('copyRequestIdBtn');
     const copyRedactedPromptBtn = document.getElementById('copyRedactedPromptBtn');
     const copyRedactedOutputBtn = document.getElementById('copyRedactedOutputBtn');
 
@@ -1330,8 +1633,6 @@
     const toolgateDecisionPill = document.getElementById('toolgateDecisionPill');
     const toolgateLatency = document.getElementById('toolgateLatency');
     const toolgateRequestId = document.getElementById('toolgateRequestId');
-    const toolgateCopyRequestId = document.getElementById('toolgateCopyRequestId');
-    const toolgateFetchStatus = document.getElementById('toolgateFetchStatus');
     const toolgateNormalized = document.getElementById('toolgateNormalized');
     const toolgateHits = document.getElementById('toolgateHits');
     const toolgateStatusLine = document.getElementById('toolgateStatusLine');
@@ -1461,6 +1762,10 @@
       { id: 'pii', label: 'PII' },
       { id: 'data_exfil', label: 'Data exfil intent' }
     ];
+
+    function getProjectId() {
+      return projectSelectTop?.value || projectSelect?.value || '';
+    }
 
     function setActiveView(name) {
       views.forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
@@ -1615,7 +1920,7 @@
         if (!raw) return;
         const cfg = JSON.parse(raw);
         if (cfg.projectId) {
-          projectSelect.dataset.selected = cfg.projectId;
+          if (projectSelect) projectSelect.dataset.selected = cfg.projectId;
           projectSelectTop.dataset.selected = cfg.projectId;
         }
         if (cfg.model) {
@@ -1633,7 +1938,7 @@
 
     function saveState() {
       const cfg = {
-        projectId: projectSelect.value,
+        projectId: getProjectId(),
         model: modelInput.value,
         streaming: streamToggle.checked
       };
@@ -1647,15 +1952,15 @@
         const res = await fetch(`${API_BASE}/projects`);
         if (!res.ok) throw new Error('projects failed');
         const projects = await res.json();
-        const storedId = projectSelect.dataset.selected;
-        projectSelect.innerHTML = '';
+        const storedId = projectSelect?.dataset.selected || projectSelectTop?.dataset.selected || '';
+        if (projectSelect) projectSelect.innerHTML = '';
         projectSelectTop.innerHTML = '';
         configProject.innerHTML = '';
         if (!Array.isArray(projects) || projects.length === 0) {
           const opt = document.createElement('option');
           opt.value = '';
           opt.textContent = 'No projects';
-          projectSelect.appendChild(opt);
+          if (projectSelect) projectSelect.appendChild(opt);
           projectSelectTop.appendChild(opt.cloneNode(true));
           configProject.appendChild(opt.cloneNode(true));
           return;
@@ -1665,7 +1970,7 @@
           const opt1 = document.createElement('option');
           opt1.value = p.id;
           opt1.textContent = label;
-          projectSelect.appendChild(opt1);
+          if (projectSelect) projectSelect.appendChild(opt1);
           const opt2 = document.createElement('option');
           opt2.value = p.id;
           opt2.textContent = label;
@@ -1676,12 +1981,12 @@
           configProject.appendChild(opt3);
         });
         if (storedId) {
-          projectSelect.value = storedId;
+          if (projectSelect) projectSelect.value = storedId;
           projectSelectTop.value = storedId;
           configProject.value = storedId;
         }
       } catch (err) {
-        projectSelect.innerHTML = '<option value="">Error loading projects</option>';
+        if (projectSelect) projectSelect.innerHTML = '<option value="">Error loading projects</option>';
         projectSelectTop.innerHTML = '<option value="">Error loading projects</option>';
         configProject.innerHTML = '<option value="">Error loading projects</option>';
       }
@@ -1909,7 +2214,7 @@
 
     async function sendRequest() {
       const prompt = promptInput.value.trim();
-      if (!projectSelect.value) {
+      if (!getProjectId()) {
         statusLine.textContent = 'Select a project first.';
         return;
       }
@@ -2110,7 +2415,7 @@
       const history = getHistory();
       history.unshift({
         requestId: entry.requestId,
-        projectId: projectSelect.value,
+        projectId: getProjectId(),
         model: modelInput.value,
         prompt: entry.prompt || '',
         output: entry.output || '',
@@ -2208,6 +2513,10 @@
       if (drawerResponseDecision) {
         const respDecision = entry.activation?.summary?.response_final || '--';
         updateDecision(drawerResponseDecision, respDecision);
+      }
+      const drawer = document.getElementById('requestDrawer');
+      if (drawer && drawer.scrollIntoView) {
+        drawer.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
 
@@ -2447,12 +2756,21 @@
       forbiddenWords.forEach(word => {
         const chip = document.createElement('span');
         chip.className = 'chip';
-        chip.textContent = word;
-        chip.addEventListener('click', () => {
+        const label = document.createElement('span');
+        label.textContent = word;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'chip-remove';
+        remove.setAttribute('aria-label', `Remove ${word}`);
+        remove.textContent = '×';
+        remove.addEventListener('click', e => {
+          e.stopPropagation();
           forbiddenWords = forbiddenWords.filter(w => w !== word);
           renderForbiddenWords();
           setDirty(true);
         });
+        chip.appendChild(label);
+        chip.appendChild(remove);
         forbiddenList.appendChild(chip);
       });
     }
@@ -2580,7 +2898,7 @@
     }
 
     function syncProjectSelect(value) {
-      projectSelect.value = value;
+      if (projectSelect) projectSelect.value = value;
       projectSelectTop.value = value;
       configProject.value = value;
       saveState();
@@ -2603,10 +2921,10 @@
       const curl = `curl -s -X POST '${V1_BASE}/responses' -H 'Content-Type: application/json' ${authHeader} ${streamToggle.checked ? "-H 'Accept: text/event-stream'" : ''} -d '${JSON.stringify(body)}'`;
       copyText(curl, 'curl');
     });
-    copyOutputBtn.addEventListener('click', () => copyText(assistantOutput.textContent, 'Response'));
+    if (copyOutputBtn) copyOutputBtn.addEventListener('click', () => copyText(assistantOutput.textContent, 'Response'));
+    if (copyOutputBtnMobile) copyOutputBtnMobile.addEventListener('click', () => copyText(assistantOutput.textContent, 'Response'));
     copyRawBtn.addEventListener('click', () => copyText(rawResponse.textContent, 'Raw response'));
     copyActivationBtn.addEventListener('click', () => copyText(activationJson.textContent, 'Activation'));
-    copyRequestIdBtn.addEventListener('click', () => copyText(requestIdLabel.textContent.replace('Request ID: ', ''), 'Request ID'));
     copyRedactedPromptBtn.addEventListener('click', () => copyText(redactedPrompt.textContent, 'Redacted request'));
     copyRedactedOutputBtn.addEventListener('click', () => copyText(redactedOutput.textContent, 'Redacted response'));
     if (copyDrawerActivationBtn) {
@@ -2618,17 +2936,8 @@
     if (toolgateCheckBtn) {
       toolgateCheckBtn.addEventListener('click', runToolgateCheck);
     }
-    if (toolgateFetchStatus) {
-      toolgateFetchStatus.addEventListener('click', fetchToolgateStatus);
-    }
-    if (toolgateCopyRequestId) {
-      toolgateCopyRequestId.addEventListener('click', () => {
-        const id = toolgateRequestId ? toolgateRequestId.textContent.replace('Request ID: ', '').trim() : '';
-        if (id) copyText(id, 'Request ID');
-      });
-    }
 
-    projectSelect.addEventListener('change', () => syncProjectSelect(projectSelect.value));
+    if (projectSelect) projectSelect.addEventListener('change', () => syncProjectSelect(projectSelect.value));
     projectSelectTop.addEventListener('change', () => syncProjectSelect(projectSelectTop.value));
 
     promptInput.addEventListener('keydown', e => {
@@ -2833,6 +3142,14 @@
         toolgateLastRequestId = requestIdHeader;
         if (toolgateRequestId) toolgateRequestId.textContent = `Request ID: ${requestIdHeader}`;
       }
+      const activationHeader = res.headers.get('X-Straja-Activation') || res.headers.get('x-straja-activation');
+      if (activationHeader && toolgateActivationJson) {
+        try {
+          toolgateActivationJson.textContent = JSON.stringify(JSON.parse(activationHeader), null, 2);
+        } catch (_) {
+          toolgateActivationJson.textContent = activationHeader;
+        }
+      }
 
       if (!res.ok) {
         let errBody = {};
@@ -2842,6 +3159,12 @@
           errBody = {};
         }
         const errObj = errBody.error || {};
+        if (errObj.request_id && !toolgateLastRequestId) {
+          toolgateLastRequestId = errObj.request_id;
+        }
+        if (toolgateLastRequestId && toolgateRequestId) {
+          toolgateRequestId.textContent = `Request ID: ${toolgateLastRequestId}`;
+        }
         const decision = errObj.code === 'tool_blocked' ? 'block' : 'error';
         setToolgateDecision(decision);
         renderToolgateHits([{
@@ -2850,6 +3173,9 @@
           action: decision
         }]);
         if (toolgateStatusLine) toolgateStatusLine.textContent = errObj.message || 'Toolgate check failed';
+        if (!activationHeader && toolgateLastRequestId) {
+          fetchToolgateStatus();
+        }
         return;
       }
 
@@ -2872,6 +3198,16 @@
       if (typeof data.latency_ms === 'number' && toolgateLatency) {
         toolgateLatency.textContent = `${data.latency_ms.toFixed(1)} ms`;
       }
+      if (toolgateActivationJson) {
+        if (data.activation) {
+          toolgateActivationJson.textContent = JSON.stringify(data.activation, null, 2);
+        } else if (!activationHeader) {
+          toolgateActivationJson.textContent = '';
+        }
+      }
+      if (!data.activation && toolgateLastRequestId) {
+        fetchToolgateStatus();
+      }
     }
 
     async function fetchToolgateStatus() {
@@ -2892,7 +3228,8 @@
         }
         const data = await res.json();
         if (toolgateActivationJson) {
-          toolgateActivationJson.textContent = JSON.stringify(data, null, 2);
+          const payload = data.activation || data;
+          toolgateActivationJson.textContent = JSON.stringify(payload, null, 2);
         }
       } catch (err) {
         if (toolgateStatusLine) toolgateStatusLine.textContent = 'Status fetch failed';
