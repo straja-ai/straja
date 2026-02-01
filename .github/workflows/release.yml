@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          LDFLAGS="-s -w -X 'github.com/straja-ai/straja/internal/server.version=${VERSION}'"
+          build() {
+            GOOS="$1" GOARCH="$2" OUT="$3"
+            echo ">> Building ${OUT}"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags "$LDFLAGS" -o "dist/${OUT}" ./cmd/straja
+          }
+          build linux amd64 straja_linux_amd64
+          build linux arm64 straja_linux_arm64
+          build darwin amd64 straja_darwin_amd64
+          build darwin arm64 straja_darwin_arm64
+          build windows amd64 straja_windows_amd64.exe
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/straja_*
+            dist/checksums.txt
+          generate_release_notes: true

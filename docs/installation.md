@@ -3,8 +3,35 @@
 ## Binary (recommended)
 
 ```bash
-curl -LO https://github.com/straja-ai/straja/releases/latest/download/straja
+os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+arch="$(uname -m)"
+
+case "$os" in
+  linux|darwin) ;;
+  *) echo "Unsupported OS: $os" >&2; exit 1 ;;
+esac
+
+case "$arch" in
+  x86_64|amd64) arch="amd64" ;;
+  arm64|aarch64) arch="arm64" ;;
+  *) echo "Unsupported arch: $arch" >&2; exit 1 ;;
+esac
+
+asset="straja_${os}_${arch}"
+curl -L -o straja "https://github.com/straja-ai/straja/releases/latest/download/${asset}"
 chmod +x straja
+```
+
+Verify checksum (recommended):
+
+```bash
+curl -LO "https://github.com/straja-ai/straja/releases/latest/download/checksums.txt"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha_cmd="sha256sum"
+else
+  sha_cmd="shasum -a 256"
+fi
+grep "  ${asset}$" checksums.txt | $sha_cmd -c -
 ```
 
 Run with:

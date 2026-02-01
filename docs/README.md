@@ -16,6 +16,7 @@ This documentation set is generated from the current repository. Every option an
 - [StrajaGuard v1 intel bundle](strajaguard-v1.md)
 - [Troubleshooting](troubleshooting.md)
 - [Security considerations](security.md)
+- [Releasing](releasing.md)
 
 ## Source of truth
 
