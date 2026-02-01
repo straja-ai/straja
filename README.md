@@ -46,7 +46,7 @@ See the documentation below for exact commands and examples.
 - [StrajaGuard v1](docs/strajaguard-v1.md)
 - [Activation events](docs/activation.md)
 - [Toolgate API](docs/toolgate.md)
-- [Moltbot + Codex integration](docs/integrations/moltbot-codex.md)
+- [Openclaw integration](docs/integrations/openclaw.md)
 - [Load testing](docs/load-testing.md)
 
 ## Status
