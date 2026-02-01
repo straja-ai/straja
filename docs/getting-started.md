@@ -19,9 +19,9 @@ case "$arch" in
   *) echo "Unsupported arch: $arch" >&2; exit 1 ;;
 esac
 
-asset="straja_${os}_${arch}"
-curl -L -o straja "https://github.com/straja-ai/straja/releases/latest/download/${asset}"
-chmod +x straja
+asset="straja_${os}_${arch}.tar.gz"
+curl -L -o "${asset}" "https://github.com/straja-ai/straja/releases/latest/download/${asset}"
+tar -xzf "${asset}"
 ```
 
 Verify checksum (recommended):
@@ -68,7 +68,7 @@ projects:
 ## 4) Run the gateway
 
 ```bash
-./straja --config straja.yaml
+./straja/run.sh --config straja.yaml
 ```
 
 Flags are defined in `cmd/straja/main.go`:

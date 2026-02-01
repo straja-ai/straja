@@ -8,9 +8,14 @@ on:
 permissions:
   contents: write
 
+env:
+  ORT_VERSION: "1.22.0"
+
 jobs:
-  build-and-release:
+  build-linux-amd64:
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,35 +26,186 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build binaries
-        env:
-          VERSION: ${{ github.ref_name }}
+      - name: Build and package
         run: |
           set -euo pipefail
-          mkdir -p dist
-          LDFLAGS="-s -w -X 'github.com/straja-ai/straja/internal/server.version=${VERSION}'"
-          build() {
-            GOOS="$1" GOARCH="$2" OUT="$3"
-            echo ">> Building ${OUT}"
-            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-              go build -trimpath -ldflags "$LDFLAGS" -o "dist/${OUT}" ./cmd/straja
-          }
-          build linux amd64 straja_linux_amd64
-          build linux arm64 straja_linux_arm64
-          build darwin amd64 straja_darwin_amd64
-          build darwin arm64 straja_darwin_arm64
-          build windows amd64 straja_windows_amd64.exe
+          mkdir -p dist/straja/lib
+
+          LDFLAGS="-s -w -X github.com/straja-ai/straja/internal/server.version=${VERSION}"
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags "$LDFLAGS" -o dist/straja/straja ./cmd/straja
+
+          ORT_PKG="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_PKG}"
+          curl -L -o /tmp/ort.tgz "$ORT_URL"
+          tar -xzf /tmp/ort.tgz -C /tmp
+          ORT_DIR="/tmp/onnxruntime-linux-x64-${ORT_VERSION}"
+          cp "${ORT_DIR}/lib/libonnxruntime.so"* dist/straja/lib/
+
+          if [ ! -e dist/straja/lib/libonnxruntime.so ]; then
+            lib_file=$(ls dist/straja/lib/libonnxruntime.so.* | head -n 1)
+            ln -s "$(basename "$lib_file")" dist/straja/lib/libonnxruntime.so
+          fi
+
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'set -euo pipefail' \
+            'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
+            'export LD_LIBRARY_PATH="${script_dir}/lib:${LD_LIBRARY_PATH:-}"' \
+            'exec "${script_dir}/straja" "$@"' \
+            > dist/straja/run.sh
+
+          chmod +x dist/straja/run.sh dist/straja/straja
+          ./dist/straja/straja -h
+
+          tar -czf straja_linux_amd64.tar.gz -C dist straja
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: straja_linux_amd64
+          path: straja_linux_amd64.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and package
+        run: |
+          set -euo pipefail
+          mkdir -p dist/straja/lib
+
+          arch_raw="$(uname -m)"
+          case "$arch_raw" in
+            arm64)
+              goarch="arm64"
+              ort_arch="osx-arm64"
+              asset_arch="arm64"
+              ;;
+            x86_64)
+              goarch="amd64"
+              ort_arch="osx-x86_64"
+              asset_arch="amd64"
+              ;;
+            *)
+              echo "Unsupported macOS arch: ${arch_raw}" >&2
+              exit 1
+              ;;
+          esac
+
+          LDFLAGS="-s -w -X github.com/straja-ai/straja/internal/server.version=${VERSION}"
+          CGO_ENABLED=1 GOOS=darwin GOARCH=${goarch} \
+            go build -trimpath -ldflags "$LDFLAGS" -o dist/straja/straja ./cmd/straja
+
+          ORT_PKG="onnxruntime-${ort_arch}-${ORT_VERSION}.tgz"
+          ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_PKG}"
+          curl -L -o /tmp/ort.tgz "$ORT_URL"
+          tar -xzf /tmp/ort.tgz -C /tmp
+          ORT_DIR="/tmp/onnxruntime-${ort_arch}-${ORT_VERSION}"
+          cp "${ORT_DIR}/lib/libonnxruntime"*.dylib dist/straja/lib/
+
+          if [ ! -e dist/straja/lib/libonnxruntime.dylib ]; then
+            lib_file=$(ls dist/straja/lib/libonnxruntime*.dylib | head -n 1)
+            ln -s "$(basename "$lib_file")" dist/straja/lib/libonnxruntime.dylib
+          fi
+
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'set -euo pipefail' \
+            'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
+            'export DYLD_LIBRARY_PATH="${script_dir}/lib:${DYLD_LIBRARY_PATH:-}"' \
+            'exec "${script_dir}/straja" "$@"' \
+            > dist/straja/run.sh
+
+          chmod +x dist/straja/run.sh dist/straja/straja
+          ./dist/straja/straja -h
+
+          tar -czf "straja_darwin_${asset_arch}.tar.gz" -C dist straja
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: straja_darwin
+          path: straja_darwin_*.tar.gz
+
+  build-windows-amd64:
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path dist\straja | Out-Null
+
+          $Ldflags = "-s -w -X github.com/straja-ai/straja/internal/server.version=$Env:VERSION"
+          $Env:CGO_ENABLED = "1"
+          $Env:GOOS = "windows"
+          $Env:GOARCH = "amd64"
+          go build -trimpath -ldflags "$Ldflags" -o dist\straja\straja.exe .\cmd\straja
+
+          $OrtPkg = "onnxruntime-win-x64-$Env:ORT_VERSION.zip"
+          $OrtUrl = "https://github.com/microsoft/onnxruntime/releases/download/v$Env:ORT_VERSION/$OrtPkg"
+          $OrtZip = "$Env:TEMP\ort.zip"
+          Invoke-WebRequest -Uri $OrtUrl -OutFile $OrtZip
+          Expand-Archive -Path $OrtZip -DestinationPath $Env:TEMP\ort
+          $OrtDir = Join-Path $Env:TEMP "ort\onnxruntime-win-x64-$Env:ORT_VERSION"
+          Copy-Item "$OrtDir\lib\*.dll" dist\straja\ -Force
+
+          .\dist\straja\straja.exe -h
+
+          Compress-Archive -Path dist\straja -DestinationPath straja_windows_amd64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: straja_windows_amd64
+          path: straja_windows_amd64.zip
+
+  release:
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux-amd64
+      - build-macos
+      - build-windows-amd64
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_dist
+          merge-multiple: true
 
       - name: Generate checksums
         run: |
           set -euo pipefail
-          cd dist
-          sha256sum * > checksums.txt
+          cd release_dist
+          sha256sum *.tar.gz *.zip > checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/straja_*
-            dist/checksums.txt
+            release_dist/*.tar.gz
+            release_dist/*.zip
+            release_dist/checksums.txt
           generate_release_notes: true
