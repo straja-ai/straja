@@ -11,6 +11,8 @@ BIN_DIR := bin
 
 # Go options
 GO_FILES := $(shell find . -name '*.go' -not -path "./vendor/*")
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -X 'github.com/straja-ai/straja/internal/server.version=$(VERSION)'
 K6_SCRIPT := tools/loadtest/chat_completion.js
 STRAJA_BASE_URL ?= http://localhost:8080
 MOCK_GATEWAY_LOG := /tmp/straja_mock_gateway.log
@@ -27,7 +29,7 @@ all: build
 build:
 	@echo ">> Building $(BIN_NAME)..."
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(BIN_DIR)/$(BIN_NAME) $(CMD_PKG)
+	@go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BIN_NAME) $(CMD_PKG)
 
 ## Run Straja with local config + .env variables (if .env exists)
 run:
@@ -40,7 +42,7 @@ run:
 	else \
 		echo "   -> No .env file found, running with current environment"; \
 	fi; \
-	go run $(CMD_PKG) --config=straja.yaml
+	go run -ldflags "$(LDFLAGS)" $(CMD_PKG) --config=straja.yaml
 
 ## Dev helper: local activation webhook receiver
 activation-receiver:
@@ -138,7 +140,7 @@ loadtest-mock-delay: build
 ## Build and run StrajaGuard microbenchmark
 bench-strajaguard: build
 	@echo ">> Building StrajaGuard benchmark..."
-	@go build -o bin/straja-bench ./cmd/straja-bench
+	@go build -ldflags "$(LDFLAGS)" -o bin/straja-bench ./cmd/straja-bench
 	@echo ">> Running StrajaGuard benchmark ($(BENCH_CONFIG))..."
 	@MOCK_DELAY_MS=0 STRAJA_GUARD_MAX_SESSIONS=2 STRAJA_GUARD_INTRA_THREADS=4 STRAJA_GUARD_INTER_THREADS=1 ./bin/straja-bench --config=$(BENCH_CONFIG) --n=200
 

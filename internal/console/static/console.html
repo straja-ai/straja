@@ -988,6 +988,10 @@
         <a href="#config" data-view="config">Config</a>
         <a href="#requests" data-view="requests">Requests</a>
       </nav>
+      <div class="sidebar-footer">
+        <div>Straja Gateway Console</div>
+        <div id="gatewayVersionLabel">Gateway version: --</div>
+      </div>
     </aside>
 
     <main class="main">
@@ -1550,6 +1554,7 @@
     const gatewayStatus = document.getElementById('gatewayStatus');
     const intelStatus = document.getElementById('intelStatus');
     const bundleStatus = document.getElementById('bundleStatus');
+    const gatewayVersionLabel = document.getElementById('gatewayVersionLabel');
 
     const overviewStatus = document.getElementById('overviewStatus');
     const overviewIntel = document.getElementById('overviewIntel');
@@ -2008,11 +2013,17 @@
         overviewIntel.textContent = intel;
         overviewBundle.textContent = bundle;
         overviewValidated.textContent = data.intel_last_validated_at || 'n/a';
+        if (gatewayVersionLabel) {
+          gatewayVersionLabel.textContent = `Gateway version: ${data.gateway_version || 'n/a'}`;
+        }
       } catch (err) {
         setPill(gatewayStatus, 'Gateway: offline', 'red');
         setPill(intelStatus, 'Intel: offline', 'red');
         setPill(bundleStatus, 'Bundle: --', 'blue');
         overviewStatus.textContent = 'Unable to reach /readyz.';
+        if (gatewayVersionLabel) {
+          gatewayVersionLabel.textContent = 'Gateway version: --';
+        }
       }
     }
 

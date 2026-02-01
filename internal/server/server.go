@@ -35,7 +35,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const version = "dev"
+var version = "dev"
 
 const robotsTxt = `User-agent: *
 Disallow: /console
@@ -862,6 +862,7 @@ type readinessResponse struct {
 	Status              string `json:"status"`
 	Mode                string `json:"mode"`
 	ActiveBundleVersion string `json:"active_bundle_version,omitempty"`
+	GatewayVersion      string `json:"gateway_version,omitempty"`
 	Reason              string `json:"reason,omitempty"`
 	IntelStatus         string `json:"intel_status,omitempty"`
 	StrajaGuardStatus   string `json:"strajaguard_status,omitempty"`
@@ -887,6 +888,7 @@ func (s *Server) readiness() (readinessResponse, bool) {
 		Status:              "ready",
 		Mode:                mode,
 		ActiveBundleVersion: s.activeBundleVer,
+		GatewayVersion:      version,
 		IntelStatus:         s.intelStatus,
 		StrajaGuardStatus:   s.strajaGuardStatus,
 	}
