@@ -195,8 +195,8 @@ func TestResponsesStreamingSpecialistsRedactionSuggested(t *testing.T) {
 		t.Fatalf("expected activation payload")
 	}
 	summary := activationSummary(t, act)
-	if summary["response_final"] != "allow" {
-		t.Fatalf("expected summary.response_final allow, got %v", summary["response_final"])
+	if summary["response_final"] != "warn" {
+		t.Fatalf("expected summary.response_final warn, got %v", summary["response_final"])
 	}
 	if summary["response_note"] != "redaction_suggested" {
 		t.Fatalf("expected summary.response_note redaction_suggested, got %v", summary["response_note"])

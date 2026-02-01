@@ -130,5 +130,8 @@ func normalizeResponsePIIHit(hit *safety.PolicyHit, redacted bool) *safety.Polic
 			out.Action = "warn"
 		}
 	}
+	if action == "redact" && !redacted {
+		out.Action = "warn"
+	}
 	return &out
 }

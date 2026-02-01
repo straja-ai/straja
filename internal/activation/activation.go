@@ -411,7 +411,7 @@ func deriveResponseFinal(decision Decision, mode, postDecision string, hits []Ac
 	}
 	if postDecision == "redacted" {
 		if mode == ModeStream {
-			return "allow", strPtr("redaction_suggested")
+			return "warn", strPtr("redaction_suggested")
 		}
 		return "redact", strPtr("redaction_applied")
 	}
@@ -419,7 +419,7 @@ func deriveResponseFinal(decision Decision, mode, postDecision string, hits []Ac
 	postCheckRan := latencyMs > 0 || len(hits) > 0 || len(scores) > 0
 	if !postCheckRan {
 		if noteOverride != "" {
-			if noteOverride == "unsafe_instruction_detected" {
+			if noteOverride == "unsafe_instruction_detected" || noteOverride == "redaction_suggested" {
 				return "warn", strPtr(noteOverride)
 			}
 			return "allow", strPtr(noteOverride)
@@ -427,10 +427,16 @@ func deriveResponseFinal(decision Decision, mode, postDecision string, hits []Ac
 		return "allow", strPtr("skipped")
 	}
 	if noteOverride != "" {
-		if noteOverride == "unsafe_instruction_detected" {
+		if noteOverride == "unsafe_instruction_detected" || noteOverride == "redaction_suggested" {
+			return "warn", strPtr(noteOverride)
+		}
+		if hasAction(hits, "warn") {
 			return "warn", strPtr(noteOverride)
 		}
 		return "allow", strPtr(noteOverride)
+	}
+	if hasAction(hits, "warn") {
+		return "warn", nil
 	}
 	return "allow", nil
 }

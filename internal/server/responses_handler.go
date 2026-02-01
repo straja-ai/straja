@@ -250,7 +250,12 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	decision = "allow"
 	statusCode = upstreamResp.StatusCode
-	copyHeaders(w.Header(), upstreamResp.Header, nil)
+	skipHeaders := map[string]struct{}{}
+	if postDecision == "redacted" {
+		skipHeaders["Content-Length"] = struct{}{}
+		skipHeaders["Content-Encoding"] = struct{}{}
+	}
+	copyHeaders(w.Header(), upstreamResp.Header, skipHeaders)
 	w.Header().Set("Content-Type", "application/json")
 	s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow, mode)
 	w.WriteHeader(upstreamResp.StatusCode)

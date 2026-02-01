@@ -52,7 +52,7 @@ func ruleDefs() []rule {
 
 		{ID: "curl_upload_file", Category: categoryDataExfil, AppliesTo: ToolTypeShell, Action: ActionBlock, Pattern: `(?m)(?:^|[;&|]\s*|\n)\s*(?:\b(?:sudo|doas)\s+)?\bcurl\b[^|;\n]*(?:--upload-file\b|–upload-file\b|-T\b)\s+\S+`, CaseInsensitive: true},
 		{ID: "curl_form_file", Category: categoryDataExfil, AppliesTo: ToolTypeShell, Action: ActionBlock, Pattern: `(?m)(?:^|[;&|]\s*|\n)\s*(?:\b(?:sudo|doas)\s+)?\bcurl\b[^|;\n]*\s(?:-F\b|–form\b)\s+\S=@\S+`, CaseInsensitive: true},
-		{ID: "curl_data_at_file", Category: categoryDataExfil, AppliesTo: ToolTypeShell, Action: ActionBlock, Pattern: `(?m)(?:^|[;&|]\s*|\n)\s*(?:\b(?:sudo|doas)\s+)?\bcurl\b[^|;\n]*\s(?:-d\b|–data\b|–data-binary\b)\s+@\S+`, CaseInsensitive: true},
+		{ID: "curl_data_at_file", Category: categoryDataExfil, AppliesTo: ToolTypeShell, Action: ActionBlock, Pattern: `(?m)(?:^|[;&|]\s*|\n)\s*(?:\b(?:sudo|doas)\s+)?\bcurl\b[^|;\n]*\s(?:-d\b|--data\b|–data\b|--data-binary\b|–data-binary\b)\s+@\S+`, CaseInsensitive: true},
 		{ID: "wget_post_file", Category: categoryDataExfil, AppliesTo: ToolTypeShell, Action: ActionBlock, Pattern: `(?m)(?:^|[;&|]\s*|\n)\s*(?:\b(?:sudo|doas)\s+)?\bwget\b[^|;\n]*–post-file=\S+`, CaseInsensitive: true},
 		{ID: "scp_to_remote", Category: categoryDataExfil, AppliesTo: ToolTypeShell, Action: ActionBlock, Pattern: `(?m)(?:^|[;&|]\s*|\n)\s*(?:\b(?:sudo|doas)\s+)?\bscp\b[^|;\n]*\s+\S+\s+\S+@\S+:\S+`, CaseInsensitive: true},
 		{ID: "rsync_to_remote", Category: categoryDataExfil, AppliesTo: ToolTypeShell, Action: ActionBlock, Pattern: `(?m)(?:^|[;&|]\s*|\n)\s*(?:\b(?:sudo|doas)\s+)?\brsync\b[^|;\n]*\s+\S+\s+\S+@\S+:\S+`, CaseInsensitive: true},

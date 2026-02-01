@@ -114,14 +114,14 @@ security:
     ml_enabled: true
     ml_warn_threshold: 0.5
     action_on_regex_hit: "redact"
-    action_on_ml_only: "log"
+    action_on_ml_only: "redact"
   secrets:
     regex_enabled: true
     ml_enabled: true
     ml_warn_threshold: 0.5
     ml_block_threshold: 0.85
     action_on_regex_hit: "block_and_redact"
-    action_on_ml_only: "log"
+    action_on_ml_only: "redact"
 
 tool_gate:
   enabled: true
