@@ -29,6 +29,7 @@ docker run --rm \
   -e STRAJA_BUNDLE_DIR="/var/lib/straja/bundles/strajaguard_v1" \
   -e OPENAI_API_KEY="sk-..." \
   -e STRAJA_LICENSE_KEY="your-license" \
+  -e STRAJA_CONSOLE_SESSION_SECRET="replace-with-a-random-string" \
   straja:local
 ```
 

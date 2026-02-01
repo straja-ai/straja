@@ -28,9 +28,13 @@ Straja provides:
 
 ## Quickstart (minimal)
 
-1. Install the Straja binary or run it via Docker.
-2. Create a minimal `straja.yaml` configuration.
-3. Start the gateway and send a standard OpenAI `POST /v1/chat/completions` request using a project API key.
+1. Install the binary (download the latest release archive).
+2. Set your Straja license key.
+3. Export your provider API key (example below uses OpenAI).
+4. Set a console session secret.
+5. Review the included `straja.yaml`.
+6. Run the gateway.
+7. Open the console or send your first request.
 
 OpenAI SDKs work unchanged. No changes to model call logic are required.
 

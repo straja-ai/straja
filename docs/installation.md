@@ -34,11 +34,21 @@ fi
 grep "  ${asset}$" checksums.txt | $sha_cmd -c -
 ```
 
+Set required environment variables before running:
+
+```bash
+export STRAJA_LICENSE_KEY="STRAJA-FREE-..."
+export OPENAI_API_KEY="sk-..."
+export STRAJA_CONSOLE_SESSION_SECRET="replace-with-a-random-string"
+```
+
 Run with:
 
 ```bash
-./straja/run.sh --config straja.yaml
+./straja/run.sh
 ```
+
+The default config path is `straja.yaml`. Use `--config /path/to/straja.yaml` to override (see `cmd/straja/main.go`).
 
 Windows (PowerShell, amd64):
 
@@ -46,14 +56,14 @@ Windows (PowerShell, amd64):
 $asset = "straja_windows_amd64.zip"
 Invoke-WebRequest -Uri "https://github.com/straja-ai/straja/releases/latest/download/$asset" -OutFile $asset
 Expand-Archive -Path $asset -DestinationPath .
-.\straja\straja.exe --config straja.yaml
+.\straja\straja.exe
 ```
 
 ## From source (Go)
 
 ```bash
 make build
-./bin/straja --config straja.yaml
+./bin/straja
 ```
 
 Common dev commands are in `Makefile`:
@@ -91,6 +101,7 @@ docker run --rm \
   -e STRAJA_BUNDLE_DIR="/var/lib/straja/bundles/strajaguard_v1" \
   -e OPENAI_API_KEY="sk-..." \
   -e STRAJA_LICENSE_KEY="your-license" \
+  -e STRAJA_CONSOLE_SESSION_SECRET="replace-with-a-random-string" \
   straja:local
 ```
 
