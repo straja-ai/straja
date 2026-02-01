@@ -22,6 +22,8 @@ type Config struct {
 	Policy          PolicyConfig              `yaml:"policy"`
 	Intelligence    IntelligenceConfig        `yaml:"intelligence"`
 	Security        SecurityConfig            `yaml:"security"`
+	ToolGate        ToolGateConfig            `yaml:"tool_gate"`
+	ResponseGuard   ResponseGuardConfig       `yaml:"response_guard"`
 	Intel           IntelConfig               `yaml:"intel"`
 	StrajaGuard     StrajaGuardConfig         `yaml:"strajaguard"`
 	// ResolvedLicenseKey is populated at runtime (env-first) for both intelligence and StrajaGuard.
@@ -110,6 +112,30 @@ type TelemetryConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Endpoint string `yaml:"endpoint"`
 	Protocol string `yaml:"protocol"` // grpc | http
+}
+
+// ToolGateConfig configures tool execution guardrails.
+type ToolGateConfig struct {
+	Enabled           bool     `yaml:"enabled"`
+	Mode              string   `yaml:"mode"`
+	AllowlistHosts    []string `yaml:"allowlist_hosts"`
+	AllowlistCommands []string `yaml:"allowlist_commands"`
+}
+
+func (c ToolGateConfig) isZero() bool {
+	return !c.Enabled && c.Mode == "" && len(c.AllowlistHosts) == 0 && len(c.AllowlistCommands) == 0
+}
+
+type ResponseGuardConfig struct {
+	Enabled    bool                        `yaml:"enabled"`
+	Mode       string                      `yaml:"mode"`
+	Categories ResponseGuardCategoryConfig `yaml:"categories"`
+}
+
+type ResponseGuardCategoryConfig struct {
+	DataExfilInstruction           string `yaml:"data_exfil_instruction"`
+	UnsafeActionInstruction        string `yaml:"unsafe_action_instruction"`
+	PrivilegeEscalationInstruction string `yaml:"privilege_escalation_instruction"`
 }
 
 func (a ActivationConfig) isZero() bool {
@@ -242,6 +268,22 @@ func defaultTelemetryConfig() TelemetryConfig {
 		Enabled:  false,
 		Endpoint: "",
 		Protocol: "grpc",
+	}
+}
+
+func defaultToolGateConfig() ToolGateConfig {
+	return ToolGateConfig{
+		Enabled:           true,
+		Mode:              "elevated_only",
+		AllowlistHosts:    []string{},
+		AllowlistCommands: []string{},
+	}
+}
+
+func defaultResponseGuardConfig() ResponseGuardConfig {
+	return ResponseGuardConfig{
+		Enabled: true,
+		Mode:    "warn",
 	}
 }
 
@@ -399,8 +441,10 @@ func defaultConfig() *Config {
 		Logging: LoggingConfig{
 			ActivationLevel: "metadata",
 		},
-		Activation: defaultActivationConfig(),
-		Telemetry:  defaultTelemetryConfig(),
+		Activation:    defaultActivationConfig(),
+		Telemetry:     defaultTelemetryConfig(),
+		ToolGate:      defaultToolGateConfig(),
+		ResponseGuard: defaultResponseGuardConfig(),
 		Policy: PolicyConfig{
 			BannedWords:     "block",
 			PII:             "block",
@@ -533,6 +577,30 @@ func applyDefaults(cfg *Config) {
 	}
 	if v, ok := envString("OTEL_EXPORTER_OTLP_PROTOCOL"); ok && v != "" {
 		cfg.Telemetry.Protocol = v
+	}
+
+	// Tool gate defaults
+	if cfg.ToolGate.isZero() {
+		cfg.ToolGate = defaultToolGateConfig()
+	} else {
+		if cfg.ToolGate.Mode == "" {
+			cfg.ToolGate.Mode = "elevated_only"
+		}
+		if cfg.ToolGate.AllowlistHosts == nil {
+			cfg.ToolGate.AllowlistHosts = []string{}
+		}
+		if cfg.ToolGate.AllowlistCommands == nil {
+			cfg.ToolGate.AllowlistCommands = []string{}
+		}
+	}
+
+	// Response guard defaults
+	if cfg.ResponseGuard == (ResponseGuardConfig{}) {
+		cfg.ResponseGuard = defaultResponseGuardConfig()
+	} else {
+		if cfg.ResponseGuard.Mode == "" {
+			cfg.ResponseGuard.Mode = "warn"
+		}
 	}
 
 	// Policy action defaults

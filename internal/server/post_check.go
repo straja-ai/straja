@@ -10,7 +10,6 @@ import (
 
 type postCheckResult struct {
 	decision string
-	blockErr error
 	redacted bool
 	outputs  []string
 	postReq  *inference.Request
@@ -44,44 +43,39 @@ func newPostCheckAggregator(ctx context.Context, s *Server, projectID, model, re
 }
 
 func (a *postCheckAggregator) Check(text string) (string, error) {
-	req := &inference.Request{
-		RequestID: a.result.postReq.RequestID,
-		ProjectID: a.project,
-		Model:     a.model,
-		Messages: []inference.Message{
-			{
-				Role:    "assistant",
-				Content: text,
-			},
-		},
-		Timings: &inference.Timings{},
-	}
-
-	start := time.Now()
-	err := a.server.policy.BeforeModel(a.ctx, req)
-	a.result.latency += time.Since(start)
-
-	mergeInferenceRequest(a.result.postReq, req)
+	piiRes := a.server.evaluateResponsePII(a.ctx, text)
+	a.result.latency += piiRes.latency
 
 	sanitized := text
-	if len(req.Messages) > 0 {
-		sanitized = req.Messages[0].Content
+	if piiRes.updated != "" {
+		sanitized = piiRes.updated
 	}
 	if sanitized != text {
 		a.result.redacted = true
 	}
 	a.result.outputs = append(a.result.outputs, sanitized)
 
-	if err != nil && a.result.blockErr == nil {
-		a.result.blockErr = err
+	if piiRes.hit != nil {
+		if !containsPolicyHit(a.result.postReq.PolicyDecisions, piiRes.hit.Category) {
+			a.result.postReq.PolicyDecisions = append(a.result.postReq.PolicyDecisions, *piiRes.hit)
+		}
+		if !containsString(a.result.postReq.PolicyHits, piiRes.hit.Category) {
+			a.result.postReq.PolicyHits = append(a.result.postReq.PolicyHits, piiRes.hit.Category)
+		}
 	}
-	return sanitized, err
+	if len(piiRes.scores) > 0 {
+		if a.result.postReq.SecurityScores == nil {
+			a.result.postReq.SecurityScores = make(map[string]float32, len(piiRes.scores))
+		}
+		for k, v := range piiRes.scores {
+			a.result.postReq.SecurityScores[k] = v
+		}
+	}
+	return sanitized, nil
 }
 
 func (a *postCheckAggregator) Result() postCheckResult {
-	if a.result.blockErr != nil {
-		a.result.decision = "blocked"
-	} else if a.result.redacted {
+	if a.result.redacted {
 		a.result.decision = "redacted"
 	} else {
 		a.result.decision = "allow"

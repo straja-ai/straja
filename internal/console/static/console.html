@@ -853,6 +853,10 @@
                   <button class="btn secondary" id="copyOutputBtn" type="button">Copy response</button>
                 </div>
               </div>
+              <div class="mini" style="margin-bottom: 6px;">
+                Request: <span class="pill" id="outputRequestDecision">--</span>
+                Response: <span class="pill" id="outputResponseDecision">--</span>
+              </div>
               <div class="output-box" id="assistantOutput"></div>
               <details style="margin-top: 12px; display: none;" id="redactedPromptDetails">
                 <summary>Redacted request preview</summary>
@@ -869,10 +873,15 @@
                 <pre id="rawResponse"></pre>
                 <button class="btn secondary" id="copyRawBtn" type="button">Copy raw</button>
               </details>
+              <div class="mini" id="activationResponseNote"></div>
               <details style="margin-top: 12px;">
                 <summary>Activation event</summary>
                 <pre id="activationJson"></pre>
                 <button class="btn secondary" id="copyActivationBtn" type="button">Copy activation</button>
+              </details>
+              <details style="margin-top: 12px; display: none;" id="responseGuardMatches">
+                <summary>Response guard matches</summary>
+                <div class="mini" id="responseGuardMatchesBody"></div>
               </details>
             </div>
 
@@ -892,7 +901,11 @@
                     <span class="pill" id="responseDecision">--</span>
                   </div>
                   <div class="chips" id="responseCategories"></div>
-                  <div class="mini" id="responseNote"></div>
+                  <div class="mini" id="responseGuardLabel"></div>
+                  <details style="margin-top: 6px; display: none;" id="responseGuardDetails">
+                    <summary>Response guard matches</summary>
+                    <div class="mini" id="responseGuardSummary"></div>
+                  </details>
                 </div>
               </div>
 
@@ -921,24 +934,17 @@
                 </div>
                 <div class="score-row">
                   <div class="score-label">
-                    <span>Response: Prompt injection</span>
-                    <span id="respPiScore">--</span>
-                  </div>
-                  <div class="score-bar" id="respPiBar"></div>
-                </div>
-                <div class="score-row">
-                  <div class="score-label">
-                    <span>Response: Jailbreak</span>
-                    <span id="respJbScore">--</span>
-                  </div>
-                  <div class="score-bar" id="respJbBar"></div>
-                </div>
-                <div class="score-row">
-                  <div class="score-label">
                     <span>Response: PII</span>
                     <span id="respPiiScore">--</span>
                   </div>
                   <div class="score-bar" id="respPiiBar"></div>
+                </div>
+                <div class="score-row">
+                  <div class="score-label">
+                    <span>Response: Data exfiltration</span>
+                    <span id="respExfilScore">--</span>
+                  </div>
+                  <div class="score-bar" id="respExfilBar"></div>
                 </div>
               </div>
             </div>
@@ -1177,20 +1183,26 @@
     const redactedOutput = document.getElementById('redactedOutput');
     const redactedPromptDetails = document.getElementById('redactedPromptDetails');
     const redactedOutputDetails = document.getElementById('redactedOutputDetails');
+    const outputRequestDecision = document.getElementById('outputRequestDecision');
+    const outputResponseDecision = document.getElementById('outputResponseDecision');
+    const activationResponseNote = document.getElementById('activationResponseNote');
+    const responseGuardMatches = document.getElementById('responseGuardMatches');
+    const responseGuardMatchesBody = document.getElementById('responseGuardMatchesBody');
 
     const requestDecision = document.getElementById('requestDecision');
     const responseDecision = document.getElementById('responseDecision');
     const requestCategories = document.getElementById('requestCategories');
     const responseCategories = document.getElementById('responseCategories');
-    const responseNote = document.getElementById('responseNote');
+    const responseGuardLabel = document.getElementById('responseGuardLabel');
+    const responseGuardDetails = document.getElementById('responseGuardDetails');
+    const responseGuardSummary = document.getElementById('responseGuardSummary');
 
     const scoreEls = {
       reqPi: { label: document.getElementById('reqPiScore'), bar: document.getElementById('reqPiBar') },
       reqJb: { label: document.getElementById('reqJbScore'), bar: document.getElementById('reqJbBar') },
       reqPii: { label: document.getElementById('reqPiiScore'), bar: document.getElementById('reqPiiBar') },
-      respPi: { label: document.getElementById('respPiScore'), bar: document.getElementById('respPiBar') },
-      respJb: { label: document.getElementById('respJbScore'), bar: document.getElementById('respJbBar') },
-      respPii: { label: document.getElementById('respPiiScore'), bar: document.getElementById('respPiiBar') }
+      respPii: { label: document.getElementById('respPiiScore'), bar: document.getElementById('respPiiBar') },
+      respExfil: { label: document.getElementById('respExfilScore'), bar: document.getElementById('respExfilBar') }
     };
 
     const piWarn = document.getElementById('piWarn');
@@ -1279,6 +1291,7 @@
     function colorForDecision(decision) {
       if (decision === 'block' || decision === 'blocked') return 'red';
       if (decision === 'redact' || decision === 'redacted') return 'amber';
+      if (decision === 'warn' || decision === 'warning') return 'amber';
       if (decision === 'allow') return 'green';
       return 'blue';
     }
@@ -1352,11 +1365,30 @@
         redactedOutputDetails.open = false;
         redactedOutputDetails.style.display = 'none';
       }
+      if (responseGuardMatches) {
+        responseGuardMatches.open = false;
+        responseGuardMatches.style.display = 'none';
+      }
+      if (responseGuardMatchesBody) {
+        responseGuardMatchesBody.textContent = '';
+      }
       requestIdLabel.textContent = 'Request ID: --';
       activationCache = null;
       updateDecision(requestDecision, null);
       updateDecision(responseDecision, null);
-      responseNote.textContent = '';
+      updateDecision(outputRequestDecision, null);
+      updateDecision(outputResponseDecision, null);
+      if (activationResponseNote) {
+        activationResponseNote.textContent = '';
+      }
+      responseGuardLabel.textContent = '';
+      if (responseGuardDetails) {
+        responseGuardDetails.open = false;
+        responseGuardDetails.style.display = 'none';
+      }
+      if (responseGuardSummary) {
+        responseGuardSummary.textContent = '';
+      }
       renderChips(requestCategories, []);
       renderChips(responseCategories, []);
       Object.values(scoreEls).forEach(el => renderScore(el, null, null));
@@ -1503,14 +1535,66 @@
       activationJson.textContent = actJson ? JSON.stringify(actJson, null, 2) : '';
 
       const summary = actJson && actJson.summary ? actJson.summary : {};
+      const responseDecisionLabel = summary.response_note && summary.response_note.startsWith('unsafe_instruction_')
+        ? 'warn'
+        : summary.response_final;
       updateDecision(requestDecision, summary.request_final);
-      updateDecision(responseDecision, summary.response_final);
-      responseNote.textContent = summary.response_note ? `Note: ${summary.response_note.replace(/_/g, ' ')}` : '';
+      updateDecision(responseDecision, responseDecisionLabel);
+      updateDecision(outputRequestDecision, summary.request_final);
+      updateDecision(outputResponseDecision, responseDecisionLabel);
+      if (activationResponseNote) {
+        activationResponseNote.textContent = summary.response_note ? `Response note: ${summary.response_note.replace(/_/g, ' ')}` : '';
+      }
 
       const reqCats = actJson?.request?.decision?.reason_categories || [];
       const respCats = actJson?.response?.decision?.reason_categories || [];
       renderChips(requestCategories, reqCats);
       renderChips(responseCategories, respCats);
+
+      const responseHits = Array.isArray(actJson?.response?.hits) ? actJson.response.hits : [];
+      const responseGuardHits = responseHits.filter(hit => typeof hit?.category === 'string' && hit.category.endsWith('_instruction'));
+      const noteLower = summary.response_note ? String(summary.response_note).toLowerCase() : '';
+      const noteIndicatesGuard = noteLower.startsWith('unsafe_instruction_');
+      if (responseGuardHits.length > 0 || noteIndicatesGuard) {
+        const hasBlock = responseGuardHits.some(hit => String(hit.action).toLowerCase() === 'block') || noteLower.includes('blocked');
+        responseGuardLabel.textContent = `Response guard: ${hasBlock ? 'BLOCK' : 'WARN'}`;
+        if (responseGuardDetails && responseGuardSummary) {
+          const categories = [...new Set(responseGuardHits.map(hit => hit.category))].join(', ') || '--';
+          const ruleIds = [...new Set(responseGuardHits.flatMap(hit => Array.isArray(hit.sources) ? hit.sources : [])
+            .filter(src => typeof src === 'string' && src.startsWith('rule:'))
+            .map(src => src.replace('rule:', '')))]
+            .join(', ') || '--';
+          responseGuardSummary.textContent = `Categories: ${categories} | Rules: ${ruleIds}`;
+          responseGuardDetails.style.display = 'block';
+        }
+      } else {
+        responseGuardLabel.textContent = '';
+        if (responseGuardDetails) {
+          responseGuardDetails.open = false;
+          responseGuardDetails.style.display = 'none';
+        }
+        if (responseGuardSummary) {
+          responseGuardSummary.textContent = '';
+        }
+      }
+
+      if (responseGuardMatches && responseGuardMatchesBody) {
+        if (responseGuardHits.length > 0) {
+          const lines = responseGuardHits.map(hit => {
+            const cat = hit.category || '--';
+            const rule = (Array.isArray(hit.sources) ? hit.sources.find(src => typeof src === 'string' && src.startsWith('rule:')) : '') || '';
+            const ruleId = rule ? rule.replace('rule:', '') : '--';
+            const action = hit.action || '--';
+            const evidence = hit.evidence || '--';
+            return `• ${cat} | ${ruleId} | ${action} | ${evidence}`;
+          });
+          responseGuardMatchesBody.textContent = lines.join('\n');
+          responseGuardMatches.style.display = 'block';
+        } else {
+          responseGuardMatchesBody.textContent = '';
+          responseGuardMatches.style.display = 'none';
+        }
+      }
 
       const redactedPromptText = actJson?.request?.preview?.prompt || '';
       const redactedOutputText = actJson?.response?.preview?.output || '';
@@ -1534,9 +1618,8 @@
       renderScore(scoreEls.reqPi, reqScores.prompt_injection, thresholds.prompt_injection || defaultThresholds.prompt_injection);
       renderScore(scoreEls.reqJb, reqScores.jailbreak, thresholds.jailbreak || defaultThresholds.jailbreak);
       renderScore(scoreEls.reqPii, reqScores.contains_personal_data, thresholds.pii ? { warn: thresholds.pii } : null);
-      renderScore(scoreEls.respPi, respScores.prompt_injection, thresholds.prompt_injection || defaultThresholds.prompt_injection);
-      renderScore(scoreEls.respJb, respScores.jailbreak, thresholds.jailbreak || defaultThresholds.jailbreak);
       renderScore(scoreEls.respPii, respScores.contains_personal_data, thresholds.pii ? { warn: thresholds.pii } : null);
+      renderScore(scoreEls.respExfil, respScores.data_exfil_instruction, thresholds.data_exfil || null);
 
       if (thresholds.prompt_injection) {
         piWarn.value = thresholds.prompt_injection.warn ?? defaultThresholds.prompt_injection.warn;

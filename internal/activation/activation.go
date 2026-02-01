@@ -34,6 +34,7 @@ type ActionEntry struct {
 	Action     string   `json:"action"`
 	Confidence float32  `json:"confidence,omitempty"`
 	Sources    []string `json:"sources,omitempty"`
+	Evidence   string   `json:"evidence,omitempty"`
 }
 
 type Summary struct {
@@ -182,7 +183,7 @@ func BuildEvent(params BuildParams) *Event {
 	totalMs := requestLatencyMs + providerMs + responseLatencyMs
 
 	requestFinal := deriveRequestFinal(params.Decision, requestHits)
-	responseFinal, responseNote := deriveResponseFinal(params.Decision, mode, params.Request.PostDecision, responseHits, responseScores, responseLatencyMs)
+	responseFinal, responseNote := deriveResponseFinal(params.Decision, mode, params.Request.PostDecision, responseHits, responseScores, responseLatencyMs, params.Request.ResponseNote)
 
 	requestReasons := buildReasonCategories(requestHits)
 	responseReasons := buildReasonCategories(responseHits)
@@ -222,7 +223,7 @@ func BuildEvent(params BuildParams) *Event {
 			RequestFinal:  requestFinal,
 			ResponseFinal: responseFinal,
 			ResponseNote:  responseNote,
-			Blocked:       requestFinal == "block" || responseFinal == "block",
+			Blocked:       requestFinal == "block",
 			Categories:    categories,
 		},
 		Request: RequestPayload{
@@ -292,6 +293,7 @@ func buildActionEntries(hits []safety.PolicyHit) []ActionEntry {
 			Action:     h.Action,
 			Confidence: h.Confidence,
 			Sources:    cloneStrings(h.Sources),
+			Evidence:   h.Evidence,
 		})
 	}
 	return out
@@ -378,12 +380,12 @@ func deriveRequestFinal(decision Decision, hits []ActionEntry) string {
 	return "allow"
 }
 
-func deriveResponseFinal(decision Decision, mode, postDecision string, hits []ActionEntry, scores map[string]float32, latencyMs float64) (string, *string) {
+func deriveResponseFinal(decision Decision, mode, postDecision string, hits []ActionEntry, scores map[string]float32, latencyMs float64, noteOverride string) (string, *string) {
 	postDecision = strings.ToLower(strings.TrimSpace(postDecision))
 	if decision == DecisionBlockedBefore || decision == DecisionBlockedAfter || decision == DecisionErrorProvider {
-		return "block", nil
-	}
-	if postDecision == "blocked" {
+		if noteOverride != "" {
+			return "block", strPtr(noteOverride)
+		}
 		return "block", nil
 	}
 	if postDecision == "redacted" {
@@ -395,7 +397,19 @@ func deriveResponseFinal(decision Decision, mode, postDecision string, hits []Ac
 
 	postCheckRan := latencyMs > 0 || len(hits) > 0 || len(scores) > 0
 	if !postCheckRan {
+		if noteOverride != "" {
+			if noteOverride == "unsafe_instruction_detected" {
+				return "warn", strPtr(noteOverride)
+			}
+			return "allow", strPtr(noteOverride)
+		}
 		return "allow", strPtr("skipped")
+	}
+	if noteOverride != "" {
+		if noteOverride == "unsafe_instruction_detected" {
+			return "warn", strPtr(noteOverride)
+		}
+		return "allow", strPtr(noteOverride)
 	}
 	return "allow", nil
 }
@@ -465,7 +479,7 @@ func actionInfluencesDecision(action string) bool {
 	if action == "" {
 		return false
 	}
-	return strings.Contains(action, "block") || strings.Contains(action, "redact")
+	return strings.Contains(action, "block") || strings.Contains(action, "redact") || strings.Contains(action, "warn")
 }
 
 var (

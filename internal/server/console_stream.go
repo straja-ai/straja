@@ -122,7 +122,8 @@ func (s *Server) handleConsoleChatStream(w http.ResponseWriter, r *http.Request,
 		cancel()
 		redact.Logf("console stream copy failed: %v", err)
 	}
-	postDecision := runPostCheckForStream(ctx, s, infReq, capture)
+	postDecision, outputText := runPostCheckForStream(ctx, s, infReq, capture)
+	_ = s.applyResponseGuard(infReq, s.evaluateResponseGuard(outputText), true)
 	if postDecision == "blocked" {
 		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter, activation.ModeStream)
 	} else {

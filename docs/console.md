@@ -49,9 +49,10 @@ The console renders three labels from the activation `summary` object:
 
 - **Request**: `summary.request_final` (`allow`, `redact`, `block`)
 - **Response**: `summary.response_final` (`allow`, `redact`, `block`)
-- **Note**: `summary.response_note` (e.g., `redaction_applied`, `redaction_suggested`, `skipped`)
+- **Note**: `summary.response_note` (e.g., `redaction_applied`, `redaction_suggested`, `unsafe_instruction_detected`, `skipped`)
+- **Response guard**: shows `WARN` when response guard matches, with categories and rule IDs on expand
 
-For streaming, the labels appear once the request status endpoint returns the activation payload.
+For streaming, the labels appear once the request status endpoint returns the activation payload. The response note is shown next to the Activation panel when present.
 
 ## API: chat (streaming)
 

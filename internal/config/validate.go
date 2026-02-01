@@ -62,6 +62,14 @@ func Validate(cfg *Config) error {
 		return err
 	}
 
+	if err := validateToolGateConfig(cfg.ToolGate); err != nil {
+		return err
+	}
+
+	if err := validateResponseGuardConfig(cfg.ResponseGuard); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -132,6 +140,48 @@ func validateTelemetryConfig(t TelemetryConfig) error {
 		}
 	}
 	return nil
+}
+
+func validateToolGateConfig(t ToolGateConfig) error {
+	mode := strings.ToLower(strings.TrimSpace(t.Mode))
+	if mode == "" {
+		return nil
+	}
+	switch mode {
+	case "elevated_only", "all_tools":
+		return nil
+	default:
+		return fmt.Errorf("tool_gate.mode must be elevated_only or all_tools, got %q", t.Mode)
+	}
+}
+
+func validateResponseGuardConfig(r ResponseGuardConfig) error {
+	mode := strings.ToLower(strings.TrimSpace(r.Mode))
+	if mode != "" && mode != "warn" && mode != "ignore" {
+		return fmt.Errorf("response_guard.mode must be warn or ignore, got %q", r.Mode)
+	}
+	if err := validateResponseGuardAction("response_guard.categories.data_exfil_instruction", r.Categories.DataExfilInstruction); err != nil {
+		return err
+	}
+	if err := validateResponseGuardAction("response_guard.categories.unsafe_action_instruction", r.Categories.UnsafeActionInstruction); err != nil {
+		return err
+	}
+	if err := validateResponseGuardAction("response_guard.categories.privilege_escalation_instruction", r.Categories.PrivilegeEscalationInstruction); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateResponseGuardAction(field, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "warn", "ignore":
+		return nil
+	default:
+		return fmt.Errorf("%s must be warn or ignore, got %q", field, value)
+	}
 }
 
 func blockPrivateHost(hostport string, allowPrivate bool) error {

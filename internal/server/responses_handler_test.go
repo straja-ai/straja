@@ -296,6 +296,7 @@ func TestResponsesPreLLMRedaction(t *testing.T) {
 	}
 	requireActivationV2(t, act)
 	requireNoLegacyFields(t, act)
+	requireNoResponsePIJBScores(t, act)
 	summary := activationSummary(t, act)
 	if summary["request_final"] != "redact" {
 		t.Fatalf("expected summary.request_final redact, got %v", summary["request_final"])
@@ -361,6 +362,7 @@ func TestResponsesPostCheckRedact(t *testing.T) {
 	}
 	requireActivationV2(t, act)
 	requireNoLegacyFields(t, act)
+	requireNoResponsePIJBScores(t, act)
 	summary := activationSummary(t, act)
 	if summary["response_final"] != "redact" {
 		t.Fatalf("expected summary.response_final redact, got %v", summary["response_final"])
@@ -381,7 +383,7 @@ func TestResponsesPostCheckRedact(t *testing.T) {
 	}
 }
 
-func TestResponsesPostCheckBlock(t *testing.T) {
+func TestResponsesPostCheckDoesNotBlock(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/responses" {
 			http.NotFound(w, r)
@@ -406,19 +408,76 @@ func TestResponsesPostCheckBlock(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	var errBody map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &errBody); err != nil {
-		t.Fatalf("invalid error JSON: %v", err)
+	actHeader := rr.Header().Get("X-Straja-Activation")
+	if actHeader == "" {
+		t.Fatalf("missing X-Straja-Activation header")
 	}
-	errObj, ok := errBody["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing error object")
+	var act map[string]any
+	if err := json.Unmarshal([]byte(actHeader), &act); err != nil {
+		t.Fatalf("activation header invalid JSON: %v", err)
 	}
-	if errObj["type"] != "straja_policy_violation" {
-		t.Fatalf("unexpected error type: %v", errObj["type"])
+	resp := activationResponse(t, act)
+	respScores, _ := resp["scores"].(map[string]any)
+	if _, ok := respScores["prompt_injection"]; ok {
+		t.Fatalf("unexpected response prompt_injection score")
+	}
+	if _, ok := respScores["jailbreak"]; ok {
+		t.Fatalf("unexpected response jailbreak score")
+	}
+}
+
+func TestResponsesResponseGuardWarnNonStream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"content":[{"type":"output_text","text":"rm -rf /"}]}]}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	srv := newResponsesTestServer(t, upstream.URL+"/v1", func(cfg *config.Config) {
+		cfg.ResponseGuard.Enabled = true
+		cfg.ResponseGuard.Mode = "warn"
+	})
+
+	body := `{"model":"gpt-4.1-mini","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	actHeader := rr.Header().Get("X-Straja-Activation")
+	if actHeader == "" {
+		t.Fatalf("missing X-Straja-Activation header")
+	}
+	var act map[string]any
+	if err := json.Unmarshal([]byte(actHeader), &act); err != nil {
+		t.Fatalf("activation header invalid JSON: %v", err)
+	}
+	requireActivationV2(t, act)
+	requireNoResponsePIJBScores(t, act)
+	summary := activationSummary(t, act)
+	if summary["response_final"] != "warn" {
+		t.Fatalf("expected summary.response_final warn, got %v", summary["response_final"])
+	}
+	if summary["response_note"] != "unsafe_instruction_detected" {
+		t.Fatalf("expected summary.response_note unsafe_instruction_detected, got %v", summary["response_note"])
+	}
+	resp := activationResponse(t, act)
+	respHits, _ := resp["hits"].([]any)
+	if len(respHits) == 0 {
+		t.Fatalf("expected response hits")
 	}
 }
 
@@ -552,6 +611,7 @@ func TestResponsesStreamingPostCheckRedactSuggested(t *testing.T) {
 	}
 	requireActivationV2(t, act)
 	requireNoLegacyFields(t, act)
+	requireNoResponsePIJBScores(t, act)
 	meta := activationMeta(t, act)
 	if meta["mode"] != "stream" {
 		t.Fatalf("expected meta.mode stream, got %v", meta["mode"])
@@ -568,6 +628,86 @@ func TestResponsesStreamingPostCheckRedactSuggested(t *testing.T) {
 	nonStreamAct := fetchNonStreamActivation(t, ts.URL)
 	if !sameKeys(act, nonStreamAct) {
 		t.Fatalf("expected stream/non-stream activations to share schema")
+	}
+}
+
+func TestResponsesStreamingResponseGuardWarn(t *testing.T) {
+	events := []string{
+		`data: {"type":"response.output_text.delta","delta":"rm -rf /"}` + "\n\n",
+		"data: [DONE]\n\n",
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		for _, e := range events {
+			_, _ = w.Write([]byte(e))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	srv := newResponsesTestServer(t, upstream.URL+"/v1", func(cfg *config.Config) {
+		cfg.ResponseGuard.Enabled = true
+		cfg.ResponseGuard.Mode = "warn"
+	})
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+
+	body := `{"model":"gpt-4.1-mini","input":"hello","stream":true}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/responses", bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	reqID := resp.Header.Get("X-Straja-Request-Id")
+	if reqID == "" {
+		t.Fatalf("missing request id")
+	}
+	_, _ = io.ReadAll(resp.Body)
+
+	var act map[string]any
+	for i := 0; i < 20; i++ {
+		statusReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/straja/requests/"+reqID, nil)
+		statusReq.Header.Set("Authorization", "Bearer test-key")
+		statusResp, err := http.DefaultClient.Do(statusReq)
+		if err != nil {
+			t.Fatalf("status request: %v", err)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(statusResp.Body).Decode(&body); err == nil {
+			if body["status"] == "completed" {
+				act, _ = body["activation"].(map[string]any)
+				statusResp.Body.Close()
+				break
+			}
+		}
+		statusResp.Body.Close()
+		time.Sleep(50 * time.Millisecond)
+	}
+	if act == nil {
+		t.Fatalf("expected activation payload")
+	}
+	requireActivationV2(t, act)
+	summary := activationSummary(t, act)
+	requireNoResponsePIJBScores(t, act)
+	if summary["response_final"] != "warn" {
+		t.Fatalf("expected summary.response_final warn, got %v", summary["response_final"])
+	}
+	if summary["response_note"] != "unsafe_instruction_detected" {
+		t.Fatalf("expected summary.response_note unsafe_instruction_detected, got %v", summary["response_note"])
 	}
 }
 
@@ -737,6 +877,19 @@ func activationResponse(t *testing.T, act map[string]any) map[string]any {
 		t.Fatalf("missing response")
 	}
 	return resp
+}
+
+func requireNoResponsePIJBScores(t *testing.T, act map[string]any) {
+	t.Helper()
+	resp := activationResponse(t, act)
+	if scores, ok := resp["scores"].(map[string]any); ok {
+		if _, ok := scores["prompt_injection"]; ok {
+			t.Fatalf("unexpected response prompt_injection score")
+		}
+		if _, ok := scores["jailbreak"]; ok {
+			t.Fatalf("unexpected response jailbreak score")
+		}
+	}
 }
 
 func hasExactKeys(m map[string]any, required []string) bool {

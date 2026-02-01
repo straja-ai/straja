@@ -381,13 +381,6 @@ func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
 		infReq.PostSafetyFlags = post.postReq.SecurityFlags
 	}
 
-	if post.decision == "blocked" {
-		decision = "blocked_after"
-		statusCode = http.StatusForbidden
-		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter, activation.ModeNonStream)
-		writePolicyBlockedError(w, http.StatusForbidden, "Output blocked by Straja policy (after model)")
-		return
-	}
 	if post.decision == "redacted" {
 		infResp.Message.Content = updated
 	}
@@ -1436,6 +1429,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	})
 	policyPostSpan.End()
 
+	_ = s.applyResponseGuard(infReq, s.evaluateResponseGuard(infResp.Message.Content), false)
+
 	// 5) Success
 	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow, activation.ModeNonStream)
 
@@ -1601,6 +1596,18 @@ func writeOpenAIError(w http.ResponseWriter, status int, message, typ string) {
 		Error: openAIErrorDetail{
 			Message: message,
 			Type:    typ,
+		},
+	})
+}
+
+func writeResponseGuardBlockedError(w http.ResponseWriter, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(openAIErrorBody{
+		Error: openAIErrorDetail{
+			Message: "Response blocked by response_guard: unsafe instruction detected",
+			Type:    "straja_response_policy_violation",
+			Code:    "response_blocked",
 		},
 	})
 }

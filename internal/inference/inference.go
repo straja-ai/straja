@@ -40,6 +40,8 @@ type Request struct {
 	PostPolicyDecisions []safety.PolicyHit
 	// PostDecision captures the output enforcement result: allow | redact | blocked.
 	PostDecision string
+	// ResponseNote captures heuristic response guard notes.
+	ResponseNote string
 	// OutputPreview is a redacted preview of output for activation metadata.
 	OutputPreview string
 	// PostCheckLatency captures time spent evaluating model output.

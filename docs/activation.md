@@ -134,9 +134,11 @@ Key notes:
 
 - `summary.request_final` and `request.decision.final` are one of `allow`, `redact`, `block`.
 - `summary.response_final` and `response.decision.final` are one of `allow`, `redact`, `block`.
-- `response.decision.note` / `summary.response_note` are `redaction_applied`, `redaction_suggested`, `skipped`, or `null`.
-- `meta.mode` is `stream` or `non_stream`. In streaming mode, Straja never mutates the response; if post-check would have redacted in non-stream mode, `response.decision.note` is `redaction_suggested` and `response.decision.final` remains `allow`.
+- `response.decision.note` / `summary.response_note` are `redaction_applied`, `redaction_suggested`, `skipped`, `unsafe_instruction_detected`, `unsafe_instruction_blocked`, or `null`.
+- `meta.mode` is `stream` or `non_stream`. In streaming mode, Straja never mutates the response; if post-check would have redacted in non-stream mode, `response.decision.note` is `redaction_suggested` and `response.decision.final` remains `allow`. Response guard matches also keep `response.decision.final` as `allow` and set `response.decision.note` to `unsafe_instruction_detected`.
+- Post-LLM checks never block responses; `response.decision.final` is `allow` or `redact` in normal operation.
 - `request.preview.prompt` and `response.preview.output` are controlled by `logging.activation_level` and are always redacted previews.
+- `request.hits` and `response.hits` may include `evidence` snippets (redacted) when heuristics match.
 - ML scores appear only in `request.scores` and `response.scores`. Thresholds appear only in `intel.thresholds`.
 - When `intel.strajaguard.family: strajaguard_v1_specialists` is enabled, `intel.strajaguard.model` is `strajaguard_v1_specialists` and ML scores include `prompt_injection`, `jailbreak`, and `contains_personal_data`.
 - Specialists hits carry sources: `ml:protectai/deberta-v3-base-prompt-injection-v2`, `ml:madhurjindal/Jailbreak-Detector`, and `ner:ab-ai/pii_model`.

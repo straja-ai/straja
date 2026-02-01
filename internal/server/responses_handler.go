@@ -211,18 +211,12 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 			cancel()
 			redact.Logf("responses: streaming copy failed: %v", err)
 		}
-		postDecision := runPostCheckForStream(ctx, s, infReq, capture)
-		if postDecision == "blocked" {
-			decision = "blocked_after"
-		} else {
-			decision = "allow"
-		}
+		postDecision, outputText := runPostCheckForStream(ctx, s, infReq, capture)
+		_ = s.applyResponseGuard(infReq, s.evaluateResponseGuard(outputText), true)
+		decision = "allow"
 		statusCode = upstreamResp.StatusCode
-		if postDecision == "blocked" {
-			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter, mode)
-		} else {
-			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow, mode)
-		}
+		_ = postDecision
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow, mode)
 		return
 	}
 
@@ -254,19 +248,14 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 			infReq.PostSafetyFlags = post.postReq.SecurityFlags
 			postDecision = post.decision
 
-			if postDecision == "blocked" {
-				decision = "blocked_after"
-				statusCode = http.StatusForbidden
-				s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedAfter, mode)
-				writePolicyBlockedError(w, http.StatusForbidden, "Output blocked by Straja policy (after model)")
-				return
-			}
-
 			if postDecision == "redacted" {
 				if body, err := json.Marshal(parsed); err == nil {
 					updatedBody = body
 				}
 			}
+
+			outputText := strings.Join(post.outputs, "\n")
+			_ = s.applyResponseGuard(infReq, s.evaluateResponseGuard(outputText), false)
 		}
 	}
 
@@ -754,17 +743,17 @@ func isOutputContentType(t string) bool {
 	}
 }
 
-func runPostCheckForStream(ctx context.Context, s *Server, infReq *inference.Request, capture *sseCapture) string {
+func runPostCheckForStream(ctx context.Context, s *Server, infReq *inference.Request, capture *sseCapture) (string, string) {
 	if infReq == nil || capture == nil || capture.truncated {
 		if infReq != nil {
 			infReq.PostDecision = "allow"
 		}
-		return "allow"
+		return "allow", ""
 	}
 	outputText := extractOutputTextFromSSE(capture.Bytes())
 	if strings.TrimSpace(outputText) == "" {
 		infReq.PostDecision = "allow"
-		return "allow"
+		return "allow", ""
 	}
 	agg := newPostCheckAggregator(ctx, s, infReq.ProjectID, infReq.Model, infReq.RequestID)
 	_, _ = agg.Check(outputText)
@@ -776,7 +765,7 @@ func runPostCheckForStream(ctx context.Context, s *Server, infReq *inference.Req
 	infReq.PostCheckLatency = post.latency
 	infReq.PostSafetyScores = post.postReq.SecurityScores
 	infReq.PostSafetyFlags = post.postReq.SecurityFlags
-	return post.decision
+	return post.decision, outputText
 }
 
 func extractOutputTextFromSSE(data []byte) string {

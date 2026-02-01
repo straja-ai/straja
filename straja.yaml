@@ -94,8 +94,8 @@ security:
   prompt_injection:
     regex_enabled: true
     ml_enabled: true
-    ml_warn_threshold: 0.69
-    ml_block_threshold: 0.94
+    ml_warn_threshold: 0.60
+    ml_block_threshold: 0.80
     action_on_block: "block"
   jailbreak:
     regex_enabled: true
@@ -122,6 +122,17 @@ security:
     ml_block_threshold: 0.85
     action_on_regex_hit: "block_and_redact"
     action_on_ml_only: "log"
+
+tool_gate:
+  enabled: true
+  mode: elevated_only
+  allowlist_hosts: []
+  allowlist_commands: []
+
+response_guard:
+  enabled: true
+  mode: warn
+  categories: {}
 
 strajaguard:
   intel_dir: /var/lib/straja/intel

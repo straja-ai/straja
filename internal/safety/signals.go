@@ -14,4 +14,5 @@ type PolicyHit struct {
 	Action     string   `json:"action"`
 	Confidence float32  `json:"confidence"`
 	Sources    []string `json:"sources"`
+	Evidence   string   `json:"evidence,omitempty"`
 }

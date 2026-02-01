@@ -208,6 +208,25 @@ Type: `SecretsCategoryConfig`
 - `action_on_regex_hit` (string, default `"block_and_redact"`)
 - `action_on_ml_only` (string, default `"log"`)
 
+## `response_guard`
+
+Source: `internal/config/config.go`, `internal/responseguard/*`, `internal/toolgate/rules.go`
+
+Heuristic scanner that inspects model responses for unsafe tool instructions (data exfiltration, destructive actions, privilege escalation). This is best-effort and will produce false positives.
+
+- `enabled` (bool, default `true`)
+- `mode` (string, default `"warn"`) — one of `warn`, `ignore`
+- `categories` (object, optional overrides)
+  - `data_exfil_instruction` (string, optional)
+  - `unsafe_action_instruction` (string, optional)
+  - `privilege_escalation_instruction` (string, optional)
+
+Notes:
+
+- `mode: warn` is recommended; it emits activation hits without blocking responses.
+- Response blocking is intentionally not supported to avoid breaking legitimate code/documentation outputs.
+- Per-category overrides only apply when set; otherwise `mode` is used.
+
 ## `intel`
 
 Source: `internal/config/config.go`
