@@ -52,7 +52,13 @@ type RequestDecision struct {
 }
 
 type RequestPreview struct {
-	Prompt string `json:"prompt"`
+	Prompt string       `json:"prompt,omitempty"`
+	Tool   *ToolPreview `json:"tool,omitempty"`
+}
+
+type ToolPreview struct {
+	ToolName string `json:"tool_name"`
+	Args     string `json:"args,omitempty"`
 }
 
 type RequestPayload struct {
@@ -189,6 +195,23 @@ func BuildEvent(params BuildParams) *Event {
 	responseReasons := buildReasonCategories(responseHits)
 	categories := unionCategories(requestReasons, responseReasons)
 
+	reqPreview := RequestPreview{
+		Prompt: redact.String(promptPreview),
+	}
+	if params.Request.ToolName != "" {
+		reqPreview.Tool = &ToolPreview{
+			ToolName: params.Request.ToolName,
+			Args:     params.Request.ToolArgsPreview,
+		}
+	}
+	if mode == "toolgate_check" {
+		responseFinal = "n/a"
+		responseNote = nil
+		responseHits = nil
+		responseScores = nil
+		responseReasons = nil
+	}
+
 	intel := ActivationIntel{
 		Status:          params.IntelStatus,
 		BundleVersion:   params.IntelBundleVersion,
@@ -232,9 +255,7 @@ func BuildEvent(params BuildParams) *Event {
 				ReasonCategories: requestReasons,
 				Actions:          requestHits,
 			},
-			Preview: RequestPreview{
-				Prompt: redact.String(promptPreview),
-			},
+			Preview:   reqPreview,
 			Hits:      requestHits,
 			Scores:    requestScores,
 			LatencyMs: requestLatencyMs,

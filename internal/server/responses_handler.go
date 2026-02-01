@@ -43,25 +43,14 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	// Auth: extract API key and map to project
 	authCtx, authSpan := s.startSpan(ctx, "straja.auth", trace.SpanKindInternal, nil)
-	apiKey, ok := parseBearerToken(r.Header.Get("Authorization"))
+	project, authMode, ok := s.resolveAuthProject(r)
 	setSpanAttrs(authSpan, map[string]interface{}{
-		"straja.auth.api_key_present": apiKey != "",
+		"straja.auth.mode": authMode,
 	})
-	if !ok || apiKey == "" {
+	if !ok {
 		setSpanAttrs(authSpan, map[string]interface{}{"straja.auth.result": "missing"})
 		authSpan.End()
 		writeOpenAIError(w, http.StatusUnauthorized, "Invalid or missing API key", "authentication_error")
-		return
-	}
-
-	project, ok := s.auth.Lookup(apiKey)
-	setSpanAttrs(authSpan, map[string]interface{}{
-		"straja.auth.project_resolved": ok,
-	})
-	if !ok {
-		setSpanAttrs(authSpan, map[string]interface{}{"straja.auth.result": "invalid"})
-		authSpan.End()
-		writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key", "authentication_error")
 		return
 	}
 	setSpanAttrs(authSpan, map[string]interface{}{"straja.auth.result": "ok"})

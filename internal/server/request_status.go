@@ -12,22 +12,20 @@ func (s *Server) handleRequestStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requestID := strings.TrimPrefix(r.URL.Path, "/v1/straja/requests/")
+	prefix := "/v1/straja/requests/"
+	if strings.HasPrefix(r.URL.Path, "/v1/requests/") {
+		prefix = "/v1/requests/"
+	}
+	requestID := strings.TrimPrefix(r.URL.Path, prefix)
 	requestID = strings.TrimSpace(requestID)
 	if requestID == "" {
 		http.NotFound(w, r)
 		return
 	}
 
-	apiKey, ok := parseBearerToken(r.Header.Get("Authorization"))
-	if !ok || apiKey == "" {
-		writeOpenAIError(w, http.StatusUnauthorized, "Invalid or missing API key", "authentication_error")
-		return
-	}
-
-	project, ok := s.auth.Lookup(apiKey)
+	project, _, ok := s.resolveAuthProject(r)
 	if !ok {
-		writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key", "authentication_error")
+		writeOpenAIError(w, http.StatusUnauthorized, "Invalid or missing API key", "authentication_error")
 		return
 	}
 

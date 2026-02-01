@@ -44,6 +44,10 @@ type Request struct {
 	ResponseNote string
 	// OutputPreview is a redacted preview of output for activation metadata.
 	OutputPreview string
+	// ToolName is set for toolgate check requests.
+	ToolName string
+	// ToolArgsPreview is a redacted preview of tool args for activation metadata.
+	ToolArgsPreview string
 	// PostCheckLatency captures time spent evaluating model output.
 	PostCheckLatency time.Duration
 	// PostSafetyScores holds output-side ML scores (label -> probability).

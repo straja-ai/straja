@@ -23,6 +23,8 @@ type Config struct {
 	Intelligence    IntelligenceConfig        `yaml:"intelligence"`
 	Security        SecurityConfig            `yaml:"security"`
 	ToolGate        ToolGateConfig            `yaml:"tool_gate"`
+	ToolGateAPI     ToolGateAPIConfig         `yaml:"toolgate_api"`
+	Console         ConsoleConfig             `yaml:"console"`
 	ResponseGuard   ResponseGuardConfig       `yaml:"response_guard"`
 	Intel           IntelConfig               `yaml:"intel"`
 	StrajaGuard     StrajaGuardConfig         `yaml:"strajaguard"`
@@ -124,6 +126,18 @@ type ToolGateConfig struct {
 
 func (c ToolGateConfig) isZero() bool {
 	return !c.Enabled && c.Mode == "" && len(c.AllowlistHosts) == 0 && len(c.AllowlistCommands) == 0
+}
+
+// ToolGateAPIConfig configures the external toolgate API endpoints.
+type ToolGateAPIConfig struct {
+	AllowExplain bool `yaml:"allow_explain"`
+}
+
+type ConsoleConfig struct {
+	Enabled           bool          `yaml:"enabled"`
+	SessionTTL        time.Duration `yaml:"session_ttl"`
+	SessionCookieName string        `yaml:"session_cookie_name"`
+	SessionSecret     string        `yaml:"session_secret"`
 }
 
 type ResponseGuardConfig struct {
@@ -277,6 +291,21 @@ func defaultToolGateConfig() ToolGateConfig {
 		Mode:              "elevated_only",
 		AllowlistHosts:    []string{},
 		AllowlistCommands: []string{},
+	}
+}
+
+func defaultToolGateAPIConfig() ToolGateAPIConfig {
+	return ToolGateAPIConfig{
+		AllowExplain: false,
+	}
+}
+
+func defaultConsoleConfig() ConsoleConfig {
+	return ConsoleConfig{
+		Enabled:           true,
+		SessionTTL:        30 * time.Minute,
+		SessionCookieName: "straja_console_session",
+		SessionSecret:     "",
 	}
 }
 
@@ -444,6 +473,8 @@ func defaultConfig() *Config {
 		Activation:    defaultActivationConfig(),
 		Telemetry:     defaultTelemetryConfig(),
 		ToolGate:      defaultToolGateConfig(),
+		ToolGateAPI:   defaultToolGateAPIConfig(),
+		Console:       defaultConsoleConfig(),
 		ResponseGuard: defaultResponseGuardConfig(),
 		Policy: PolicyConfig{
 			BannedWords:     "block",
@@ -591,6 +622,28 @@ func applyDefaults(cfg *Config) {
 		}
 		if cfg.ToolGate.AllowlistCommands == nil {
 			cfg.ToolGate.AllowlistCommands = []string{}
+		}
+	}
+
+	// Toolgate API defaults
+	if cfg.ToolGateAPI == (ToolGateAPIConfig{}) {
+		cfg.ToolGateAPI = defaultToolGateAPIConfig()
+	}
+
+	// Console defaults
+	if cfg.Console == (ConsoleConfig{}) {
+		cfg.Console = defaultConsoleConfig()
+	} else {
+		if cfg.Console.SessionTTL == 0 {
+			cfg.Console.SessionTTL = 30 * time.Minute
+		}
+		if cfg.Console.SessionCookieName == "" {
+			cfg.Console.SessionCookieName = "straja_console_session"
+		}
+	}
+	if cfg.Console.SessionSecret == "" {
+		if v, ok := envString("STRAJA_CONSOLE_SESSION_SECRET"); ok {
+			cfg.Console.SessionSecret = v
 		}
 	}
 

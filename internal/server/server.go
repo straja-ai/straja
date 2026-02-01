@@ -22,6 +22,7 @@ import (
 	"github.com/straja-ai/straja/internal/auth"
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/console"
+	"github.com/straja-ai/straja/internal/consoleauth"
 	"github.com/straja-ai/straja/internal/inference"
 	"github.com/straja-ai/straja/internal/intel"
 	"github.com/straja-ai/straja/internal/license"
@@ -140,260 +141,6 @@ func (s *Server) handleConsoleProjects(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(projects); err != nil {
 		redact.Logf("failed to write console projects: %v", err)
-	}
-}
-
-type consoleChatRequest struct {
-	ProjectID string        `json:"project_id"`
-	Model     string        `json:"model"`
-	Messages  []chatMessage `json:"messages"`
-	Stream    bool          `json:"stream,omitempty"`
-}
-
-func (s *Server) handleConsoleChat(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	setConsoleRobotsHeader(w)
-
-	start := time.Now()
-	ctx := r.Context()
-	ctx, root := s.startSpan(ctx, "straja.request", trace.SpanKindServer, map[string]interface{}{
-		"straja.version":                    version,
-		"http.method":                       r.Method,
-		"http.route":                        "/console/api/chat",
-		"straja.strajaguard.enabled":        s.strajaGuardEnabled(),
-		"straja.strajaguard.loaded":         s.strajaGuardEnabled(),
-		"straja.strajaguard.bundle_version": s.activeBundleVer,
-	})
-	defer root.End()
-
-	if s.cfg.Server.MaxRequestBodyBytes > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.Server.MaxRequestBodyBytes)
-	}
-
-	var reqBody consoleChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-		if isRequestTooLarge(err) {
-			writeOpenAIError(w, http.StatusRequestEntityTooLarge, "Request body too large", "invalid_request_error")
-			return
-		}
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
-		return
-	}
-	if reqBody.ProjectID == "" {
-		http.Error(w, "missing project_id", http.StatusBadRequest)
-		return
-	}
-
-	stream := reqBody.Stream || parseBoolQuery(r.URL.Query().Get("stream"))
-	if stream {
-		if err := s.handleConsoleChatStream(w, r, reqBody); err != nil {
-			status := http.StatusBadGateway
-			if errors.Is(err, errConsoleMissingAPIKey) {
-				status = http.StatusBadRequest
-			}
-			writeOpenAIError(w, status, err.Error(), "invalid_request_error")
-		}
-		return
-	}
-
-	requestID := newRequestID()
-	w.Header().Set("X-Straja-Request-Id", requestID)
-
-	statusCode := http.StatusOK
-
-	// lookup provider for this project
-	providerName := s.projectProviders[reqBody.ProjectID]
-	if providerName == "" {
-		providerName = s.defaultProvider
-	}
-	prov, ok := s.providers[providerName]
-	if !ok {
-		redact.Logf("no provider %q for project %q (console)", providerName, reqBody.ProjectID)
-		writeOpenAIError(w, http.StatusInternalServerError, "Straja misconfiguration: unknown provider for project", "configuration_error")
-		return
-	}
-
-	// Reuse the same normalization as /v1/chat/completions:
-	normCtx, normSpan := s.startSpan(ctx, "straja.normalize", trace.SpanKindInternal, map[string]interface{}{
-		"straja.project_id":  reqBody.ProjectID,
-		"straja.provider_id": providerName,
-	})
-	infReq := normalizeToInferenceRequest(reqBody.ProjectID, &chatCompletionRequest{
-		Model:    reqBody.Model,
-		Messages: reqBody.Messages,
-	})
-	infReq.RequestID = requestID
-	s.requestStore.Start(requestID, reqBody.ProjectID)
-	setSpanAttrs(normSpan, map[string]interface{}{
-		"straja.model":  infReq.Model,
-		"straja.stream": false,
-	})
-	normSpan.End()
-	infReq.Timings = &inference.Timings{}
-	decision := "allow"
-	defer logTimingDebug(reqBody.ProjectID, providerName, decision, infReq.Timings)
-	defer func() {
-		setSpanAttrs(root, map[string]interface{}{
-			"straja.project_id":                 reqBody.ProjectID,
-			"straja.provider_id":                providerName,
-			"straja.provider_type":              s.providerTypes[providerName],
-			"straja.model":                      infReq.Model,
-			"straja.decision":                   decision,
-			"straja.policy_hits_total":          len(infReq.PolicyHits),
-			"straja.policy_categories":          infReq.PolicyHits,
-			"straja.blocked":                    strings.HasPrefix(decision, "blocked"),
-			"straja.strajaguard.bundle_version": s.activeBundleVer,
-			"http.status_code":                  statusCode,
-		})
-		if s.telemetry != nil {
-			s.telemetry.RecordRequestMetrics(decision, s.providerTypes[providerName], reqBody.ProjectID, float64(time.Since(start).Milliseconds()), durationMs(infReq.Timings.Provider), durationMs(infReq.Timings.StrajaGuard), len(infReq.PolicyHits))
-		}
-	}()
-
-	if err := s.validateChatRequest(infReq, providerName); err != nil {
-		decision = "blocked_request"
-		statusCode = http.StatusBadRequest
-		writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
-		return
-	}
-
-	if s.cfg.Server.UpstreamTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.cfg.Server.UpstreamTimeout)
-		defer cancel()
-	}
-
-	// Policy + provider + activation, same flow as handleChatCompletions:
-
-	prePolicyStart := time.Now()
-	policyPreCtx, policyPreSpan := s.startSpan(normCtx, "straja.policy.pre", trace.SpanKindInternal, map[string]interface{}{
-		"straja.policy.hits_total": len(infReq.PolicyHits),
-	})
-	if err := s.policy.BeforeModel(policyPreCtx, infReq); err != nil {
-		if infReq.Timings != nil {
-			infReq.Timings.PrePolicy = time.Since(prePolicyStart)
-		}
-		setSpanAttrs(policyPreSpan, map[string]interface{}{
-			"straja.policy.result": "blocked",
-		})
-		policyPreSpan.End()
-		decision = "blocked_before"
-		statusCode = http.StatusForbidden
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionBlockedBefore, activation.ModeNonStream)
-		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (before model)", "policy_error")
-		return
-	}
-	if infReq.Timings != nil {
-		infReq.Timings.PrePolicy = time.Since(prePolicyStart)
-	}
-	setSpanAttrs(policyPreSpan, map[string]interface{}{
-		"straja.policy.result":     "ok",
-		"straja.policy.hits_total": len(infReq.PolicyHits),
-	})
-	policyPreSpan.End()
-
-	providerStart := time.Now()
-	provSelectCtx, provSelectSpan := s.startSpan(ctx, "straja.provider.select", trace.SpanKindInternal, map[string]interface{}{
-		"straja.provider_id":   providerName,
-		"straja.provider_type": s.providerTypes[providerName],
-	})
-	provSelectSpan.End()
-
-	provCallCtx, provCallSpan := s.startSpan(provSelectCtx, "straja.provider.call", trace.SpanKindInternal, map[string]interface{}{
-		"straja.provider_id":   providerName,
-		"straja.provider_type": s.providerTypes[providerName],
-	})
-	infResp, err := prov.ChatCompletion(provCallCtx, infReq)
-	if infReq.Timings != nil {
-		infReq.Timings.Provider = time.Since(providerStart)
-	}
-	if err != nil {
-		redact.Logf("provider %q error (console): %v", providerName, err)
-		setSpanAttrs(provCallSpan, map[string]interface{}{
-			"straja.upstream.error": err.Error(),
-		})
-		provCallSpan.End()
-		decision = "error_provider"
-		statusCode = http.StatusBadGateway
-		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, activation.ModeNonStream)
-		writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
-		return
-	}
-	setSpanAttrs(provCallSpan, map[string]interface{}{
-		"straja.upstream.status_code": 200,
-	})
-	provCallSpan.End()
-
-	postPolicyStart := time.Now()
-	policyPostCtx, policyPostSpan := s.startSpan(ctx, "straja.policy.post", trace.SpanKindInternal, map[string]interface{}{
-		"straja.policy.hits_total": len(infReq.PolicyHits),
-	})
-	if err := s.policy.AfterModel(policyPostCtx, infReq, infResp); err != nil {
-		if infReq.Timings != nil {
-			infReq.Timings.PostPolicy = time.Since(postPolicyStart)
-		}
-		setSpanAttrs(policyPostSpan, map[string]interface{}{
-			"straja.policy.result": "blocked",
-		})
-		policyPostSpan.End()
-		decision = "blocked_after"
-		statusCode = http.StatusForbidden
-		s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionBlockedAfter, activation.ModeNonStream)
-		writeOpenAIError(w, http.StatusForbidden, "Blocked by Straja policy (after model)", "policy_error")
-		return
-	}
-	if infReq.Timings != nil {
-		infReq.Timings.PostPolicy = time.Since(postPolicyStart)
-	}
-	setSpanAttrs(policyPostSpan, map[string]interface{}{
-		"straja.policy.result":     "ok",
-		"straja.policy.hits_total": len(infReq.PolicyHits),
-	})
-	policyPostSpan.End()
-
-	prevPostDecision := infReq.PostDecision
-	prevPostPolicyHits := infReq.PostPolicyHits
-	prevPostPolicyDecisions := infReq.PostPolicyDecisions
-	prevOutputPreview := infReq.OutputPreview
-	prevPostLatency := infReq.PostCheckLatency
-	prevPostScores := infReq.PostSafetyScores
-	prevPostFlags := infReq.PostSafetyFlags
-
-	updated, post := s.postCheckText(ctx, infReq, infResp.Message.Content)
-	if post.decision == "allow" && prevPostDecision == "redacted" {
-		infReq.PostPolicyHits = prevPostPolicyHits
-		infReq.PostPolicyDecisions = prevPostPolicyDecisions
-		infReq.PostDecision = prevPostDecision
-		infReq.OutputPreview = prevOutputPreview
-		infReq.PostCheckLatency = prevPostLatency
-		infReq.PostSafetyScores = prevPostScores
-		infReq.PostSafetyFlags = prevPostFlags
-	} else {
-		infReq.PostPolicyHits = post.postReq.PolicyHits
-		infReq.PostPolicyDecisions = post.postReq.PolicyDecisions
-		infReq.PostDecision = post.decision
-		infReq.OutputPreview = outputPreview(post.outputs)
-		infReq.PostCheckLatency = post.latency
-		infReq.PostSafetyScores = post.postReq.SecurityScores
-		infReq.PostSafetyFlags = post.postReq.SecurityFlags
-	}
-
-	if post.decision == "redacted" {
-		infResp.Message.Content = updated
-	}
-
-	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow, activation.ModeNonStream)
-
-	_, respSpan := s.startSpan(ctx, "straja.response.encode", trace.SpanKindInternal, nil)
-	respBody := buildChatCompletionResponse(infReq, infResp)
-	respSpan.End()
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(respBody); err != nil {
-		redact.Logf("failed to write console response: %v", err)
 	}
 }
 
@@ -773,6 +520,9 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	mux.HandleFunc("/v1/chat/completions", s.wrapHandler(s.handleChatCompletions, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/responses", s.wrapHandler(s.handleResponses, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/straja/requests/", s.wrapHandler(s.handleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
+	mux.HandleFunc("/v1/requests/", s.wrapHandler(s.handleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
+	mux.HandleFunc("/v1/toolgate/check", s.wrapHandler(s.handleToolgateCheck, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/v1/toolgate/explain", s.wrapHandler(s.handleToolgateExplain, handlerOptions{limitBody: true, useLimiter: true}))
 
 	// Serve console + static
 	mux.Handle("/console/", console.Handler())
@@ -781,8 +531,8 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		http.Redirect(w, r, "/console/", http.StatusMovedPermanently)
 	}))
 	mux.HandleFunc("/console/api/projects", s.handleConsoleProjects)
-	mux.HandleFunc("/console/api/chat", s.wrapHandler(s.handleConsoleChat, handlerOptions{limitBody: true, useLimiter: true}))
-	mux.HandleFunc("/console/api/requests/", s.wrapHandler(s.handleConsoleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
+	mux.HandleFunc("/console/api/session", s.wrapHandler(s.handleConsoleSession, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/console/api/logout", s.wrapHandler(s.handleConsoleLogout, handlerOptions{limitBody: false, useLimiter: true}))
 	mux.HandleFunc("/console/api/config", s.wrapHandler(s.handleConsoleConfig, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/console/api/reload", s.wrapHandler(s.handleConsoleReload, handlerOptions{limitBody: false, useLimiter: true}))
 
@@ -1244,27 +994,16 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.Server.MaxRequestBodyBytes)
 	}
 
-	// Auth: extract API key and map to project
+	// Auth: resolve project from bearer or console session
 	authCtx, authSpan := s.startSpan(ctx, "straja.auth", trace.SpanKindInternal, nil)
-	apiKey, ok := parseBearerToken(r.Header.Get("Authorization"))
+	project, authMode, ok := s.resolveAuthProject(r)
 	setSpanAttrs(authSpan, map[string]interface{}{
-		"straja.auth.api_key_present": apiKey != "",
+		"straja.auth.mode": authMode,
 	})
-	if !ok || apiKey == "" {
+	if !ok {
 		setSpanAttrs(authSpan, map[string]interface{}{"straja.auth.result": "missing"})
 		authSpan.End()
 		writeOpenAIError(w, http.StatusUnauthorized, "Invalid or missing API key", "authentication_error")
-		return
-	}
-
-	project, ok := s.auth.Lookup(apiKey)
-	setSpanAttrs(authSpan, map[string]interface{}{
-		"straja.auth.project_resolved": ok,
-	})
-	if !ok {
-		setSpanAttrs(authSpan, map[string]interface{}{"straja.auth.result": "invalid"})
-		authSpan.End()
-		writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key", "authentication_error")
 		return
 	}
 	setSpanAttrs(authSpan, map[string]interface{}{"straja.auth.result": "ok"})
@@ -1577,6 +1316,48 @@ func parseBearerToken(h string) (string, bool) {
 	return parts[1], true
 }
 
+func (s *Server) resolveAuthProject(r *http.Request) (auth.Project, string, bool) {
+	// Bearer auth takes precedence.
+	apiKey, ok := parseBearerToken(r.Header.Get("Authorization"))
+	if ok && apiKey != "" {
+		if project, ok := s.auth.Lookup(apiKey); ok {
+			return project, "api_key", true
+		}
+	}
+
+	if !s.cfg.Console.Enabled {
+		return auth.Project{}, "", false
+	}
+	cookieName := strings.TrimSpace(s.cfg.Console.SessionCookieName)
+	if cookieName == "" {
+		return auth.Project{}, "", false
+	}
+	cookie, err := r.Cookie(cookieName)
+	if err != nil || cookie == nil || cookie.Value == "" {
+		return auth.Project{}, "", false
+	}
+	projectID, _, err := consoleauth.VerifyConsoleSession(cookie.Value, s.cfg.Console.SessionSecret)
+	if err != nil || projectID == "" {
+		return auth.Project{}, "", false
+	}
+	if project, ok := s.lookupProjectByID(projectID); ok {
+		return project, "console_session", true
+	}
+	return auth.Project{}, "", false
+}
+
+func (s *Server) lookupProjectByID(projectID string) (auth.Project, bool) {
+	if projectID == "" {
+		return auth.Project{}, false
+	}
+	for _, p := range s.cfg.Projects {
+		if p.ID == projectID {
+			return auth.Project{ID: p.ID, Provider: p.Provider}, true
+		}
+	}
+	return auth.Project{}, false
+}
+
 func isRequestTooLarge(err error) bool {
 	if err == nil {
 		return false
@@ -1586,6 +1367,19 @@ func isRequestTooLarge(err error) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "request body too large")
+}
+
+func isHTTPS(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	if proto := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))); proto == "https" {
+		return true
+	}
+	return false
 }
 
 // writeOpenAIError writes an OpenAI-style error JSON.

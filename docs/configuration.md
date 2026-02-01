@@ -208,6 +208,54 @@ Type: `SecretsCategoryConfig`
 - `action_on_regex_hit` (string, default `"block_and_redact"`)
 - `action_on_ml_only` (string, default `"log"`)
 
+## `tool_gate`
+
+Source: `internal/config/config.go`, `internal/toolgate/*`
+
+Toolgate evaluates tool calls before execution and returns allow/warn/block decisions.
+
+- `enabled` (bool, default `true`)
+- `mode` (string, default `"elevated_only"`) — one of `elevated_only`, `all_tools`
+- `allowlist_hosts` (list, default empty)
+- `allowlist_commands` (list, default empty)
+
+Notes:
+
+- `elevated_only` blocks privilege escalation patterns; `all_tools` warns instead.
+- Allowlists are exact-match oriented; use them sparingly.
+
+## `toolgate_api`
+
+Source: `internal/config/config.go`, `internal/server/toolgate_handler.go`
+
+Controls the external Toolgate API endpoints.
+
+- `allow_explain` (bool, default `false`) — enables `/v1/toolgate/explain`.
+
+Notes:
+
+- `allow_explain` is disabled by default to reduce debug surface area.
+- The explain endpoint never returns raw rule expressions.
+
+## `console`
+
+Source: `internal/config/config.go`, `internal/server/console_session.go`
+
+Controls console session auth for the built-in UI.
+
+- `enabled` (bool, default `true`)
+- `session_ttl` (duration, default `30m`)
+- `session_cookie_name` (string, default `"straja_console_session"`)
+- `session_secret` (string, default empty) — loaded from `STRAJA_CONSOLE_SESSION_SECRET`
+
+Notes:
+
+- When console sessions are enabled, `session_secret` must be configured.
+- The console uses a short-lived HttpOnly cookie instead of exposing API keys to the browser.
+  - Recommended: set `STRAJA_CONSOLE_SESSION_SECRET` in `.env` or your service environment.
+  - The secret is a random string used to sign console session cookies (generate it locally; no external source needed).
+  - Example: `openssl rand -hex 32`
+
 ## `response_guard`
 
 Source: `internal/config/config.go`, `internal/responseguard/*`, `internal/toolgate/rules.go`

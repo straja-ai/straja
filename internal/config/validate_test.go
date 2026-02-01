@@ -42,6 +42,7 @@ func TestValidateFailures(t *testing.T) {
 				DefaultProvider: "p1",
 				Projects:        []ProjectConfig{{ID: "proj", Provider: "missing", APIKeys: []string{"k"}}},
 				Security:        defaultSecurityConfig(),
+				Console:         ConsoleConfig{Enabled: false},
 			},
 			want: "unknown provider",
 		},
@@ -53,6 +54,7 @@ func TestValidateFailures(t *testing.T) {
 				DefaultProvider: "p1",
 				Projects:        []ProjectConfig{{ID: "proj", Provider: "p1"}},
 				Security:        defaultSecurityConfig(),
+				Console:         ConsoleConfig{Enabled: false},
 			},
 			want: "api_keys",
 		},
@@ -64,6 +66,7 @@ func TestValidateFailures(t *testing.T) {
 				DefaultProvider: "p1",
 				Projects:        []ProjectConfig{{ID: "proj", Provider: "p1", APIKeys: []string{"k"}}},
 				Security:        defaultSecurityConfig(),
+				Console:         ConsoleConfig{Enabled: false},
 			},
 			want: "base_url",
 		},
@@ -75,6 +78,7 @@ func TestValidateFailures(t *testing.T) {
 				DefaultProvider: "p1",
 				Projects:        []ProjectConfig{{ID: "proj", Provider: "p1", APIKeys: []string{"k"}}},
 				Security:        defaultSecurityConfig(),
+				Console:         ConsoleConfig{Enabled: false},
 			},
 			want: "SSRF",
 		},
@@ -98,6 +102,7 @@ func TestValidateOK(t *testing.T) {
 		DefaultProvider: "p1",
 		Projects:        []ProjectConfig{{ID: "proj", Provider: "p1", APIKeys: []string{"k"}}},
 		Security:        defaultSecurityConfig(),
+		Console:         ConsoleConfig{Enabled: false},
 	}
 	if err := Validate(cfg); err != nil {
 		t.Fatalf("expected valid config, got %v", err)
@@ -109,6 +114,7 @@ func TestValidateOK(t *testing.T) {
 		DefaultProvider: "mock",
 		Projects:        []ProjectConfig{{ID: "proj", Provider: "mock", APIKeys: []string{"k"}}},
 		Security:        defaultSecurityConfig(),
+		Console:         ConsoleConfig{Enabled: false},
 	}
 	if err := Validate(loopbackOK); err != nil {
 		t.Fatalf("expected loopback allowed when allow_private_networks=true, got %v", err)

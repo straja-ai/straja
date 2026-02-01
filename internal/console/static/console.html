@@ -215,6 +215,12 @@
       gap: 18px;
     }
 
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
     .card {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -352,6 +358,22 @@
       display: grid;
       gap: 10px;
       margin-top: 6px;
+    }
+
+    .toolgate-hits {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .toolgate-hit {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: var(--panel-muted);
+      font-size: 12px;
+      line-height: 1.35;
     }
 
     .score-row {
@@ -592,7 +614,7 @@
     }
 
     @media (max-width: 1100px) {
-      .grid-2, .results-grid {
+      .grid-2, .grid-3, .results-grid {
         grid-template-columns: 1fr;
       }
       .app { grid-template-columns: 1fr; }
@@ -666,6 +688,7 @@
       <nav class="nav">
         <a href="#overview" data-view="overview">Overview</a>
         <a href="#playground" data-view="playground">Playground</a>
+        <a href="#toolgate" data-view="toolgate">Toolgate</a>
         <a href="#config" data-view="config">Config</a>
         <a href="#requests" data-view="requests">Requests</a>
       </nav>
@@ -952,6 +975,66 @@
           </div>
         </section>
 
+        <section id="view-toolgate" class="view">
+          <div class="grid-3">
+            <div class="card">
+              <h2>Toolgate Tester</h2>
+              <p>Run a pre-execution check for tool calls.</p>
+              <div class="field" style="margin-top: 12px;">
+                <label>Tool</label>
+                <select id="toolgateToolSelect">
+                  <option value="shell.exec">shell.exec</option>
+                  <option value="http.request">http.request</option>
+                  <option value="filesystem.read">filesystem.read</option>
+                  <option value="nodes.run">nodes.run</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Mode (optional)</label>
+                <select id="toolgateModeSelect">
+                  <option value="">use config</option>
+                  <option value="elevated_only">elevated_only</option>
+                  <option value="all_tools">all_tools</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Source (optional)</label>
+                <input id="toolgateSource" type="text" placeholder="e.g. openclaw" autocomplete="off" />
+              </div>
+              <div class="mini">Uses selected project from the console.</div>
+              <div class="actions" style="margin-top: 10px;">
+                <button class="btn" id="toolgateCheckBtn" type="button">Check</button>
+                <span class="status-line" id="toolgateStatusLine"></span>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>Args JSON</h2>
+              <textarea id="toolgateArgs" style="min-height: 240px;"></textarea>
+              <div class="mini" id="toolgateArgsError"></div>
+            </div>
+
+            <div class="card">
+              <h2>Result</h2>
+              <div class="row" style="align-items: center;">
+                <span class="pill" id="toolgateDecisionPill">--</span>
+                <span class="mini" id="toolgateLatency"></span>
+              </div>
+              <div class="row" style="margin-top: 8px; align-items: center;">
+                <span class="mini" id="toolgateRequestId">Request ID: --</span>
+                <button class="btn secondary" id="toolgateCopyRequestId" type="button">Copy</button>
+                <button class="btn secondary" id="toolgateFetchStatus" type="button">Fetch status</button>
+              </div>
+              <div class="mini" id="toolgateNormalized"></div>
+              <div class="toolgate-hits" id="toolgateHits"></div>
+              <details style="margin-top: 12px;" id="toolgateActivationDetails">
+                <summary>Activation event</summary>
+                <pre id="toolgateActivationJson"></pre>
+              </details>
+            </div>
+          </div>
+        </section>
+
         <section id="view-config" class="view">
           <div class="card">
             <div class="row" style="justify-content: space-between; align-items: center;">
@@ -1141,6 +1224,7 @@
 
   <script>
     const API_BASE = '/console/api';
+    const V1_BASE = '/v1';
     const STORAGE_KEY = 'strajaConsoleState';
     const HISTORY_KEY = 'strajaConsoleHistory';
 
@@ -1221,6 +1305,22 @@
     const copyRequestIdBtn = document.getElementById('copyRequestIdBtn');
     const copyRedactedPromptBtn = document.getElementById('copyRedactedPromptBtn');
     const copyRedactedOutputBtn = document.getElementById('copyRedactedOutputBtn');
+
+    const toolgateToolSelect = document.getElementById('toolgateToolSelect');
+    const toolgateModeSelect = document.getElementById('toolgateModeSelect');
+    const toolgateSource = document.getElementById('toolgateSource');
+    const toolgateCheckBtn = document.getElementById('toolgateCheckBtn');
+    const toolgateArgs = document.getElementById('toolgateArgs');
+    const toolgateArgsError = document.getElementById('toolgateArgsError');
+    const toolgateDecisionPill = document.getElementById('toolgateDecisionPill');
+    const toolgateLatency = document.getElementById('toolgateLatency');
+    const toolgateRequestId = document.getElementById('toolgateRequestId');
+    const toolgateCopyRequestId = document.getElementById('toolgateCopyRequestId');
+    const toolgateFetchStatus = document.getElementById('toolgateFetchStatus');
+    const toolgateNormalized = document.getElementById('toolgateNormalized');
+    const toolgateHits = document.getElementById('toolgateHits');
+    const toolgateStatusLine = document.getElementById('toolgateStatusLine');
+    const toolgateActivationJson = document.getElementById('toolgateActivationJson');
 
     const visualTab = document.getElementById('visualTab');
     const yamlTab = document.getElementById('yamlTab');
@@ -1524,10 +1624,24 @@
 
     function buildRequestBody() {
       return {
-        project_id: projectSelect.value,
         model: modelInput.value,
-        messages: [{ role: 'user', content: promptInput.value.trim() }]
+        input: promptInput.value.trim()
       };
+    }
+
+    async function ensureConsoleSession() {
+      const projectId = projectSelectTop?.value || projectSelect?.value || '';
+      if (!projectId) return false;
+      try {
+        const res = await fetch(`${API_BASE}/session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: projectId })
+        });
+        return res.ok;
+      } catch (_) {
+        return false;
+      }
     }
 
     function applyActivationObject(actJson) {
@@ -1683,6 +1797,19 @@
       return null;
     }
 
+    function extractOutputFromResponses(obj) {
+      if (!obj || typeof obj !== 'object') return '';
+      if (typeof obj.output_text === 'string') return obj.output_text;
+      if (Array.isArray(obj.output)) {
+        for (const item of obj.output) {
+          if (!item || !Array.isArray(item.content)) continue;
+          const textPart = item.content.find(part => part && part.type === 'output_text');
+          if (textPart && typeof textPart.text === 'string') return textPart.text;
+        }
+      }
+      return '';
+    }
+
     async function sendRequest() {
       const prompt = promptInput.value.trim();
       if (!projectSelect.value) {
@@ -1691,6 +1818,11 @@
       }
       if (!prompt) {
       statusLine.textContent = 'Enter a request.';
+        return;
+      }
+
+      if (!(await ensureConsoleSession())) {
+        statusLine.textContent = 'Console session not initialized.';
         return;
       }
 
@@ -1717,7 +1849,7 @@
       statusLine.textContent = 'Sending request…';
       const body = buildRequestBody();
       try {
-        const res = await fetch(`${API_BASE}/chat`, {
+        const res = await fetch(`${V1_BASE}/responses`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
@@ -1729,9 +1861,8 @@
         rawResponse.textContent = text;
         let json = null;
         try { json = JSON.parse(text); } catch (_) {}
-        if (json && json.choices && json.choices[0] && json.choices[0].message) {
-          assistantOutput.textContent = json.choices[0].message.content || '';
-        }
+        const outText = extractOutputFromResponses(json);
+        if (outText) assistantOutput.textContent = outText;
 
         const activationHeader = res.headers.get('x-straja-activation');
         if (activationHeader) {
@@ -1759,7 +1890,7 @@
       let lastFullText = '';
       let finalized = false;
       try {
-        const res = await fetch(`${API_BASE}/chat`, {
+        const res = await fetch(`${V1_BASE}/responses`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
           body: JSON.stringify(body),
@@ -1845,9 +1976,13 @@
     }
 
     async function fetchRequestStatus(requestId, prompt, output) {
-      const projectId = projectSelect.value;
+      if (!(await ensureConsoleSession())) {
+        statusWarning.textContent = 'Console session not initialized.';
+        statusWarning.style.display = 'block';
+        return;
+      }
       try {
-        const res = await fetch(`${API_BASE}/requests/${encodeURIComponent(requestId)}?project_id=${encodeURIComponent(projectId)}`);
+        const res = await fetch(`${V1_BASE}/requests/${encodeURIComponent(requestId)}`);
         if (!res.ok) throw new Error('status failed');
         const data = await res.json();
         if (data.status === 'completed' && data.activation) {
@@ -2044,6 +2179,65 @@
         if (itemMatch) items.push(itemMatch[1].trim());
       }
       return items;
+    }
+
+    function readProjectApiKey(lines, projectId) {
+      if (!projectId) return '';
+      const projects = findSection(lines, ['projects']);
+      if (!projects) return '';
+      let inProject = false;
+      let projectIndent = -1;
+      let apiKeysIndent = -1;
+      for (let i = projects.start; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+        const indent = line.match(/^(\s*)/)[1].length;
+        if (indent <= projects.indent) break;
+
+        const projMatch = line.match(/^(\s*)-\s*id:\s*(.+)$/);
+        if (projMatch) {
+          projectIndent = projMatch[1].length;
+          const idVal = projMatch[2].replace(/['"]/g, '').trim();
+          inProject = idVal === projectId;
+          apiKeysIndent = -1;
+          continue;
+        }
+
+        if (projectIndent >= 0 && indent > projectIndent) {
+          const idMatch = line.match(/^(\s*)id:\s*(.+)$/);
+          if (idMatch && idMatch[1].length > projectIndent) {
+            const idVal = idMatch[2].replace(/['"]/g, '').trim();
+            inProject = idVal === projectId;
+            apiKeysIndent = -1;
+            continue;
+          }
+        }
+
+        if (!inProject) continue;
+
+        const inlineKeys = line.match(/^(\s*)api_keys:\s*\\[(.+)\\]\\s*$/);
+        if (inlineKeys) {
+          const list = inlineKeys[2].split(',').map(v => v.replace(/['"]/g, '').trim()).filter(Boolean);
+          return list[0] || '';
+        }
+
+        const apiMatch = line.match(/^(\s*)api_keys:\s*$/);
+        if (apiMatch) {
+          apiKeysIndent = apiMatch[1].length;
+          continue;
+        }
+        if (apiKeysIndent >= 0) {
+          if (indent <= apiKeysIndent) {
+            apiKeysIndent = -1;
+            continue;
+          }
+          const itemMatch = line.match(/^(\s*)-\s*(.+)$/);
+          if (itemMatch) {
+            return itemMatch[2].replace(/['"]/g, '').trim();
+          }
+        }
+      }
+      return '';
     }
 
     function upsertScalar(lines, path, value) {
@@ -2283,6 +2477,7 @@
       projectSelectTop.value = value;
       configProject.value = value;
       saveState();
+      ensureConsoleSession();
     }
 
     // Event bindings
@@ -2297,7 +2492,8 @@
     });
     copyCurlBtn.addEventListener('click', () => {
       const body = buildRequestBody();
-      const curl = `curl -s -X POST '${API_BASE}/chat' -H 'Content-Type: application/json' ${streamToggle.checked ? "-H 'Accept: text/event-stream'" : ''} -d '${JSON.stringify(body)}'`;
+      const authHeader = "-H 'Authorization: Bearer <API_KEY>'";
+      const curl = `curl -s -X POST '${V1_BASE}/responses' -H 'Content-Type: application/json' ${authHeader} ${streamToggle.checked ? "-H 'Accept: text/event-stream'" : ''} -d '${JSON.stringify(body)}'`;
       copyText(curl, 'curl');
     });
     copyOutputBtn.addEventListener('click', () => copyText(assistantOutput.textContent, 'Response'));
@@ -2308,6 +2504,21 @@
     copyRedactedOutputBtn.addEventListener('click', () => copyText(redactedOutput.textContent, 'Redacted response'));
     if (copyDrawerActivationBtn) {
       copyDrawerActivationBtn.addEventListener('click', () => copyText(drawerActivation.textContent, 'Activation'));
+    }
+    if (toolgateToolSelect) {
+      toolgateToolSelect.addEventListener('change', () => setToolgateTemplate(toolgateToolSelect.value));
+    }
+    if (toolgateCheckBtn) {
+      toolgateCheckBtn.addEventListener('click', runToolgateCheck);
+    }
+    if (toolgateFetchStatus) {
+      toolgateFetchStatus.addEventListener('click', fetchToolgateStatus);
+    }
+    if (toolgateCopyRequestId) {
+      toolgateCopyRequestId.addEventListener('click', () => {
+        const id = toolgateRequestId ? toolgateRequestId.textContent.replace('Request ID: ', '').trim() : '';
+        if (id) copyText(id, 'Request ID');
+      });
     }
 
     projectSelect.addEventListener('change', () => syncProjectSelect(projectSelect.value));
@@ -2397,7 +2608,172 @@
     bindThresholdPair(cfgJbWarn, cfgJbWarnRange, () => setDirty(true));
     bindThresholdPair(cfgJbBlock, cfgJbBlockRange, () => setDirty(true));
 
+    let toolgateLastRequestId = '';
+    const toolgateTemplates = {
+      'shell.exec': { command: 'rm -rf /' },
+      'http.request': { method: 'POST', url: 'https://example.com/upload', body: '...payload...' },
+      'filesystem.read': { path: '~/.ssh/id_rsa' },
+      'nodes.run': { tool_type: 'shell', command: 'rm -rf /' }
+    };
+
+    function setToolgateTemplate(toolName) {
+      if (!toolgateArgs) return;
+      const template = toolgateTemplates[toolName] || {};
+      toolgateArgs.value = JSON.stringify(template, null, 2);
+      if (toolgateArgsError) toolgateArgsError.textContent = '';
+    }
+
+    function renderToolgateHits(hits) {
+      if (!toolgateHits) return;
+      toolgateHits.innerHTML = '';
+      if (!hits || hits.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'mini';
+        empty.textContent = 'No hits';
+        toolgateHits.appendChild(empty);
+        return;
+      }
+      hits.forEach(hit => {
+        const el = document.createElement('div');
+        el.className = 'toolgate-hit';
+        const rule = hit.rule_id || hit.ruleId || '--';
+        const cat = hit.category || '--';
+        const action = hit.action || '--';
+        const evidence = hit.evidence ? ` | ${hit.evidence}` : '';
+        el.textContent = `${cat} | ${rule} | ${action}${evidence}`;
+        toolgateHits.appendChild(el);
+      });
+    }
+
+    function setToolgateDecision(decision) {
+      if (!toolgateDecisionPill) return;
+      updateDecision(toolgateDecisionPill, decision);
+    }
+
+    async function runToolgateCheck() {
+      if (!toolgateToolSelect || !toolgateArgs) return;
+      if (toolgateStatusLine) toolgateStatusLine.textContent = '';
+      if (toolgateArgsError) toolgateArgsError.textContent = '';
+      if (toolgateLatency) toolgateLatency.textContent = '';
+      if (toolgateNormalized) toolgateNormalized.textContent = '';
+      renderToolgateHits([]);
+
+      let argsPayload = {};
+      try {
+        argsPayload = JSON.parse(toolgateArgs.value || '{}');
+      } catch (err) {
+        if (toolgateArgsError) toolgateArgsError.textContent = 'Invalid JSON';
+        return;
+      }
+
+      if (!(await ensureConsoleSession())) {
+        if (toolgateStatusLine) toolgateStatusLine.textContent = 'Console session not initialized';
+        return;
+      }
+
+      const ctx = {};
+      const projectId = projectSelectTop?.value || projectSelect?.value || '';
+      if (projectId) ctx.project_id = projectId;
+      const mode = toolgateModeSelect?.value || '';
+      if (mode) ctx.mode = mode;
+      const source = toolgateSource?.value?.trim();
+      if (source) ctx.source = source;
+
+      const payload = {
+        tool_name: toolgateToolSelect.value,
+        args: argsPayload,
+        context: ctx
+      };
+
+      let res;
+      try {
+        res = await fetch('/v1/toolgate/check', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+      } catch (err) {
+        if (toolgateStatusLine) toolgateStatusLine.textContent = 'Network error';
+        return;
+      }
+
+      const requestIdHeader = res.headers.get('X-Straja-Request-Id');
+      if (requestIdHeader) {
+        toolgateLastRequestId = requestIdHeader;
+        if (toolgateRequestId) toolgateRequestId.textContent = `Request ID: ${requestIdHeader}`;
+      }
+
+      if (!res.ok) {
+        let errBody = {};
+        try {
+          errBody = await res.json();
+        } catch (err) {
+          errBody = {};
+        }
+        const errObj = errBody.error || {};
+        const decision = errObj.code === 'tool_blocked' ? 'block' : 'error';
+        setToolgateDecision(decision);
+        renderToolgateHits([{
+          category: errObj.category,
+          rule_id: errObj.rule_id,
+          action: decision
+        }]);
+        if (toolgateStatusLine) toolgateStatusLine.textContent = errObj.message || 'Toolgate check failed';
+        return;
+      }
+
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (err) {
+        if (toolgateStatusLine) toolgateStatusLine.textContent = 'Invalid response';
+        return;
+      }
+      setToolgateDecision(data.decision || 'allow');
+      renderToolgateHits(Array.isArray(data.hits) ? data.hits : []);
+      if (data.request_id) {
+        toolgateLastRequestId = data.request_id;
+        if (toolgateRequestId) toolgateRequestId.textContent = `Request ID: ${data.request_id}`;
+      }
+      if (data.normalized && data.normalized.available && data.normalized.command) {
+        if (toolgateNormalized) toolgateNormalized.textContent = `Normalized: ${data.normalized.command}`;
+      }
+      if (typeof data.latency_ms === 'number' && toolgateLatency) {
+        toolgateLatency.textContent = `${data.latency_ms.toFixed(1)} ms`;
+      }
+    }
+
+    async function fetchToolgateStatus() {
+      if (!(await ensureConsoleSession())) {
+        if (toolgateStatusLine) toolgateStatusLine.textContent = 'Console session not initialized';
+        return;
+      }
+      const requestId = toolgateLastRequestId || (toolgateRequestId ? toolgateRequestId.textContent.replace('Request ID: ', '').trim() : '');
+      if (!requestId) {
+        if (toolgateStatusLine) toolgateStatusLine.textContent = 'No request_id available';
+        return;
+      }
+      try {
+        const res = await fetch(`/v1/requests/${requestId}`);
+        if (!res.ok) {
+          if (toolgateStatusLine) toolgateStatusLine.textContent = 'Status fetch failed';
+          return;
+        }
+        const data = await res.json();
+        if (toolgateActivationJson) {
+          toolgateActivationJson.textContent = JSON.stringify(data, null, 2);
+        }
+      } catch (err) {
+        if (toolgateStatusLine) toolgateStatusLine.textContent = 'Status fetch failed';
+      }
+    }
+
     // Init
+    if (toolgateToolSelect) {
+      setToolgateTemplate(toolgateToolSelect.value);
+    }
     loadState();
     setupNavigation();
     loadProjects();

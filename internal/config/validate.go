@@ -66,10 +66,30 @@ func Validate(cfg *Config) error {
 		return err
 	}
 
+	if err := validateConsoleConfig(cfg.Console); err != nil {
+		return err
+	}
+
 	if err := validateResponseGuardConfig(cfg.ResponseGuard); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+func validateConsoleConfig(c ConsoleConfig) error {
+	if !c.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(c.SessionCookieName) == "" {
+		return errors.New("console.session_cookie_name must be set when console is enabled")
+	}
+	if strings.TrimSpace(c.SessionSecret) == "" {
+		return errors.New("console.session_secret must be set when console is enabled")
+	}
+	if c.SessionTTL <= 0 {
+		return errors.New("console.session_ttl must be positive")
+	}
 	return nil
 }
 
