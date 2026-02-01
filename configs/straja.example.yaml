@@ -1,0 +1,135 @@
+server:
+  addr: ":8080"
+  read_header_timeout: "5s"
+  read_timeout: "30s"
+  write_timeout: "120s"
+  idle_timeout: "60s"
+  max_request_body_bytes: 2097152        # 2 * 1024 * 1024
+  max_non_stream_response_bytes: 4194304 # 4 * 1024 * 1024
+  max_in_flight_requests: 200
+  upstream_timeout: "60s"
+
+default_provider: "openai_demo"
+
+providers:
+  openai_demo:
+    type: "openai"
+    base_url: "https://api.openai.com/v1"
+    api_key_env: "OPENAI_API_KEY"
+
+projects:
+  - id: "demo"
+    provider: "openai_demo"
+    api_keys:
+      - "local-dev-key-123"
+
+logging:
+  activation_level: "redacted"   # metadata | redacted | full
+
+telemetry:
+  enabled: false
+  endpoint: "127.0.0.1:4317"          # prefer setting OTEL_EXPORTER_OTLP_ENDPOINT in env
+  protocol: "grpc"      # grpc | http
+
+activation:
+  enabled: true
+  queue_size: 1000
+  workers: 1
+  shutdown_timeout: "2s"
+  sinks:
+    - type: "file_jsonl"
+      path: "./tmp/activation/events.jsonl"
+    - type: "webhook"
+      url: "http://127.0.0.1:8099/activation"
+      timeout: "2s"
+
+policy:
+  banned_words: "redact" #  | redact| ignore | block | log
+  banned_words_list:
+    - "blocked_test"
+    - "foo_bar"
+    - "forbidden"
+  pii: redact
+  pii_entities:
+    email: true
+    phone: true
+    credit_card: true
+    iban: true
+    tokens: true
+
+  injection: "block"
+  prompt_injection: block
+  jailbreak: block
+  toxicity: "log"
+
+intelligence:
+  enabled: true
+  license_key: "STRAJA-FREE-XXX-XXX-XXXXX"
+  license_server_url: "https://straja.ai/api/license/validate"
+  bundle_cache_dir: "./bundles"
+  license_key_env: "STRAJA_LICENSE_KEY"
+  auto_update: true
+  update_check_interval: "6h"
+
+intel:
+  strajaguard:
+    family: strajaguard_v1_specialists
+  strajaguard_v1:
+    enabled: true
+    license_server_base_url: "https://straja.ai"
+    request_timeout_seconds: 300
+    bundle_download_timeout_seconds: 1800
+    intel_dir: "./intel"
+    version_file: "version"
+
+security:
+  enabled: true
+  bundle_dir: "./intel/strajaguard_v1_specialists"
+  seq_len: 256
+  prompt_injection:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.60
+    ml_block_threshold: 0.80
+    action_on_block: "block"
+  jailbreak:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.6
+    ml_block_threshold: 0.8
+    action_on_block: "block"
+  data_exfil:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.55
+    ml_block_threshold: 0.75
+    action_on_block: "block"
+  pii:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.5
+    action: "redact"
+  secrets:
+    regex_enabled: true
+    ml_enabled: true
+    ml_warn_threshold: 0.5
+    ml_block_threshold: 0.85
+    action_on_regex_hit: "block_and_redact"
+    action_on_ml_only: "redact"
+
+tool_gate:
+  enabled: true
+  mode: elevated_only
+  allowlist_hosts: []
+  allowlist_commands: []
+
+response_guard:
+  enabled: true
+  mode: warn
+  categories: {}
+
+strajaguard:
+  intel_dir: /var/lib/straja/intel
+  max_sessions: 1 # recommended value: 2
+  intra_threads: 1 # recommended value: number of CPU cores / 2 (4 for apple M3)
+  inter_threads: 1 # recommended value: 1

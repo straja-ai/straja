@@ -47,37 +47,38 @@ Disallow: /
 
 // Server wraps the HTTP server components for Straja.
 type Server struct {
-	mux                *http.ServeMux
-	cfg                *config.Config
-	auth               *auth.Auth
-	configPath         string
-	policy             policy.Engine
-	providers          map[string]provider.Provider // name -> provider
-	defaultProvider    string                       // name of default provider
-	requestStore       *requestStore
-	activationEmitter  *activation.Emitter
-	loggingLevel       string
-	securityThresholds map[string]float32
-	telemetry          *telemetry.Provider
-	projectProviders   map[string]string // project ID -> provider name
-	licenseClaims      *license.LicenseClaims
-	intelEnabled       bool
-	licenseKey         string
-	intelStatus        string
-	intelMeta          *strajaguard.ValidationMeta
-	intelBundleVer     string
-	strajaGuardStatus  string
-	strajaGuardReason  string
-	strajaGuardMeta    *strajaguard.ValidationMeta
-	httpClient         *http.Client
-	inFlightLimiter    chan struct{}
-	strajaGuardModel   *strajaguard.StrajaGuardModel
-	specialistsEngine  strajaguard.SpecialistsEngine
-	activeBundleVer    string
-	strajaGuardFamily  string
-	requireML          bool
-	allowRegexOnly     bool
-	providerTypes      map[string]string
+	mux                                *http.ServeMux
+	cfg                                *config.Config
+	auth                               *auth.Auth
+	configPath                         string
+	policy                             policy.Engine
+	providers                          map[string]provider.Provider // name -> provider
+	defaultProvider                    string                       // name of default provider
+	requestStore                       *requestStore
+	activationEmitter                  *activation.Emitter
+	loggingLevel                       string
+	securityThresholds                 map[string]float32
+	telemetry                          *telemetry.Provider
+	projectProviders                   map[string]string // project ID -> provider name
+	licenseClaims                      *license.LicenseClaims
+	intelEnabled                       bool
+	licenseKey                         string
+	intelStatus                        string
+	intelMeta                          *strajaguard.ValidationMeta
+	intelBundleVer                     string
+	strajaGuardStatus                  string
+	strajaGuardReason                  string
+	strajaGuardMeta                    *strajaguard.ValidationMeta
+	httpClient                         *http.Client
+	inFlightLimiter                    chan struct{}
+	strajaGuardModel                   *strajaguard.StrajaGuardModel
+	specialistsEngine                  strajaguard.SpecialistsEngine
+	activeBundleVer                    string
+	strajaGuardFamily                  string
+	strajaGuardSpecialistsConfigSource string
+	requireML                          bool
+	allowRegexOnly                     bool
+	providerTypes                      map[string]string
 }
 
 func isNetworkyError(err error) bool {
@@ -106,6 +107,20 @@ func (s *Server) strajaGuardEnabled() bool {
 		return false
 	}
 	return s.strajaGuardModel != nil || s.specialistsEngine != nil
+}
+
+func normalizeSpecialistsConfigSource(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return ""
+	}
+	if strings.HasPrefix(source, "file:") {
+		return "file"
+	}
+	if source == "embedded_default" {
+		return "embedded"
+	}
+	return source
 }
 
 func setConsoleRobotsHeader(w http.ResponseWriter) {
@@ -205,6 +220,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	var (
 		sgModel             *strajaguard.StrajaGuardModel
 		sgSpecialists       strajaguard.SpecialistsEngine
+		sgSpecialistsSource string
 		activeBundleVersion string
 		intelMeta           *strajaguard.ValidationMeta
 		sgStatus            string
@@ -273,7 +289,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 					loadFailed := false
 					switch sgFamily {
 					case "strajaguard_v1_specialists":
-						engine, loadErr := strajaguard.LoadSpecialistsEngine(dir, cfg.Security.SeqLen, rt, "configs/strajaguard_specialists.yaml")
+						engine, src, loadErr := strajaguard.LoadSpecialistsEngine(dir, cfg.Security.SeqLen, rt, cfg.StrajaGuard.Specialists.ConfigPath)
 						if loadErr != nil {
 							redact.Logf("strajaguard: specialists bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
 							sgStatus = "disabled_invalid_bundle"
@@ -282,6 +298,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 							break
 						}
 						sgSpecialists = engine
+						sgSpecialistsSource = src
 					default:
 						model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt)
 						if loadErr != nil {
@@ -335,12 +352,13 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 						bundleDir := filepath.Join(strajaGuardDir, currentVersion)
 						switch sgFamily {
 						case "strajaguard_v1_specialists":
-							engine, loadErr := strajaguard.LoadSpecialistsEngine(bundleDir, cfg.Security.SeqLen, rt, "configs/strajaguard_specialists.yaml")
+							engine, src, loadErr := strajaguard.LoadSpecialistsEngine(bundleDir, cfg.Security.SeqLen, rt, cfg.StrajaGuard.Specialists.ConfigPath)
 							if loadErr != nil {
 								sgStatus = "disabled_invalid_bundle"
 								sgReason = "invalid_bundle"
 							} else {
 								sgSpecialists = engine
+								sgSpecialistsSource = src
 								activeBundleVersion = currentVersion
 								sgStatus = "offline_cached_bundle"
 								sgReason = "network_error"
@@ -461,37 +479,38 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	activationEmitter := buildActivationEmitter(cfg)
 
 	s := &Server{
-		mux:                mux,
-		cfg:                cfg,
-		auth:               authz,
-		configPath:         configPath,
-		policy:             pol,
-		providers:          provs,
-		defaultProvider:    cfg.DefaultProvider,
-		requestStore:       newRequestStore(30 * time.Minute),
-		activationEmitter:  activationEmitter,
-		loggingLevel:       strings.ToLower(cfg.Logging.ActivationLevel),
-		securityThresholds: buildSecurityThresholds(cfg.Security),
-		telemetry:          telProvider,
-		projectProviders:   projectProviders,
-		licenseClaims:      licenseClaims,
-		intelEnabled:       intelEnabled,
-		licenseKey:         licenseKey,
-		intelStatus:        intelStatus,
-		intelMeta:          intelMeta,
-		intelBundleVer:     intelBundleVer,
-		httpClient:         &http.Client{Timeout: licenseHTTPTimeout},
-		inFlightLimiter:    limiter,
-		strajaGuardModel:   sgModel,
-		specialistsEngine:  sgSpecialists,
-		activeBundleVer:    activeBundleVersion,
-		strajaGuardFamily:  sgFamily,
-		strajaGuardStatus:  sgStatus,
-		strajaGuardReason:  sgReason,
-		strajaGuardMeta:    sgMeta,
-		requireML:          cfg.Intel.StrajaGuardV1.RequireML,
-		allowRegexOnly:     cfg.Intel.StrajaGuardV1.AllowRegexOnly,
-		providerTypes:      providerTypes,
+		mux:                                mux,
+		cfg:                                cfg,
+		auth:                               authz,
+		configPath:                         configPath,
+		policy:                             pol,
+		providers:                          provs,
+		defaultProvider:                    cfg.DefaultProvider,
+		requestStore:                       newRequestStore(30 * time.Minute),
+		activationEmitter:                  activationEmitter,
+		loggingLevel:                       strings.ToLower(cfg.Logging.ActivationLevel),
+		securityThresholds:                 buildSecurityThresholds(cfg.Security),
+		telemetry:                          telProvider,
+		projectProviders:                   projectProviders,
+		licenseClaims:                      licenseClaims,
+		intelEnabled:                       intelEnabled,
+		licenseKey:                         licenseKey,
+		intelStatus:                        intelStatus,
+		intelMeta:                          intelMeta,
+		intelBundleVer:                     intelBundleVer,
+		httpClient:                         &http.Client{Timeout: licenseHTTPTimeout},
+		inFlightLimiter:                    limiter,
+		strajaGuardModel:                   sgModel,
+		specialistsEngine:                  sgSpecialists,
+		strajaGuardSpecialistsConfigSource: sgSpecialistsSource,
+		activeBundleVer:                    activeBundleVersion,
+		strajaGuardFamily:                  sgFamily,
+		strajaGuardStatus:                  sgStatus,
+		strajaGuardReason:                  sgReason,
+		strajaGuardMeta:                    sgMeta,
+		requireML:                          cfg.Intel.StrajaGuardV1.RequireML,
+		allowRegexOnly:                     cfg.Intel.StrajaGuardV1.AllowRegexOnly,
+		providerTypes:                      providerTypes,
 	}
 
 	bundleTimeout := time.Duration(cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds) * time.Second
@@ -1428,22 +1447,23 @@ func (s *Server) emitActivation(ctx context.Context, w http.ResponseWriter, req 
 	}
 
 	ev := activation.BuildEvent(activation.BuildParams{
-		Request:              req,
-		Response:             resp,
-		ProviderName:         providerName,
-		Decision:             decision,
-		LoggingLevel:         s.loggingLevel,
-		IntelStatus:          s.intelStatus,
-		IntelBundleVersion:   s.intelBundleVer,
-		IntelLastValidatedAt: lastValidated,
-		IntelCachePresent:    s.intelMeta != nil || s.strajaGuardMeta != nil,
-		StrajaGuardStatus:    s.strajaGuardStatus,
-		StrajaGuardBundleVer: s.activeBundleVer,
-		StrajaGuardModel:     s.strajaGuardFamily,
-		SecurityThresholds:   s.securityThresholds,
-		IncludeStrajaGuard:   s.strajaGuardEnabled() && !strings.HasPrefix(s.strajaGuardStatus, "disabled"),
-		RequestID:            req.RequestID,
-		Mode:                 mode,
+		Request:                            req,
+		Response:                           resp,
+		ProviderName:                       providerName,
+		Decision:                           decision,
+		LoggingLevel:                       s.loggingLevel,
+		IntelStatus:                        s.intelStatus,
+		IntelBundleVersion:                 s.intelBundleVer,
+		IntelLastValidatedAt:               lastValidated,
+		IntelCachePresent:                  s.intelMeta != nil || s.strajaGuardMeta != nil,
+		StrajaGuardStatus:                  s.strajaGuardStatus,
+		StrajaGuardBundleVer:               s.activeBundleVer,
+		StrajaGuardModel:                   s.strajaGuardFamily,
+		StrajaGuardSpecialistsConfigSource: normalizeSpecialistsConfigSource(s.strajaGuardSpecialistsConfigSource),
+		SecurityThresholds:                 s.securityThresholds,
+		IncludeStrajaGuard:                 s.strajaGuardEnabled() && !strings.HasPrefix(s.strajaGuardStatus, "disabled"),
+		RequestID:                          req.RequestID,
+		Mode:                               mode,
 	})
 	if ev == nil {
 		return

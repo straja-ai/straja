@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	_ "embed"
+
 	"github.com/straja-ai/straja/internal/redact"
 	"github.com/straja-ai/straja/internal/safety"
 	ort "github.com/yalue/onnxruntime_go"
@@ -24,6 +26,14 @@ const (
 	SpecialistSourcePIINER          = "ner:ab-ai/pii_model"
 	SpecialistEntitySource          = "pii_ner"
 )
+
+const (
+	specialistsConfigSourceEmbedded = "embedded_default"
+	specialistsConfigSourceFile     = "file"
+)
+
+//go:embed specialists_default.yaml
+var embeddedSpecialistsConfig []byte
 
 type SpecialistsEngine interface {
 	AnalyzeText(ctx context.Context, text string) (*SpecialistsResult, error)
@@ -96,34 +106,32 @@ type specialistSession struct {
 }
 
 // LoadSpecialistsEngine builds a multi-model specialists engine from a bundle dir.
-func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, configPath string) (*Specialists, error) {
+func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, configPath string) (*Specialists, string, error) {
 	if bundleDir == "" {
-		return nil, errors.New("bundleDir is empty")
+		return nil, "", errors.New("bundleDir is empty")
 	}
 	if seqLen <= 0 {
 		seqLen = 256
 	}
-	if configPath == "" {
-		configPath = "configs/strajaguard_specialists.yaml"
-	}
 
-	cfg, err := LoadSpecialistsConfig(configPath)
+	cfg, source, err := loadSpecialistsConfigWithFallback(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("load specialists config: %w", err)
+		return nil, "", fmt.Errorf("load specialists config: %w", err)
 	}
 	if len(cfg.Specialists) == 0 {
-		return nil, errors.New("specialists config is empty")
+		return nil, "", errors.New("specialists config is empty")
 	}
+	redact.Logf("strajaguard specialists: config_source=%s", source)
 
 	libPath := resolveSharedLibraryPath(bundleDir)
 	if libPath != "" {
 		ort.SetSharedLibraryPath(libPath)
 	} else {
-		return nil, fmt.Errorf("onnxruntime shared library not found; set ONNXRUNTIME_SHARED_LIBRARY_PATH or install the runtime")
+		return nil, "", fmt.Errorf("onnxruntime shared library not found; set ONNXRUNTIME_SHARED_LIBRARY_PATH or install the runtime")
 	}
 	if !ort.IsInitialized() {
 		if err := ort.InitializeEnvironment(); err != nil {
-			return nil, fmt.Errorf("initialize onnxruntime: %w", err)
+			return nil, "", fmt.Errorf("initialize onnxruntime: %w", err)
 		}
 	}
 
@@ -140,7 +148,7 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 	models := make(map[string]*specialistModel, len(cfg.Specialists))
 	for id, spec := range cfg.Specialists {
 		if strings.TrimSpace(spec.Kind) == "" {
-			return nil, fmt.Errorf("specialist %s missing kind", id)
+			return nil, "", fmt.Errorf("specialist %s missing kind", id)
 		}
 		modelDir := filepath.Dir(spec.Onnx)
 		if modelDir == "." || modelDir == "" {
@@ -149,7 +157,7 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 
 		modelPath := resolveSpecialistModelPath(bundleDir, spec.Onnx)
 		if modelPath == "" {
-			return nil, fmt.Errorf("specialist %s model missing", id)
+			return nil, "", fmt.Errorf("specialist %s model missing", id)
 		}
 
 		tokenizerDir := filepath.Join(bundleDir, filepath.FromSlash(spec.TokenizerDir))
@@ -158,17 +166,17 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 		}
 		tokenizer, err := LoadTokenizerFromDir(tokenizerDir)
 		if err != nil {
-			return nil, fmt.Errorf("specialist %s load tokenizer: %w", id, err)
+			return nil, "", fmt.Errorf("specialist %s load tokenizer: %w", id, err)
 		}
 
 		configDir := filepath.Join(bundleDir, filepath.FromSlash(modelDir))
 		meta, err := loadSpecialistMeta(configDir)
 		if err != nil {
-			return nil, fmt.Errorf("specialist %s load config: %w", id, err)
+			return nil, "", fmt.Errorf("specialist %s load config: %w", id, err)
 		}
 		labels, numLabels := meta.Labels, meta.NumLabels
 		if strings.EqualFold(spec.Kind, "token_classification") && len(labels) == 0 {
-			return nil, fmt.Errorf("specialist %s missing token labels", id)
+			return nil, "", fmt.Errorf("specialist %s missing token labels", id)
 		}
 		if numLabels <= 0 {
 			numLabels = len(labels)
@@ -185,7 +193,7 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 		needsTokenType := meta.RequiresTokenType
 		outputName, outputDims, err := selectOutputInfo(modelPath)
 		if err != nil {
-			return nil, fmt.Errorf("specialist %s output selection: %w", id, err)
+			return nil, "", fmt.Errorf("specialist %s output selection: %w", id, err)
 		}
 		if debugML() {
 			redact.Logf("strajaguard debug ml: model=%s output_name=%s output_dims=%v", id, outputName, outputDims)
@@ -198,7 +206,7 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 		for i := 0; i < poolSize; i++ {
 			ss, err := newSpecialistSession(modelPath, modelSeqLen, numLabels, outputDims, intraThr, interThr, strings.EqualFold(spec.Kind, "token_classification"), needsTokenType, outputName)
 			if err != nil {
-				return nil, fmt.Errorf("specialist %s create onnx session %d/%d: %w", id, i+1, poolSize, err)
+				return nil, "", fmt.Errorf("specialist %s create onnx session %d/%d: %w", id, i+1, poolSize, err)
 			}
 			sessions <- ss
 		}
@@ -225,7 +233,7 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 	return &Specialists{
 		seqLen: seqLen,
 		models: models,
-	}, nil
+	}, source, nil
 }
 
 // LoadSpecialistsConfig reads the specialists config YAML.
@@ -237,6 +245,34 @@ func LoadSpecialistsConfig(path string) (*SpecialistsConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseSpecialistsConfig(data)
+}
+
+func loadSpecialistsConfigWithFallback(path string) (*SpecialistsConfig, string, error) {
+	if strings.TrimSpace(path) != "" {
+		info, err := os.Stat(path)
+		if err == nil && info != nil && !info.IsDir() {
+			cfg, err := LoadSpecialistsConfig(path)
+			if err != nil {
+				return nil, "", err
+			}
+			return cfg, specialistsConfigSourceFile + ":" + path, nil
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, "", err
+		}
+	}
+	if len(embeddedSpecialistsConfig) == 0 {
+		return nil, "", errors.New("embedded specialists config is empty")
+	}
+	cfg, err := parseSpecialistsConfig(embeddedSpecialistsConfig)
+	if err != nil {
+		return nil, "", err
+	}
+	return cfg, specialistsConfigSourceEmbedded, nil
+}
+
+func parseSpecialistsConfig(data []byte) (*SpecialistsConfig, error) {
 	var cfg SpecialistsConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err

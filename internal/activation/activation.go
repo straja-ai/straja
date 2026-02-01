@@ -97,9 +97,10 @@ type ActivationMeta struct {
 }
 
 type StrajaGuardInfo struct {
-	Status        string `json:"status"`
-	BundleVersion string `json:"bundle_version,omitempty"`
-	Model         string `json:"model,omitempty"`
+	Status                  string `json:"status"`
+	BundleVersion           string `json:"bundle_version,omitempty"`
+	Model                   string `json:"model,omitempty"`
+	SpecialistsConfigSource string `json:"specialists_config_source,omitempty"`
 }
 
 type ActivationThresholds struct {
@@ -136,22 +137,23 @@ type Event struct {
 
 // BuildParams collects inputs needed to assemble a canonical activation event.
 type BuildParams struct {
-	Request              *inference.Request
-	Response             *inference.Response
-	ProviderName         string
-	Decision             Decision
-	LoggingLevel         string
-	IntelStatus          string
-	IntelBundleVersion   string
-	IntelLastValidatedAt string
-	IntelCachePresent    bool
-	StrajaGuardStatus    string
-	StrajaGuardBundleVer string
-	StrajaGuardModel     string
-	SecurityThresholds   map[string]float32
-	IncludeStrajaGuard   bool
-	RequestID            string
-	Mode                 string
+	Request                            *inference.Request
+	Response                           *inference.Response
+	ProviderName                       string
+	Decision                           Decision
+	LoggingLevel                       string
+	IntelStatus                        string
+	IntelBundleVersion                 string
+	IntelLastValidatedAt               string
+	IntelCachePresent                  bool
+	StrajaGuardStatus                  string
+	StrajaGuardBundleVer               string
+	StrajaGuardModel                   string
+	StrajaGuardSpecialistsConfigSource string
+	SecurityThresholds                 map[string]float32
+	IncludeStrajaGuard                 bool
+	RequestID                          string
+	Mode                               string
 }
 
 // BuildEvent creates a canonical activation event from an inference request/response pair.
@@ -225,9 +227,10 @@ func BuildEvent(params BuildParams) *Event {
 			model = "strajaguard_v1"
 		}
 		intel.StrajaGuard = &StrajaGuardInfo{
-			Status:        params.StrajaGuardStatus,
-			BundleVersion: params.StrajaGuardBundleVer,
-			Model:         model,
+			Status:                  params.StrajaGuardStatus,
+			BundleVersion:           params.StrajaGuardBundleVer,
+			Model:                   model,
+			SpecialistsConfigSource: params.StrajaGuardSpecialistsConfigSource,
 		}
 	}
 

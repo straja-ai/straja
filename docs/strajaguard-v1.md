@@ -57,7 +57,15 @@ Each specialist directory must include:
 - `tokenizer/` assets (tokenizer config + vocab)
 - `config.json` (Hugging Face model config)
 
-The specialists definitions are loaded from `configs/strajaguard_specialists.yaml`.
+The specialists definitions are loaded from an embedded default config (built into the gateway binary). You can override it with `strajaguard.specialists.config_path` if you want to customize the specialists list.
+
+### Overriding specialists config
+
+```yaml
+strajaguard:
+  specialists:
+    config_path: "/path/to/strajaguard_specialists.yaml"
+```
 
 ## Paths
 

@@ -52,8 +52,21 @@ jobs:
             'set -euo pipefail' \
             'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
             'export LD_LIBRARY_PATH="${script_dir}/lib:${LD_LIBRARY_PATH:-}"' \
+            'if [ -f "${script_dir}/straja.yaml" ]; then' \
+            '  exec "${script_dir}/straja" --config "${script_dir}/straja.yaml" "$@"' \
+            'fi' \
             'exec "${script_dir}/straja" "$@"' \
             > dist/straja/run.sh
+
+          cp configs/straja.example.yaml dist/straja/straja.yaml
+          printf '%s\n' \
+            'Edit straja.yaml, then run:' \
+            '  ./run.sh' \
+            '' \
+            'Notes:' \
+            '- Provider keys are read from env (e.g., OPENAI_API_KEY).' \
+            '- StrajaGuard license key env: STRAJA_LICENSE_KEY.' \
+            > dist/straja/README.txt
 
           chmod +x dist/straja/run.sh dist/straja/straja
           ./dist/straja/straja -h
@@ -124,8 +137,21 @@ jobs:
             'set -euo pipefail' \
             'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
             'export DYLD_LIBRARY_PATH="${script_dir}/lib:${DYLD_LIBRARY_PATH:-}"' \
+            'if [ -f "${script_dir}/straja.yaml" ]; then' \
+            '  exec "${script_dir}/straja" --config "${script_dir}/straja.yaml" "$@"' \
+            'fi' \
             'exec "${script_dir}/straja" "$@"' \
             > dist/straja/run.sh
+
+          cp configs/straja.example.yaml dist/straja/straja.yaml
+          printf '%s\n' \
+            'Edit straja.yaml, then run:' \
+            '  ./run.sh' \
+            '' \
+            'Notes:' \
+            '- Provider keys are read from env (e.g., OPENAI_API_KEY).' \
+            '- StrajaGuard license key env: STRAJA_LICENSE_KEY.' \
+            > dist/straja/README.txt
 
           chmod +x dist/straja/run.sh dist/straja/straja
           ./dist/straja/straja -h
@@ -171,6 +197,16 @@ jobs:
           Expand-Archive -Path $OrtZip -DestinationPath $Env:TEMP\ort
           $OrtDir = Join-Path $Env:TEMP "ort\onnxruntime-win-x64-$Env:ORT_VERSION"
           Copy-Item "$OrtDir\lib\*.dll" dist\straja\ -Force
+
+          Copy-Item configs\straja.example.yaml dist\straja\straja.yaml
+          @(
+            'Edit straja.yaml, then run:',
+            '  .\\straja\\straja.exe --config .\\straja\\straja.yaml',
+            '',
+            'Notes:',
+            '- Provider keys are read from env (e.g., OPENAI_API_KEY).',
+            '- StrajaGuard license key env: STRAJA_LICENSE_KEY.'
+          ) -join "`n" | Set-Content -Path dist\straja\README.txt -Encoding ASCII
 
           .\dist\straja\straja.exe -h
 

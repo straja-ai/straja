@@ -62,6 +62,42 @@ func TestLoadSpecialistsConfig(t *testing.T) {
 	}
 }
 
+func TestLoadSpecialistsConfigFallbackEmbedded(t *testing.T) {
+	missingPath := filepath.Join(t.TempDir(), "missing.yaml")
+	cfg, source, err := loadSpecialistsConfigWithFallback(missingPath)
+	if err != nil {
+		t.Fatalf("load specialists config fallback: %v", err)
+	}
+	if source != specialistsConfigSourceEmbedded {
+		t.Fatalf("expected source %s, got %s", specialistsConfigSourceEmbedded, source)
+	}
+	if cfg == nil || len(cfg.Specialists) != 3 {
+		t.Fatalf("expected 3 specialists, got %d", len(cfg.Specialists))
+	}
+}
+
+func TestLoadSpecialistsConfigOverrideFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "specialists.yaml")
+	data, err := os.ReadFile(filepath.Join("..", "..", "configs", "strajaguard_specialists.yaml"))
+	if err != nil {
+		t.Fatalf("read base config: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	cfg, source, err := loadSpecialistsConfigWithFallback(path)
+	if err != nil {
+		t.Fatalf("load specialists config override: %v", err)
+	}
+	if source != specialistsConfigSourceFile+":"+path {
+		t.Fatalf("expected source %s, got %s", specialistsConfigSourceFile+":"+path, source)
+	}
+	if cfg == nil || len(cfg.Specialists) != 3 {
+		t.Fatalf("expected 3 specialists, got %d", len(cfg.Specialists))
+	}
+}
+
 func TestMergeEntities(t *testing.T) {
 	in := []safety.PIIEntity{
 		{EntityType: "EMAIL", StartByte: 5, EndByte: 10, Source: SpecialistEntitySource},
@@ -83,7 +119,7 @@ func TestSpecialistsEngineSessionReuse(t *testing.T) {
 	}
 
 	rt := ResolveRuntime(RuntimeConfig{})
-	engine, err := LoadSpecialistsEngine(bundleDir, 64, rt, "configs/strajaguard_specialists.yaml")
+	engine, _, err := LoadSpecialistsEngine(bundleDir, 64, rt, "configs/strajaguard_specialists.yaml")
 	if err != nil {
 		t.Fatalf("load specialists engine: %v", err)
 	}

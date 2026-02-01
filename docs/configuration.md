@@ -166,7 +166,7 @@ Source: `internal/config/config.go`, `internal/safety/policy_eval.go`
 - `bundle_dir` (string, default `"./intel/strajaguard_v1"`; if `intel.strajaguard.family` is set to `strajaguard_v1_specialists`, the default becomes `"./intel/strajaguard_v1_specialists"`)
 - `seq_len` (int, default `256`)
 
-`security.seq_len` also acts as the default max token length for StrajaGuard specialists (unless a specialist overrides `max_tokens` in `configs/strajaguard_specialists.yaml`).
+`security.seq_len` also acts as the default max token length for StrajaGuard specialists (unless a specialist overrides `max_tokens` in the specialists config).
 
 ### `security.prompt_injection`, `security.jailbreak`, `security.data_exfil`
 
@@ -295,7 +295,7 @@ Supported families:
 - `strajaguard_v1` (legacy multi-label model)
 - `strajaguard_v1_specialists` (prompt injection + jailbreak + PII NER specialists)
 
-When the specialists family is enabled, the gateway loads `configs/strajaguard_specialists.yaml` at startup.
+When the specialists family is enabled, the gateway loads an embedded default specialists config at startup (unless you override it).
 
 `intel.strajaguard_v1` options:
 
@@ -326,3 +326,11 @@ Runtime settings for the StrajaGuard ONNX runtime:
 - `inter_threads` (int, default `0` -> runtime default 1)
 
 Precedence for runtime settings: YAML `strajaguard.*` > env `STRAJA_GUARD_*` > internal defaults.
+
+## `strajaguard.specialists`
+
+Source: `internal/config/config.go`, `internal/strajaguard/specialists.go`
+
+Override the embedded specialists config:
+
+- `config_path` (string, optional) — path to a custom `strajaguard_specialists.yaml`. If the file exists, it is used; otherwise the embedded default is used.

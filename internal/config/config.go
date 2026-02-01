@@ -63,9 +63,14 @@ type StrajaGuardV1Config struct {
 
 // StrajaGuardConfig controls runtime settings for StrajaGuard inference.
 type StrajaGuardConfig struct {
-	MaxSessions  int `yaml:"max_sessions"`
-	IntraThreads int `yaml:"intra_threads"`
-	InterThreads int `yaml:"inter_threads"`
+	MaxSessions  int                          `yaml:"max_sessions"`
+	IntraThreads int                          `yaml:"intra_threads"`
+	InterThreads int                          `yaml:"inter_threads"`
+	Specialists  StrajaGuardSpecialistsConfig `yaml:"specialists"`
+}
+
+type StrajaGuardSpecialistsConfig struct {
+	ConfigPath string `yaml:"config_path"`
 }
 
 type ServerConfig struct {
@@ -251,10 +256,10 @@ func defaultSecurityConfig() SecurityConfig {
 			ActionOnBlock:    "block",
 		},
 		PII: PIICategoryConfig{
-			RegexEnabled:     true,
-			MLEnabled:        true,
-			MLWarnThreshold:  0.50,
-			Action:           "redact",
+			RegexEnabled:    true,
+			MLEnabled:       true,
+			MLWarnThreshold: 0.50,
+			Action:          "redact",
 		},
 		Secrets: SecretsCategoryConfig{
 			RegexEnabled:     true,
@@ -415,7 +420,7 @@ type PIICategoryConfig struct {
 	RegexEnabled     bool    `yaml:"regex_enabled"`
 	MLEnabled        bool    `yaml:"ml_enabled"`
 	MLWarnThreshold  float32 `yaml:"ml_warn_threshold"`
-	Action          string  `yaml:"action"`
+	Action           string  `yaml:"action"`
 	ActionOnRegexHit string  `yaml:"action_on_regex_hit,omitempty"` // legacy
 	ActionOnMLOnly   string  `yaml:"action_on_ml_only,omitempty"`   // legacy
 }

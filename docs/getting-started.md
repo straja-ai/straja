@@ -44,7 +44,15 @@ Straja reads upstream provider keys from environment variables.
 export OPENAI_API_KEY="sk-..."
 ```
 
-## 3) Create a minimal `straja.yaml`
+## 3) Set a console session secret
+
+The built-in console requires a session secret for signing cookies. Set it in your environment before starting Straja.
+
+```bash
+export STRAJA_CONSOLE_SESSION_SECRET="replace-with-a-random-string"
+```
+
+## 4) Create a minimal `straja.yaml`
 
 ```yaml
 server:
@@ -65,7 +73,7 @@ projects:
       - "local-dev-key-123"
 ```
 
-## 4) Run the gateway
+## 5) Run the gateway
 
 ```bash
 ./straja/run.sh --config straja.yaml
@@ -76,7 +84,7 @@ Flags are defined in `cmd/straja/main.go`:
 - `--config` (default: `straja.yaml`)
 - `--addr` (overrides `server.addr`)
 
-## 5) Send your first request
+## 6) Send your first request
 
 ```bash
 curl -X POST http://localhost:8080/v1/chat/completions \
