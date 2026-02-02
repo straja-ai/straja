@@ -13,6 +13,7 @@ This documentation set is generated from the current repository. Every option an
 - [OpenClaw integration](integrations/openclaw.md)
 - [Load testing and mock provider](load-testing.md)
 - [Activation events and sinks](activation.md)
+- [Telegram activation sink](activation-telegram.md)
 - [StrajaGuard v1 intel bundle](strajaguard-v1.md)
 - [Troubleshooting](troubleshooting.md)
 - [Security considerations](security.md)

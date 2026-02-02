@@ -594,6 +594,13 @@ func buildActivationEmitter(cfg *config.Config) *activation.Emitter {
 				continue
 			}
 			sinks = append(sinks, sink)
+		case "telegram":
+			sink, err := activation.NewTelegramSink(s)
+			if err != nil {
+				redact.Logf("activation: skipping telegram sink: %v", err)
+				continue
+			}
+			sinks = append(sinks, sink)
 		default:
 			redact.Logf("activation: unknown sink type %q (skipping)", s.Type)
 		}

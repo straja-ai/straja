@@ -105,11 +105,21 @@ Source: `internal/config/config.go`, `internal/activation/*`, and `internal/serv
 
 `activation.sinks` entries:
 
-- `type` (string, required): `file_jsonl` or `webhook`
+- `type` (string, required): `file_jsonl`, `webhook`, or `telegram`
 - `path` (string, required for `file_jsonl`)
 - `url` (string, required for `webhook`)
 - `headers` (map string->string, optional for `webhook`)
-- `timeout` (duration, optional for `webhook`, default `2s`)
+- `timeout` (duration, optional for `webhook` and `telegram`, default `2s`)
+- `token_env` (string, required for `telegram`)
+- `chat_id_env` (string, required for `telegram`)
+- `api_base_url` (string, optional for `telegram`, default `https://api.telegram.org`)
+- `disable_web_page_preview` (bool, optional for `telegram`, default `true`)
+- `parse_mode` (string, optional for `telegram`, default empty; only `MarkdownV2` supported)
+- `rate_limit_per_sec` (int, optional for `telegram`, default `1`)
+- `min_level` (string, optional for `telegram`, default `warn`; allowed: `warn`, `block`)
+- `only_categories` (string list, optional for `telegram`)
+- `send_on_actions` (string list, optional for `telegram`, default `block` and `warn`)
+- `max_message_len` (int, optional for `telegram`, default `3500`, max `4096`)
 
 ## `telemetry`
 

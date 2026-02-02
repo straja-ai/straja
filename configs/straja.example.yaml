@@ -42,6 +42,18 @@ activation:
     - type: "webhook"
       url: "http://127.0.0.1:8099/activation"
       timeout: "2s"
+    # - type: "telegram"
+    #   token_env: "TELEGRAM_BOT_TOKEN"
+    #   chat_id_env: "TELEGRAM_CHAT_ID"
+    #   api_base_url: "https://api.telegram.org"
+    #   disable_web_page_preview: true
+    #   parse_mode: ""
+    #   timeout: "2s"
+    #   rate_limit_per_sec: 1
+    #   min_level: "warn"
+    #   only_categories: ["toolgate", "prompt_injection", "jailbreak", "pii", "data_exfil"]
+    #   send_on_actions: ["block", "warn"]
+    #   max_message_len: 3500
 
 policy:
   banned_words: "redact" #  | redact| ignore | block | log

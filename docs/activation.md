@@ -186,6 +186,45 @@ Configure sinks under `activation.sinks` (see `configuration.md`).
 - Per-request timeout defaults to `2s`.
 - Retries twice with backoff (100ms, 300ms) on errors or non-2xx responses.
 
+### `telegram`
+
+Source: `internal/activation/sink_telegram.go`, `internal/server/server.go`, `internal/config/config.go`
+
+- Sends a short, redacted alert message via Telegram Bot API `sendMessage`.
+- Always uses redacted summary fields (no raw prompt/response/tool args).
+- Supports per-sink rate limiting and a max message length cap.
+
+Required config keys:
+
+- `token_env` (env var name that stores the bot token)
+- `chat_id_env` (env var name that stores the chat id)
+
+Example:
+
+```yaml
+activation:
+  enabled: true
+  sinks:
+    - type: telegram
+      token_env: TELEGRAM_BOT_TOKEN
+      chat_id_env: TELEGRAM_CHAT_ID
+      api_base_url: "https://api.telegram.org"
+      disable_web_page_preview: true
+      parse_mode: "MarkdownV2"
+      timeout: "2s"
+      rate_limit_per_sec: 1
+      min_level: "warn"
+      only_categories: ["toolgate", "prompt_injection", "jailbreak", "pii", "data_exfil"]
+      send_on_actions: ["block", "warn"]
+      max_message_len: 3500
+```
+
+Operational notes:
+
+- Create a bot with BotFather to get a token.
+- Send a message to the bot, then use `getUpdates` to find the chat id.
+- If `parse_mode: MarkdownV2` is set, the message is escaped before sending.
+
 ### OpenTelemetry (OTLP)
 
 OpenTelemetry is **not** an activation sink. It exports telemetry (traces + metrics) about request handling, while activation events are delivered via `X-Straja-Activation` and optional sinks above.

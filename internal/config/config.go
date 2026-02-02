@@ -167,11 +167,21 @@ func (a ActivationConfig) isZero() bool {
 }
 
 type ActivationSinkConfig struct {
-	Type    string            `yaml:"type"`
-	Path    string            `yaml:"path"`
-	URL     string            `yaml:"url"`
-	Headers map[string]string `yaml:"headers"`
-	Timeout time.Duration     `yaml:"timeout"`
+	Type                  string            `yaml:"type"`
+	Path                  string            `yaml:"path"`
+	URL                   string            `yaml:"url"`
+	Headers               map[string]string `yaml:"headers"`
+	Timeout               time.Duration     `yaml:"timeout"`
+	TokenEnv              string            `yaml:"token_env"`
+	ChatIDEnv             string            `yaml:"chat_id_env"`
+	APIBaseURL            string            `yaml:"api_base_url"`
+	DisableWebPagePreview *bool             `yaml:"disable_web_page_preview"`
+	ParseMode             string            `yaml:"parse_mode"`
+	RateLimitPerSec       int               `yaml:"rate_limit_per_sec"`
+	MinLevel              string            `yaml:"min_level"`
+	OnlyCategories        []string          `yaml:"only_categories"`
+	SendOnActions         []string          `yaml:"send_on_actions"`
+	MaxMessageLen         int               `yaml:"max_message_len"`
 }
 
 type PIIEntitiesConfig struct {

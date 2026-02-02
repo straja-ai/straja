@@ -138,6 +138,40 @@ func validateActivationConfig(a ActivationConfig) error {
 			if u.Scheme != "http" && u.Scheme != "https" {
 				return fmt.Errorf("activation sink %d (webhook) url must be http or https", i)
 			}
+		case "telegram":
+			if strings.TrimSpace(s.TokenEnv) == "" || strings.TrimSpace(s.ChatIDEnv) == "" {
+				return fmt.Errorf("activation sink %d (telegram) missing token_env or chat_id_env", i)
+			}
+			if strings.TrimSpace(s.APIBaseURL) != "" {
+				u, err := url.Parse(s.APIBaseURL)
+				if err != nil || u.Scheme == "" || u.Host == "" {
+					return fmt.Errorf("activation sink %d (telegram) has invalid api_base_url", i)
+				}
+				if u.Scheme != "http" && u.Scheme != "https" {
+					return fmt.Errorf("activation sink %d (telegram) api_base_url must be http or https", i)
+				}
+			}
+			if strings.TrimSpace(s.ParseMode) != "" && s.ParseMode != "MarkdownV2" {
+				return fmt.Errorf("activation sink %d (telegram) parse_mode must be empty or MarkdownV2", i)
+			}
+			if strings.TrimSpace(s.MinLevel) != "" {
+				level := strings.ToLower(strings.TrimSpace(s.MinLevel))
+				if level != "warn" && level != "block" {
+					return fmt.Errorf("activation sink %d (telegram) min_level must be warn or block", i)
+				}
+			}
+			for _, action := range s.SendOnActions {
+				val := strings.ToLower(strings.TrimSpace(action))
+				if val == "" {
+					continue
+				}
+				if val != "warn" && val != "block" {
+					return fmt.Errorf("activation sink %d (telegram) send_on_actions must be warn or block", i)
+				}
+			}
+			if s.MaxMessageLen < 0 || s.MaxMessageLen > 4096 {
+				return fmt.Errorf("activation sink %d (telegram) max_message_len must be between 1 and 4096", i)
+			}
 		default:
 			return fmt.Errorf("activation sink %d has unknown type %q", i, s.Type)
 		}
