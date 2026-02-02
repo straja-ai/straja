@@ -47,11 +47,16 @@ See the documentation below for exact commands and examples.
 - [Configuration](docs/configuration.md)
 - [Environment variables](docs/environment-variables.md)
 - [Docker](docs/docker.md)
-- [StrajaGuard v1](docs/strajaguard-v1.md)
-- [Activation events](docs/activation.md)
+- [Built-in console](docs/console.md)
+- [Activation events and sinks](docs/activation.md)
+- [Telegram activation sink](docs/activation-telegram.md)
+- [StrajaGuard v1 intel bundle](docs/strajaguard-v1.md)
 - [Toolgate API](docs/toolgate.md)
-- [Openclaw integration](docs/integrations/openclaw.md)
-- [Load testing](docs/load-testing.md)
+- [OpenClaw integration](docs/integrations/openclaw.md)
+- [Load testing and mock provider](docs/load-testing.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Security considerations](docs/security.md)
+- [Releasing](docs/releasing.md)
 
 ## Status
 
