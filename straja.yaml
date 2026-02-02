@@ -22,10 +22,6 @@ projects:
     provider: "openai_demo"
     api_keys:
       - "local-dev-key-123"
-  - id: "production"
-    provider: "openai_demo"
-    api_keys:
-      - "local-dev-key-124"
 
 logging:
   activation_level: "redacted"   # metadata | redacted | full
