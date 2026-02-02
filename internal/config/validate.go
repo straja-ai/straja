@@ -17,6 +17,9 @@ func Validate(cfg *Config) error {
 	if strings.TrimSpace(cfg.Server.Addr) == "" {
 		return errors.New("server.addr must be set")
 	}
+	if err := validateServerConfig(cfg.Server); err != nil {
+		return err
+	}
 
 	if len(cfg.Providers) == 0 {
 		return errors.New("at least one provider must be configured")
@@ -175,6 +178,19 @@ func validateActivationConfig(a ActivationConfig) error {
 		default:
 			return fmt.Errorf("activation sink %d has unknown type %q", i, s.Type)
 		}
+	}
+	return nil
+}
+
+func validateServerConfig(s ServerConfig) error {
+	if s.RateLimitPerIP < 0 {
+		return errors.New("server.rate_limit_per_ip must be >= 0")
+	}
+	if s.RateLimitPerIPBurst < 0 {
+		return errors.New("server.rate_limit_per_ip_burst must be >= 0")
+	}
+	if s.RateLimitPerIP == 0 && s.RateLimitPerIPBurst > 0 {
+		return errors.New("server.rate_limit_per_ip_burst requires rate_limit_per_ip > 0")
 	}
 	return nil
 }

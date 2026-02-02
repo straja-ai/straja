@@ -17,8 +17,16 @@ Configured in `server.*`:
 - `max_messages`
 - `max_total_message_chars`
 - `max_in_flight_requests`
+- `rate_limit_per_ip` / `rate_limit_per_ip_burst`
 
 These limits reject oversized requests or high concurrency before hitting upstream providers.
+
+Per-IP rate limit settings (from `server` config):
+
+- `rate_limit_per_ip` (int, default `0` = disabled)
+- `rate_limit_per_ip_burst` (int, default `0` = defaults to `rate_limit_per_ip` when enabled)
+
+Per-IP rate limiting uses `X-Forwarded-For` or `X-Real-IP` when present; otherwise it falls back to the TCP remote address. Only trust proxy headers when the gateway is behind a trusted reverse proxy.
 
 ## Model allowlists
 

@@ -71,6 +71,7 @@ type Server struct {
 	strajaGuardMeta                    *strajaguard.ValidationMeta
 	httpClient                         *http.Client
 	inFlightLimiter                    chan struct{}
+	ipLimiter                          *ipRateLimiter
 	strajaGuardModel                   *strajaguard.StrajaGuardModel
 	specialistsEngine                  strajaguard.SpecialistsEngine
 	activeBundleVer                    string
@@ -470,6 +471,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	if cfg.Server.MaxInFlightRequests > 0 {
 		limiter = make(chan struct{}, cfg.Server.MaxInFlightRequests)
 	}
+	ipLimiter := newIPRateLimiter(cfg.Server.RateLimitPerIP, cfg.Server.RateLimitPerIPBurst)
 
 	licenseHTTPTimeout := time.Duration(cfg.Intel.StrajaGuardV1.LicenseValidateTimeoutSeconds) * time.Second
 	if licenseHTTPTimeout <= 0 {
@@ -500,6 +502,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		intelBundleVer:                     intelBundleVer,
 		httpClient:                         &http.Client{Timeout: licenseHTTPTimeout},
 		inFlightLimiter:                    limiter,
+		ipLimiter:                          ipLimiter,
 		strajaGuardModel:                   sgModel,
 		specialistsEngine:                  sgSpecialists,
 		strajaGuardSpecialistsConfigSource: sgSpecialistsSource,
@@ -518,7 +521,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		bundleTimeout = 30 * time.Second
 	}
 
-	redact.Logf("gateway hardening: read_header_timeout=%s read_timeout=%s write_timeout=%s idle_timeout=%s max_body_bytes=%d max_nonstream_response_bytes=%d max_in_flight=%d upstream_timeout=%s license_validate_timeout=%s bundle_download_timeout=%s require_ml=%t allow_regex_only=%t",
+	redact.Logf("gateway hardening: read_header_timeout=%s read_timeout=%s write_timeout=%s idle_timeout=%s max_body_bytes=%d max_nonstream_response_bytes=%d max_in_flight=%d rate_limit_per_ip=%d rate_limit_per_ip_burst=%d upstream_timeout=%s license_validate_timeout=%s bundle_download_timeout=%s require_ml=%t allow_regex_only=%t",
 		cfg.Server.ReadHeaderTimeout,
 		cfg.Server.ReadTimeout,
 		cfg.Server.WriteTimeout,
@@ -526,6 +529,8 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		cfg.Server.MaxRequestBodyBytes,
 		cfg.Server.MaxNonStreamResponseBytes,
 		cfg.Server.MaxInFlightRequests,
+		cfg.Server.RateLimitPerIP,
+		cfg.Server.RateLimitPerIPBurst,
 		cfg.Server.UpstreamTimeout,
 		licenseHTTPTimeout,
 		bundleTimeout,
@@ -817,6 +822,15 @@ func (s *Server) wrapHandler(h http.HandlerFunc, opts handlerOptions) http.Handl
 			default:
 				writeOpenAIError(w, http.StatusTooManyRequests, "Too many requests", "rate_limit_exceeded")
 				return
+			}
+		}
+
+		if opts.useLimiter && s.ipLimiter != nil {
+			if ip := clientIP(r); ip != "" {
+				if !s.ipLimiter.Allow(ip) {
+					writeOpenAIError(w, http.StatusTooManyRequests, "Too many requests", "rate_limit_exceeded")
+					return
+				}
 			}
 		}
 

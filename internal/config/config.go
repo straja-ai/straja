@@ -82,6 +82,8 @@ type ServerConfig struct {
 	MaxRequestBodyBytes       int64         `yaml:"max_request_body_bytes"`
 	MaxNonStreamResponseBytes int64         `yaml:"max_non_stream_response_bytes"`
 	MaxInFlightRequests       int           `yaml:"max_in_flight_requests"`
+	RateLimitPerIP            int           `yaml:"rate_limit_per_ip"`
+	RateLimitPerIPBurst       int           `yaml:"rate_limit_per_ip_burst"`
 	UpstreamTimeout           time.Duration `yaml:"upstream_timeout"`
 	MaxMessages               int           `yaml:"max_messages"`
 	MaxTotalMessageChars      int           `yaml:"max_total_message_chars"`
@@ -480,6 +482,8 @@ func defaultConfig() *Config {
 			MaxRequestBodyBytes:       2 * 1024 * 1024,
 			MaxNonStreamResponseBytes: 4 * 1024 * 1024,
 			MaxInFlightRequests:       200,
+			RateLimitPerIP:            0,
+			RateLimitPerIPBurst:       0,
 			UpstreamTimeout:           60 * time.Second,
 			MaxMessages:               64,
 			MaxTotalMessageChars:      32000,

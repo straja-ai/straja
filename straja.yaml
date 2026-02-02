@@ -4,10 +4,14 @@ server:
   read_timeout: "30s"
   write_timeout: "120s"
   idle_timeout: "60s"
-  max_request_body_bytes: 2097152        # 2 * 1024 * 1024
-  max_non_stream_response_bytes: 4194304 # 4 * 1024 * 1024
-  max_in_flight_requests: 200
+  max_request_body_bytes: 2048        # 2 * 1024 * 1024
+  max_non_stream_response_bytes: 1048576 # 4 * 1024 * 1024
+  max_in_flight_requests: 10
+  rate_limit_per_ip: 2
+  rate_limit_per_ip_burst: 2
   upstream_timeout: "60s"
+  max_messages: 32
+  max_total_message_chars: 8000
 
 default_provider: "openai_demo"
 
