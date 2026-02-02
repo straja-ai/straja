@@ -142,7 +142,7 @@ Key notes:
 - ML scores appear only in `request.scores` and `response.scores`. Thresholds appear only in `intel.thresholds`.
 - When `intel.strajaguard.family: strajaguard_v1_specialists` is enabled, `intel.strajaguard.model` is `strajaguard_v1_specialists` and ML scores include `prompt_injection`, `jailbreak`, and `contains_personal_data`.
 - When specialists are enabled, `intel.strajaguard.specialists_config_source` is `"embedded"` or `"file"` (config override).
-- Specialists hits carry sources: `straja:prompt-injection`, `straja:jailbreak-detector`, and `straja:pii-ner`.
+- Specialists hits carry sources: `ml:straja/prompt_injection`, `ml:straja/jailbreak`, and `ner:straja/pii_ner`.
 
 ## Request status API
 

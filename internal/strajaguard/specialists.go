@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	SpecialistSourcePromptInjection = "ml:protectai/deberta-v3-base-prompt-injection-v2"
-	SpecialistSourceJailbreak       = "ml:madhurjindal/Jailbreak-Detector"
-	SpecialistSourcePIINER          = "ner:ab-ai/pii_model"
-	SpecialistEntitySource          = "pii_ner"
+	SpecialistSourcePromptInjection = "ml:straja/prompt_injection"
+	SpecialistSourceJailbreak       = "ml:straja/jailbreak"
+	SpecialistSourcePIINER          = "ner:straja/pii_ner"
+	SpecialistEntitySource          = "straja:pii_ner"
 )
 
 const (
