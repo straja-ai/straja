@@ -140,6 +140,7 @@ type ToolGateAPIConfig struct {
 
 type ConsoleConfig struct {
 	Enabled           bool          `yaml:"enabled"`
+	Mode              string        `yaml:"mode"`
 	SessionTTL        time.Duration `yaml:"session_ttl"`
 	SessionCookieName string        `yaml:"session_cookie_name"`
 	SessionSecret     string        `yaml:"session_secret"`
@@ -307,6 +308,7 @@ func defaultToolGateAPIConfig() ToolGateAPIConfig {
 func defaultConsoleConfig() ConsoleConfig {
 	return ConsoleConfig{
 		Enabled:           true,
+		Mode:              "local",
 		SessionTTL:        30 * time.Minute,
 		SessionCookieName: "straja_console_session",
 		SessionSecret:     "",
@@ -648,6 +650,16 @@ func applyDefaults(cfg *Config) {
 		if cfg.Console.SessionCookieName == "" {
 			cfg.Console.SessionCookieName = "straja_console_session"
 		}
+	}
+	if v, ok := envString("STRAJA_CONSOLE_MODE"); ok {
+		if strings.EqualFold(strings.TrimSpace(v), "demo") {
+			cfg.Console.Mode = "demo"
+		} else {
+			cfg.Console.Mode = "local"
+		}
+	}
+	if strings.ToLower(strings.TrimSpace(cfg.Console.Mode)) != "demo" {
+		cfg.Console.Mode = "local"
 	}
 	if cfg.Console.SessionSecret == "" {
 		if v, ok := envString("STRAJA_CONSOLE_SESSION_SECRET"); ok {

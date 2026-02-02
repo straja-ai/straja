@@ -544,7 +544,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	mux.HandleFunc("/v1/toolgate/explain", s.wrapHandler(s.handleToolgateExplain, handlerOptions{limitBody: true, useLimiter: true}))
 
 	// Serve console + static
-	mux.Handle("/console/", console.Handler())
+	mux.Handle("/console/", console.Handler(s.cfg.Console.Mode))
 	mux.Handle("/console", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(console.RobotsTagHeader, console.RobotsTagValue)
 		http.Redirect(w, r, "/console/", http.StatusMovedPermanently)
@@ -554,6 +554,11 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	mux.HandleFunc("/console/api/logout", s.wrapHandler(s.handleConsoleLogout, handlerOptions{limitBody: false, useLimiter: true}))
 	mux.HandleFunc("/console/api/config", s.wrapHandler(s.handleConsoleConfig, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/console/api/reload", s.wrapHandler(s.handleConsoleReload, handlerOptions{limitBody: false, useLimiter: true}))
+	if strings.EqualFold(strings.TrimSpace(s.cfg.Console.Mode), "demo") {
+		// Intentionally omit /console/api/events in demo mode.
+	} else {
+		mux.HandleFunc("/console/api/events", s.wrapHandler(s.handleConsoleEvents, handlerOptions{limitBody: false, useLimiter: true}))
+	}
 
 	if s.intelEnabled {
 		if err := s.ValidateLicenseOnline(context.Background()); err != nil {

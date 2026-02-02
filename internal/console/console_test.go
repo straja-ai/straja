@@ -7,7 +7,7 @@ import (
 )
 
 func TestHandlerSetsRobotsHeaderOnIndex(t *testing.T) {
-	handler := Handler()
+	handler := Handler("local")
 	req := httptest.NewRequest(http.MethodGet, "/console", nil)
 	rr := httptest.NewRecorder()
 
@@ -19,7 +19,7 @@ func TestHandlerSetsRobotsHeaderOnIndex(t *testing.T) {
 }
 
 func TestHandlerSetsRobotsHeaderOnStatic(t *testing.T) {
-	handler := Handler()
+	handler := Handler("local")
 	req := httptest.NewRequest(http.MethodGet, "/console/static/console.html", nil)
 	rr := httptest.NewRecorder()
 

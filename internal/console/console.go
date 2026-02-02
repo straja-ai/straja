@@ -1,9 +1,11 @@
 package console
 
 import (
+	"bytes"
 	"embed"
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 // Embed the entire static folder (HTML + JS + CSS + IMG)
@@ -18,7 +20,7 @@ const (
 	RobotsTagValue = "noindex, nofollow, noarchive"
 )
 
-func Handler() http.Handler {
+func Handler(consoleMode string) http.Handler {
 	// Create a sub-FS rooted at /static
 	staticFS, err := fs.Sub(embeddedStatic, "static")
 	if err != nil {
@@ -34,10 +36,10 @@ func Handler() http.Handler {
 
 	// Serve index.html at both /console and /console/
 	mux.HandleFunc("/console", func(w http.ResponseWriter, r *http.Request) {
-		serveIndex(w, staticFS)
+		serveIndex(w, staticFS, consoleMode)
 	})
 	mux.HandleFunc("/console/", func(w http.ResponseWriter, r *http.Request) {
-		serveIndex(w, staticFS)
+		serveIndex(w, staticFS, consoleMode)
 	})
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +49,7 @@ func Handler() http.Handler {
 }
 
 // serveIndex loads static/index.html
-func serveIndex(w http.ResponseWriter, staticFS fs.FS) {
+func serveIndex(w http.ResponseWriter, staticFS fs.FS, consoleMode string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	data, err := fs.ReadFile(staticFS, "console.html")
@@ -55,6 +57,10 @@ func serveIndex(w http.ResponseWriter, staticFS fs.FS) {
 		http.Error(w, "Console UI missing (console.html not found)", http.StatusInternalServerError)
 		return
 	}
-
+	mode := strings.ToLower(strings.TrimSpace(consoleMode))
+	if mode != "demo" {
+		mode = "local"
+	}
+	data = bytes.ReplaceAll(data, []byte("__STRAJA_CONSOLE_MODE__"), []byte(mode))
 	_, _ = w.Write(data)
 }
