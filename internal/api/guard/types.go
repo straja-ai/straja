@@ -14,6 +14,7 @@ type Metadata struct {
 	Source    string `json:"source"`
 	UserID    string `json:"user_id"`
 	SessionID string `json:"session_id"`
+	Streaming *bool  `json:"streaming,omitempty"`
 }
 
 type Redaction struct {
@@ -55,6 +56,7 @@ type GuardRequestCheckRequest struct {
 type GuardRequestCheckResponse struct {
 	RequestID     string          `json:"request_id"`
 	Decision      string          `json:"decision"`
+	Action        string          `json:"action"`
 	Redactions    []Redaction     `json:"redactions"`
 	SanitizedText *string         `json:"sanitized_text"`
 	Reasons       []Reason        `json:"reasons"`
@@ -71,6 +73,7 @@ type GuardResponseCheckRequest struct {
 type GuardResponseCheckResponse struct {
 	RequestID     string          `json:"request_id"`
 	Decision      string          `json:"decision"`
+	Action        string          `json:"action"`
 	Redactions    []Redaction     `json:"redactions"`
 	SanitizedText *string         `json:"sanitized_text"`
 	Reasons       []Reason        `json:"reasons"`

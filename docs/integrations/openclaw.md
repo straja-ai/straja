@@ -1,6 +1,9 @@
 # OpenClaw + OpenAI (Chat + Codex) via Straja
 
-This setup routes OpenClaw’s OpenAI traffic through Straja so you get:
+StrajaGuard is the core safety engine used by both the Straja gateway and the Guard API.
+The integration difference is only how it is called (proxy vs. hooks).
+
+This setup can route OpenClaw’s OpenAI traffic through Straja so you get:
 
 - pre-LLM hardening on requests (PII, secrets, prompt-injection, jailbreak)
 - post-LLM checks on responses (PII redaction + data exfil / unsafe instruction warnings)
@@ -9,7 +12,7 @@ This setup routes OpenClaw’s OpenAI traffic through Straja so you get:
 ## Prereqs
 
 - Straja running locally (or reachable) and configured with an OpenAI provider
-- A Straja project API key (the key OpenClaw will use), e.g. `STRAJA_KEY`
+- A Straja project API key from `projects[].api_keys` in your Straja config
 - Your provider key set for Straja (e.g. `OPENAI_API_KEY`)
 
 ## 1) Classic OpenAI API via Straja (Chat Completions)
@@ -22,7 +25,7 @@ Quick test:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer $STRAJA_KEY" \
+  -H "Authorization: Bearer <PROJECT_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gpt-4.1-mini",
@@ -40,7 +43,7 @@ Non-stream test:
 
 ```bash
 curl -s http://localhost:8080/v1/responses \
-  -H "Authorization: Bearer $STRAJA_KEY" \
+  -H "Authorization: Bearer <PROJECT_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gpt-5.2-codex",
@@ -53,7 +56,7 @@ Streaming test:
 
 ```bash
 curl -N http://localhost:8080/v1/responses \
-  -H "Authorization: Bearer $STRAJA_KEY" \
+  -H "Authorization: Bearer <PROJECT_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gpt-5.2-codex",
@@ -67,7 +70,7 @@ curl -N http://localhost:8080/v1/responses \
 For streaming, Straja passes the upstream stream through without modifying chunks mid-stream. Post-check results are available after completion via the request status API. The streaming response includes `X-Straja-Request-Id`:
 
 ```bash
-curl -s -H "Authorization: Bearer $STRAJA_KEY" \
+curl -s -H "Authorization: Bearer <PROJECT_API_KEY>" \
   http://localhost:8080/v1/straja/requests/<request_id>
 ```
 
@@ -85,7 +88,7 @@ Set OpenClaw’s OpenAI base URL to Straja and use your Straja project key as th
 provider:
   type: openai
   baseUrl: http://localhost:8080/v1
-  apiKey: ${STRAJA_KEY}
+  apiKey: project-api-key-from-straja-config
 ```
 
 ## What Straja enforces by default
@@ -97,6 +100,12 @@ provider:
 - May redact non-stream responses
 - For streaming: reports `redaction_suggested` instead of modifying the stream
 
-## Limitation (tool execution)
+## 4) OpenClaw hook integration (Guard API + Toolgate)
 
-Straja hardens LLM requests and responses. It does not sandbox tools. For OpenClaw/Moltbot tool safety, use OS-level sandboxing and least privilege, and optionally integrate Toolgate checks before tool execution when a hook is available.
+OpenClaw can call Straja’s Guard API + Toolgate directly from guardrail hooks to enforce:
+
+- pre-model prompt checks (`/v1/guard/request`)
+- post-model response checks (`/v1/guard/response`)
+- pre-execution tool checks (`/v1/toolgate/check`)
+
+This mode requires Straja running locally (e.g., `http://localhost:8080`) and does not proxy model traffic.

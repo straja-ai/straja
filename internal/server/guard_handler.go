@@ -18,6 +18,17 @@ import (
 
 const guardMaxBodyBytes = int64(1024 * 1024)
 
+type guardErrorDetail struct {
+	Message   string `json:"message"`
+	Code      string `json:"code"`
+	Category  string `json:"category"`
+	RequestID string `json:"request_id"`
+}
+
+type guardErrorBody struct {
+	Error guardErrorDetail `json:"error"`
+}
+
 func (s *Server) handleGuardRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -102,6 +113,7 @@ func (s *Server) handleGuardRequest(w http.ResponseWriter, r *http.Request) {
 	resp := guardapi.GuardRequestCheckResponse{
 		RequestID:     requestID,
 		Decision:      decision,
+		Action:        actionForDecision(decision),
 		Redactions:    redactions,
 		SanitizedText: sanitized,
 		Reasons:       reasons,
@@ -115,6 +127,11 @@ func (s *Server) handleGuardRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.emitActivation(ctx, w, infReq, nil, "guard_api", actDecision, "guard_api")
 	s.setActivationHeaderFromStore(w, requestID)
+
+	if decision == "block" {
+		writeGuardBlockedError(w, requestID, "Request blocked by policy.", reasons, policyHits)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -204,6 +221,7 @@ func (s *Server) handleGuardResponse(w http.ResponseWriter, r *http.Request) {
 	resp := guardapi.GuardResponseCheckResponse{
 		RequestID:     requestID,
 		Decision:      decision,
+		Action:        actionForDecision(decision),
 		Redactions:    redactions,
 		SanitizedText: sanitized,
 		Reasons:       normalizeReasons(reasons),
@@ -217,6 +235,11 @@ func (s *Server) handleGuardResponse(w http.ResponseWriter, r *http.Request) {
 	}
 	s.emitActivation(ctx, w, infReq, &inference.Response{Message: inference.Message{Role: "assistant", Content: outputText}}, "guard_api", actDecision, "guard_api")
 	s.setActivationHeaderFromStore(w, requestID)
+
+	if decision == "block" {
+		writeGuardBlockedError(w, requestID, "Response blocked by policy.", reasons, policyHits)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -287,6 +310,17 @@ func (s *Server) defaultProjectID() string {
 
 func buildGuardInput(req guardapi.GuardRequestCheckRequest) (string, []inference.Message) {
 	var messages []inference.Message
+	if strings.TrimSpace(req.InputText) != "" {
+		if len(req.Messages) > 0 {
+			messages = make([]inference.Message, 0, len(req.Messages)+1)
+			for _, m := range req.Messages {
+				role := normalizeRole(m.Role)
+				messages = append(messages, inference.Message{Role: role, Content: m.Content})
+			}
+		}
+		messages = append(messages, inference.Message{Role: "user", Content: req.InputText})
+		return req.InputText, messages
+	}
 	if len(req.Messages) > 0 {
 		messages = make([]inference.Message, 0, len(req.Messages)+1)
 		for _, m := range req.Messages {
@@ -369,9 +403,6 @@ func sanitizedTextForDecision(decision string, msgs []inference.Message, evalTex
 		return nil
 	}
 	if len(msgs) == 0 {
-		if evalText == "" {
-			return nil
-		}
 		out := evalText
 		return &out
 	}
@@ -387,6 +418,59 @@ func sanitizedTextForPostDecision(decision, updated, original string) *string {
 		updated = original
 	}
 	return &updated
+}
+
+func actionForDecision(decision string) string {
+	switch decision {
+	case "redact":
+		return "modify"
+	case "warn", "allow":
+		return "allow"
+	case "block":
+		return "block"
+	default:
+		return "allow"
+	}
+}
+
+func writeGuardBlockedError(
+	w http.ResponseWriter,
+	requestID string,
+	fallbackMessage string,
+	reasons []guardapi.Reason,
+	policyHits []guardapi.PolicyHit,
+) {
+	message := strings.TrimSpace(fallbackMessage)
+	category := "policy"
+	if len(reasons) > 0 {
+		if strings.TrimSpace(reasons[0].Rule) != "" {
+			message = reasons[0].Rule
+		}
+		if strings.TrimSpace(reasons[0].Category) != "" {
+			category = reasons[0].Category
+		}
+	}
+	if len(policyHits) > 0 {
+		if message == "" && strings.TrimSpace(policyHits[0].Details) != "" {
+			message = policyHits[0].Details
+		}
+		if category == "policy" && strings.TrimSpace(policyHits[0].Category) != "" {
+			category = policyHits[0].Category
+		}
+	}
+	if message == "" {
+		message = "Blocked by guard policy."
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(guardErrorBody{
+		Error: guardErrorDetail{
+			Message:   message,
+			Code:      "guard_blocked",
+			Category:  category,
+			RequestID: requestID,
+		},
+	})
 }
 
 func guardRedactionsFromEntities(text string, entities []safety.PIIEntity) []guardapi.Redaction {

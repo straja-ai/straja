@@ -106,15 +106,19 @@ func TestGuardRequestPromptInjectionBlocked(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
 	}
 	var resp map[string]any
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("invalid response JSON: %v", err)
 	}
-	if resp["decision"] != "block" {
-		t.Fatalf("expected decision block, got %v", resp["decision"])
+	errObj, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error object, got %v", resp)
+	}
+	if errObj["code"] != "guard_blocked" {
+		t.Fatalf("expected guard_blocked code, got %v", errObj["code"])
 	}
 }
 
@@ -141,6 +145,9 @@ func TestGuardRequestPIIRedaction(t *testing.T) {
 	}
 	if resp["decision"] != "redact" {
 		t.Fatalf("expected decision redact, got %v", resp["decision"])
+	}
+	if resp["action"] != "modify" {
+		t.Fatalf("expected action modify, got %v", resp["action"])
 	}
 	if resp["sanitized_text"] == nil || resp["sanitized_text"] == "" {
 		t.Fatalf("expected sanitized_text to be set")

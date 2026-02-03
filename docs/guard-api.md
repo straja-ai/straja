@@ -1,6 +1,7 @@
 # Guard API
 
 The Guard API exposes StrajaGuard and policy checks without proxying traffic. Use it as a standalone decision service for pre-model and post-model checks.
+StrajaGuard is the core safety engine used by both the gateway and the Guard API; the difference is only how it is called (proxy vs. hooks).
 
 ## Authentication
 
@@ -41,7 +42,7 @@ Run request-side checks (pre-LLM).
 }
 ```
 
-If `messages` is provided, Straja derives a canonical string by joining `[role]: content` lines in order. If both `messages` and `input_text` exist, `messages` are preferred for evaluation.
+If `messages` is provided, Straja derives a canonical string by joining `[role]: content` lines in order. If both `messages` and `input_text` exist, `input_text` is used for the primary evaluation target while `messages` supply additional context.
 
 #### Response body
 
@@ -49,6 +50,7 @@ If `messages` is provided, Straja derives a canonical string by joining `[role]:
 {
   "request_id": "server-generated-uuid-if-missing",
   "decision": "allow|redact|block|warn",
+  "action": "allow|block|modify",
   "redactions": [
     { "type": "pii", "start": 10, "end": 20, "replacement": "[REDACTED]" }
   ],
@@ -77,6 +79,21 @@ If `messages` is provided, Straja derives a canonical string by joining `[role]:
 }
 ```
 
+If the decision is `block`, the endpoint returns HTTP `403` with a structured error:
+
+```json
+{
+  "error": {
+    "message": "string",
+    "code": "guard_blocked",
+    "category": "string",
+    "request_id": "string"
+  }
+}
+```
+
+`action` is a normalized control signal: `decision=redact` maps to `action=modify`, and `decision=warn` maps to `action=allow`.
+
 ### POST /v1/guard/response
 
 Run response-side checks (post-LLM).
@@ -90,7 +107,8 @@ Run response-side checks (post-LLM).
   "metadata": {
     "source": "openclaw|console|other",
     "user_id": "string",
-    "session_id": "string"
+    "session_id": "string",
+    "streaming": true
   }
 }
 ```
@@ -101,6 +119,7 @@ Run response-side checks (post-LLM).
 {
   "request_id": "string",
   "decision": "allow|warn|redact|block",
+  "action": "allow|block|modify",
   "redactions": [
     { "type": "pii", "start": 10, "end": 20, "replacement": "[REDACTED]" }
   ],
@@ -128,6 +147,8 @@ Run response-side checks (post-LLM).
   }
 }
 ```
+
+If the decision is `block`, the endpoint returns HTTP `403` with the same structured error shape as `/v1/guard/request`.
 
 ## Examples
 
