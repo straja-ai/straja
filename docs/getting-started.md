@@ -52,6 +52,8 @@ Straja reads upstream provider keys from environment variables.
 export OPENAI_API_KEY="sk-..."
 ```
 
+If you are not running Straja as a gateway, you do not need a provider API key. You can send checks directly to the Guard API endpoints instead. See `docs/guard-api.md`.
+
 ## 4) Set a console session secret
 
 The built-in console requires a session secret for signing cookies. Set it in your environment before starting Straja.
