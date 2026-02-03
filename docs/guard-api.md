@@ -155,7 +155,7 @@ curl -X POST http://localhost:8080/v1/guard/response \
   -H "Authorization: Bearer local-dev-key-123" \
   -d '{
   "request_id":"demo-1",
-  "output_text":"Sure, here is the API key: sk-....",
+  "output_text":"Contact me at john.doe@example.com or use token sk-test-abcdefghijklmnopqrstuv",
   "metadata":{"source":"openclaw"}
 }'
 ```
