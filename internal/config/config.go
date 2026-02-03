@@ -282,6 +282,9 @@ func defaultSecurityConfig() SecurityConfig {
 			ActionOnRegexHit: "block_and_redact",
 			ActionOnMLOnly:   "log",
 		},
+		GuardAPI: GuardAPIConfig{
+			RequireAuth: true,
+		},
 	}
 }
 
@@ -390,6 +393,9 @@ func (c *SecurityConfig) applyDefaults() {
 			c.Secrets.ActionOnMLOnly = def.Secrets.ActionOnMLOnly
 		}
 	}
+	if c.GuardAPI == (GuardAPIConfig{}) {
+		c.GuardAPI = def.GuardAPI
+	}
 }
 
 func applyCategoryDefaults(cfg *SecurityCategoryConfig, def SecurityCategoryConfig) {
@@ -417,6 +423,11 @@ type SecurityConfig struct {
 	DataExfil SecurityCategoryConfig `yaml:"data_exfil"`
 	PII       PIICategoryConfig      `yaml:"pii"`
 	Secrets   SecretsCategoryConfig  `yaml:"secrets"`
+	GuardAPI  GuardAPIConfig         `yaml:"guard_api"`
+}
+
+type GuardAPIConfig struct {
+	RequireAuth bool `yaml:"require_auth"`
 }
 
 // SecurityCategoryConfig is used for threat-style categories (prompt injection, jailbreak, exfil).

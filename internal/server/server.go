@@ -543,6 +543,8 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	mux.HandleFunc("/readyz", s.handleReady)
 	mux.HandleFunc("/v1/chat/completions", s.wrapHandler(s.handleChatCompletions, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/responses", s.wrapHandler(s.handleResponses, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/v1/guard/request", s.wrapHandler(s.handleGuardRequest, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/v1/guard/response", s.wrapHandler(s.handleGuardResponse, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/straja/requests/", s.wrapHandler(s.handleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
 	mux.HandleFunc("/v1/requests/", s.wrapHandler(s.handleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
 	mux.HandleFunc("/v1/toolgate/check", s.wrapHandler(s.handleToolgateCheck, handlerOptions{limitBody: true, useLimiter: true}))
