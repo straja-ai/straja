@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -57,12 +58,19 @@ func TestVerifyLicenseKey_InvalidSignature(t *testing.T) {
 	claims := LicenseClaims{Iss: "straja.ai", Sub: "license"}
 	key := buildLicenseKey(t, priv, claims)
 
-	// Corrupt the last character in the base64 payload.
-	runes := []rune(key)
-	runes[len(runes)-1] = 'A'
-	badKey := string(runes)
+	// Corrupt the decoded payload so the signature definitely fails.
+	raw := strings.TrimPrefix(key, "STRAJA-FREE-")
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatalf("decode key: %v", err)
+	}
+	if len(decoded) == 0 {
+		t.Fatalf("decoded key empty")
+	}
+	decoded[len(decoded)-1] ^= 0xFF
+	badKey := "STRAJA-FREE-" + base64.RawURLEncoding.EncodeToString(decoded)
 
-	_, err := VerifyLicenseKey(badKey, pub)
+	_, err = VerifyLicenseKey(badKey, pub)
 	if err == nil {
 		t.Fatalf("expected verification error, got nil")
 	}
