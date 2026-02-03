@@ -52,6 +52,7 @@ See the documentation below for exact commands and examples.
 - [Telegram activation sink](docs/activation-telegram.md)
 - [StrajaGuard v1 intel bundle](docs/strajaguard-v1.md)
 - [Toolgate API](docs/toolgate.md)
+- [Guard API](docs/guard-api.md)
 - [OpenClaw integration](docs/integrations/openclaw.md)
 - [Load testing and mock provider](docs/load-testing.md)
 - [Troubleshooting](docs/troubleshooting.md)
