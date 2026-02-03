@@ -61,38 +61,38 @@ func wrapRedactedError(msg string, err error) error {
 	return fmt.Errorf("%s: %s", strings.TrimSpace(msg), redact.String(err.Error()))
 }
 
-// ValidationResult represents the outcome of a license validate call.
+// ValidationResult represents the outcome of a trust validate call.
 type ValidationResult struct {
 	LatestVersion string
 	BundleInfo    BundleInfo
 	BundleToken   string
 }
 
-// LicenseValidationOutcome classifies validation responses.
-type LicenseValidationOutcome string
+// TrustValidationOutcome classifies validation responses.
+type TrustValidationOutcome string
 
 const (
-	ValidateOK             LicenseValidationOutcome = "validate_ok"
-	ValidateInvalidLicense LicenseValidationOutcome = "validate_invalid_license"
-	ValidateNetworkError   LicenseValidationOutcome = "validate_network_error"
-	ValidateOtherError     LicenseValidationOutcome = "validate_other_error"
+	ValidateOK           TrustValidationOutcome = "validate_ok"
+	ValidateInvalidTrust TrustValidationOutcome = "validate_invalid_trust"
+	ValidateNetworkError TrustValidationOutcome = "validate_network_error"
+	ValidateOtherError   TrustValidationOutcome = "validate_other_error"
 )
 
-// ValidateLicense contacts straja-site to validate the license and obtain bundle metadata.
-func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion, family string, timeoutSeconds int) (*ValidationResult, LicenseValidationOutcome, error) {
+// ValidateTrust contacts straja-site to validate the trust and obtain bundle metadata.
+func ValidateTrust(ctx context.Context, baseURL, trustKey, currentVersion, family string, timeoutSeconds int) (*ValidationResult, TrustValidationOutcome, error) {
 	baseURL = strings.TrimSuffix(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
-		return nil, ValidateOtherError, errors.New("license server base url is empty")
+		return nil, ValidateOtherError, errors.New("trust server base url is empty")
 	}
-	if strings.TrimSpace(licenseKey) == "" {
-		return nil, ValidateOtherError, errors.New("license key is empty")
+	if strings.TrimSpace(trustKey) == "" {
+		return nil, ValidateOtherError, errors.New("Trust key missing or invalid. Required to verify signed intelligence bundles.")
 	}
 	family = normalizeBundleFamily(family)
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 10
 	}
 
-	validateURL := baseURL + "/api/license/validate"
+	validateURL := baseURL + "/api/trustkey/validate"
 	var current *string
 	if strings.TrimSpace(currentVersion) != "" {
 		cv := strings.TrimSpace(currentVersion)
@@ -107,14 +107,14 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion, f
 	defer cancel()
 
 	body := struct {
-		LicenseKey string `json:"license_key"`
-		ClientID   string `json:"client_id"`
-		Bundles    map[string]struct {
+		TrustKey string `json:"trust_key"`
+		ClientID string `json:"client_id"`
+		Bundles  map[string]struct {
 			CurrentVersion *string `json:"current_version"`
 		} `json:"bundles"`
 	}{
-		LicenseKey: licenseKey,
-		ClientID:   "",
+		TrustKey: trustKey,
+		ClientID: "",
 		Bundles: map[string]struct {
 			CurrentVersion *string `json:"current_version"`
 		}{},
@@ -127,53 +127,53 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion, f
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return nil, ValidateOtherError, fmt.Errorf("marshal license payload: %w", err)
+		return nil, ValidateOtherError, fmt.Errorf("marshal trust payload: %w", err)
 	}
 
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, validateURL, bytes.NewReader(payload))
 	if err != nil {
-		return nil, ValidateOtherError, fmt.Errorf("build license request: %w", err)
+		return nil, ValidateOtherError, fmt.Errorf("build trust request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, ValidateNetworkError, fmt.Errorf("license validate request failed: %w", err)
+		return nil, ValidateNetworkError, fmt.Errorf("trust validate request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, ValidateInvalidLicense, fmt.Errorf("license validate failed with status %s", resp.Status)
+		return nil, ValidateInvalidTrust, fmt.Errorf("trust validate failed with status %s", resp.Status)
 	}
 	if resp.StatusCode >= 500 {
-		return nil, ValidateNetworkError, fmt.Errorf("license validate failed with status %s", resp.Status)
+		return nil, ValidateNetworkError, fmt.Errorf("trust validate failed with status %s", resp.Status)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, ValidateOtherError, fmt.Errorf("license validate failed with status %s", resp.Status)
+		return nil, ValidateOtherError, fmt.Errorf("trust validate failed with status %s", resp.Status)
 	}
 
-	var lr licenseValidateResponse
+	var lr trustValidateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
-		return nil, ValidateOtherError, fmt.Errorf("decode license validate response: %w", err)
+		return nil, ValidateOtherError, fmt.Errorf("decode trust validate response: %w", err)
 	}
 
 	if strings.ToLower(strings.TrimSpace(lr.Status)) != "ok" {
 		msg := lr.Message
 		if msg == "" {
-			msg = "license status not ok"
+			msg = "trust status not ok"
 		}
-		return nil, ValidateInvalidLicense, errors.New(msg)
+		return nil, ValidateInvalidTrust, errors.New(msg)
 	}
 
-	model, ok := lookupModelInfo(lr.License.Models, family)
+	model, ok := lookupModelInfo(lr.Trust.Models, family)
 	if !ok || !model.Enabled {
-		return nil, ValidateInvalidLicense, errors.New("strajaguard model not enabled on license")
+		return nil, ValidateInvalidTrust, errors.New("strajaguard model not enabled on trust")
 	}
 
 	info, ok := lookupBundleInfo(lr.Bundles, family)
 	if !ok {
-		return nil, ValidateOtherError, errors.New("bundle info missing in license response")
+		return nil, ValidateOtherError, errors.New("bundle info missing in trust response")
 	}
 	info.Version = strings.TrimSpace(info.Version)
 	info.ManifestURL = strings.TrimSpace(info.ManifestURL)
@@ -181,10 +181,10 @@ func ValidateLicense(ctx context.Context, baseURL, licenseKey, currentVersion, f
 	info.FileBaseURL = strings.TrimSpace(info.FileBaseURL)
 
 	if info.Version == "" || info.ManifestURL == "" || info.SignatureURL == "" || info.FileBaseURL == "" {
-		return nil, ValidateOtherError, errors.New("bundle info incomplete in license response")
+		return nil, ValidateOtherError, errors.New("bundle info incomplete in trust response")
 	}
 	if strings.TrimSpace(lr.BundleToken) == "" {
-		return nil, ValidateOtherError, errors.New("bundle token missing in license response")
+		return nil, ValidateOtherError, errors.New("bundle token missing in trust response")
 	}
 
 	return &ValidationResult{
@@ -582,15 +582,15 @@ func resolveBundlePath(baseDir, rel string) (string, error) {
 	return normalized, nil
 }
 
-type licenseValidateResponse struct {
-	Status      string         `json:"status"`
-	Message     string         `json:"message"`
-	License     licenseSection `json:"license"`
-	Bundles     bundleSection  `json:"bundles"`
-	BundleToken string         `json:"bundle_token"`
+type trustValidateResponse struct {
+	Status      string        `json:"status"`
+	Message     string        `json:"message"`
+	Trust       trustSection  `json:"trust"`
+	Bundles     bundleSection `json:"bundles"`
+	BundleToken string        `json:"bundle_token"`
 }
 
-type licenseSection struct {
+type trustSection struct {
 	Tier       string               `json:"tier"`
 	ValidUntil string               `json:"valid_until"`
 	Models     map[string]modelInfo `json:"models"`

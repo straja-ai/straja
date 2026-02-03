@@ -49,7 +49,7 @@ Streaming is currently not implemented. The gateway accepts the `stream` field b
 Common causes:
 
 - Missing ONNX Runtime shared library (set `ONNXRUNTIME_SHARED_LIBRARY_PATH`).
-- Invalid or missing license key.
+- Trust key missing or invalid. Required to verify signed intelligence bundles.
 - Bundle download/verification failure.
 - `security.enabled: false` or `intel.strajaguard_v1.enabled: false`.
 

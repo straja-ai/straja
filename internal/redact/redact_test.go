@@ -25,10 +25,10 @@ func TestStringRedaction(t *testing.T) {
 			require:  []string{"api_keys=[REDACTED]"},
 		},
 		{
-			name:     "license key",
-			input:    "license_key=STRAJA-PAID-1234-5678",
+			name:     "trust key",
+			input:    "trust_key=STRAJA-PAID-1234-5678",
 			disallow: []string{"STRAJA-PAID-1234-5678"},
-			require:  []string{"license_key=[REDACTED]"},
+			require:  []string{"trust_key=[REDACTED]"},
 		},
 		{
 			name:     "bundle url",
@@ -38,8 +38,8 @@ func TestStringRedaction(t *testing.T) {
 		},
 		{
 			name:     "mixed token",
-			input:    "Bearer abc key=supersecret token=anotherone STRAJA-FREE-AAAA file_base_url=https://lic.example.test/files/base/",
-			disallow: []string{"abc", "supersecret", "anotherone", "STRAJA-FREE-AAAA", "files/base/"},
+			input:    "Bearer abc key=supersecret token=anotherone STRAJA-TRUST-AAAA file_base_url=https://lic.example.test/files/base/",
+			disallow: []string{"abc", "supersecret", "anotherone", "STRAJA-TRUST-AAAA", "files/base/"},
 			require:  []string{"[REDACTED]", "https://lic.example.test/[REDACTED_PATH]"},
 		},
 	}

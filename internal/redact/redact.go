@@ -10,16 +10,16 @@ import (
 )
 
 var (
-	authHeaderRe   = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*bearer\s+)([A-Za-z0-9._\-+/=]+)`)
-	bearerRe       = regexp.MustCompile(`(?i)(bearer\s+)([A-Za-z0-9._\-+/=]+)`)
-	apiKeyListRe   = regexp.MustCompile(`(?i)(api[_-]?keys?\s*[:=]\s*\[)([^\]]+)(\])`)
-	apiKeyValueRe  = regexp.MustCompile(`(?i)(api[_-]?key(?:s)?\s*[:=]\s*)([A-Za-z0-9._\-+/=]+)`)
-	licenseKeyRe   = regexp.MustCompile(`(?i)straja-[A-Za-z0-9-]+`)
-	urlRe          = regexp.MustCompile(`https?://[^\s"'<>]+`)
-	tokenishKeyRe  = regexp.MustCompile(`(?i)(key|token)\s*[:=]\s*([A-Za-z0-9._\-+/=]{6,})`)
-	headerKeyRe    = regexp.MustCompile(`(?i)(x-api-key|x-straja-key)\s*[:=]\s*([A-Za-z0-9._\-+/=]+)`)
-	providerKeyRe  = regexp.MustCompile(`(?i)(provider_key\s*[:=]\s*)([A-Za-z0-9._\-+/=]+)`)
-	licenseFieldRe = regexp.MustCompile(`(?i)(license_key\s*[:=]\s*)(\S+)`)
+	authHeaderRe  = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*bearer\s+)([A-Za-z0-9._\-+/=]+)`)
+	bearerRe      = regexp.MustCompile(`(?i)(bearer\s+)([A-Za-z0-9._\-+/=]+)`)
+	apiKeyListRe  = regexp.MustCompile(`(?i)(api[_-]?keys?\s*[:=]\s*\[)([^\]]+)(\])`)
+	apiKeyValueRe = regexp.MustCompile(`(?i)(api[_-]?key(?:s)?\s*[:=]\s*)([A-Za-z0-9._\-+/=]+)`)
+	trustKeyRe    = regexp.MustCompile(`(?i)straja-[A-Za-z0-9-]+`)
+	urlRe         = regexp.MustCompile(`https?://[^\s"'<>]+`)
+	tokenishKeyRe = regexp.MustCompile(`(?i)(key|token)\s*[:=]\s*([A-Za-z0-9._\-+/=]{6,})`)
+	headerKeyRe   = regexp.MustCompile(`(?i)(x-api-key|x-straja-key)\s*[:=]\s*([A-Za-z0-9._\-+/=]+)`)
+	providerKeyRe = regexp.MustCompile(`(?i)(provider_key\s*[:=]\s*)([A-Za-z0-9._\-+/=]+)`)
+	trustFieldRe  = regexp.MustCompile(`(?i)(trust_key\s*[:=]\s*)(\S+)`)
 )
 
 // String redacts known secret patterns from free-form strings.
@@ -33,9 +33,9 @@ func String(s string) string {
 	out = bearerRe.ReplaceAllString(out, "${1}[REDACTED]")
 	out = apiKeyListRe.ReplaceAllString(out, "${1}REDACTED${3}")
 	out = apiKeyValueRe.ReplaceAllString(out, "${1}[REDACTED]")
-	out = licenseKeyRe.ReplaceAllString(out, "STRAJA-[REDACTED]")
-	out = licenseFieldRe.ReplaceAllStringFunc(out, func(s string) string {
-		matches := licenseFieldRe.FindStringSubmatch(s)
+	out = trustKeyRe.ReplaceAllString(out, "STRAJA-[REDACTED]")
+	out = trustFieldRe.ReplaceAllStringFunc(out, func(s string) string {
+		matches := trustFieldRe.FindStringSubmatch(s)
 		if len(matches) < 3 {
 			return s
 		}
@@ -48,7 +48,7 @@ func String(s string) string {
 	out = headerKeyRe.ReplaceAllString(out, "${1}[REDACTED]")
 	out = tokenishKeyRe.ReplaceAllStringFunc(out, func(s string) string {
 		lower := strings.ToLower(s)
-		if strings.Contains(lower, "license_key") || strings.Contains(s, "[REDACTED]") {
+		if strings.Contains(lower, "trust_key") || strings.Contains(s, "[REDACTED]") {
 			return s
 		}
 		matches := tokenishKeyRe.FindStringSubmatch(s)

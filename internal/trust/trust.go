@@ -1,4 +1,4 @@
-package license
+package trust
 
 import (
 	"crypto/ed25519"
@@ -10,15 +10,15 @@ import (
 	"strings"
 )
 
-// TODO: replace with the real base64-encoded Ed25519 public key from the license issuer.
-const licensePublicKeyBase64 = "_Y-tXDrvMzV_Ctv1eKBo-YhIg1LGlqDuaiEkhfjiJVQ"
+// TODO: replace with the real base64-encoded Ed25519 public key from the trust issuer.
+const trustPublicKeyBase64 = "_Y-tXDrvMzV_Ctv1eKBo-YhIg1LGlqDuaiEkhfjiJVQ"
 
 var (
-	ErrMissingPublicKey = errors.New("license public key is not configured")
+	ErrMissingPublicKey = errors.New("trust public key is not configured")
 )
 
-// LicenseClaims represents the payload embedded in a signed license key.
-type LicenseClaims struct {
+// TrustClaims represents the payload embedded in a signed trust key.
+type TrustClaims struct {
 	Iss   string `json:"iss"`
 	Sub   string `json:"sub"`
 	Tier  string `json:"tier"`
@@ -30,33 +30,33 @@ type LicenseClaims struct {
 // DefaultPublicKey decodes the embedded base64-encoded Ed25519 public key.
 func DefaultPublicKey() ([]byte, error) {
 	// Allow override via env to avoid recompiling when rotating the key.
-	if envVal := strings.TrimSpace(os.Getenv("STRAJA_LICENSE_PUBLIC_KEY")); envVal != "" {
+	if envVal := strings.TrimSpace(os.Getenv("STRAJA_TRUST_PUBLIC_KEY")); envVal != "" {
 		if pk, err := decodePublicKey(envVal); err == nil {
 			return pk, nil
 		}
 	}
 
-	if strings.TrimSpace(licensePublicKeyBase64) == "" {
+	if strings.TrimSpace(trustPublicKeyBase64) == "" {
 		return nil, ErrMissingPublicKey
 	}
-	return decodePublicKey(licensePublicKeyBase64)
+	return decodePublicKey(trustPublicKeyBase64)
 }
 
-// VerifyLicenseKey performs offline verification of the license key.
-func VerifyLicenseKey(key string, publicKey []byte) (*LicenseClaims, error) {
-	const prefix = "STRAJA-FREE-"
+// VerifyTrustKey performs offline verification of the trust key.
+func VerifyTrustKey(key string, publicKey []byte) (*TrustClaims, error) {
+	const prefix = "STRAJA-TRUST-"
 	if !strings.HasPrefix(key, prefix) {
-		return nil, fmt.Errorf("license key missing required prefix %q", prefix)
+		return nil, fmt.Errorf("trust key missing required prefix %q", prefix)
 	}
 
 	payloadAndSigB64 := strings.TrimPrefix(key, prefix)
 	payloadAndSig, err := base64.RawURLEncoding.DecodeString(payloadAndSigB64)
 	if err != nil {
-		return nil, fmt.Errorf("decode license payload: %w", err)
+		return nil, fmt.Errorf("decode trust payload: %w", err)
 	}
 
 	if len(payloadAndSig) <= ed25519.SignatureSize {
-		return nil, errors.New("license payload too short")
+		return nil, errors.New("trust payload too short")
 	}
 
 	payloadBytes := payloadAndSig[:len(payloadAndSig)-ed25519.SignatureSize]
@@ -67,16 +67,16 @@ func VerifyLicenseKey(key string, publicKey []byte) (*LicenseClaims, error) {
 	}
 
 	if !ed25519.Verify(publicKey, payloadBytes, sig) {
-		return nil, errors.New("license signature verification failed")
+		return nil, errors.New("trust signature verification failed")
 	}
 
-	var claims LicenseClaims
+	var claims TrustClaims
 	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
-		return nil, fmt.Errorf("decode license claims: %w", err)
+		return nil, fmt.Errorf("decode trust claims: %w", err)
 	}
 
-	if claims.Iss != "straja.ai" || claims.Sub != "license" {
-		return nil, errors.New("license claims issuer/subject mismatch")
+	if claims.Iss != "straja.ai" || claims.Sub != "trust" {
+		return nil, errors.New("trust claims issuer/subject mismatch")
 	}
 
 	return &claims, nil

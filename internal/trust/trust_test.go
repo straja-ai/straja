@@ -1,4 +1,4 @@
-package license
+package trust
 
 import (
 	"crypto/ed25519"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func buildLicenseKey(t *testing.T, priv ed25519.PrivateKey, claims LicenseClaims) string {
+func buildTrustKey(t *testing.T, priv ed25519.PrivateKey, claims TrustClaims) string {
 	t.Helper()
 
 	payload, err := json.Marshal(claims)
@@ -17,23 +17,23 @@ func buildLicenseKey(t *testing.T, priv ed25519.PrivateKey, claims LicenseClaims
 	}
 	sig := ed25519.Sign(priv, payload)
 	joined := append(payload, sig...)
-	return "STRAJA-FREE-" + base64.RawURLEncoding.EncodeToString(joined)
+	return "STRAJA-TRUST-" + base64.RawURLEncoding.EncodeToString(joined)
 }
 
-func TestVerifyLicenseKey_Success(t *testing.T) {
+func TestVerifyTrustKey_Success(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	want := LicenseClaims{
+	want := TrustClaims{
 		Iss:   "straja.ai",
-		Sub:   "license",
+		Sub:   "trust",
 		Tier:  "free",
 		Email: "test@example.com",
 		Iat:   123,
 		Jti:   "abc",
 	}
 
-	key := buildLicenseKey(t, priv, want)
+	key := buildTrustKey(t, priv, want)
 
-	got, err := VerifyLicenseKey(key, pub)
+	got, err := VerifyTrustKey(key, pub)
 	if err != nil {
 		t.Fatalf("expected success, got error: %v", err)
 	}
@@ -42,24 +42,24 @@ func TestVerifyLicenseKey_Success(t *testing.T) {
 	}
 }
 
-func TestVerifyLicenseKey_InvalidPrefix(t *testing.T) {
+func TestVerifyTrustKey_InvalidPrefix(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	claims := LicenseClaims{Iss: "straja.ai", Sub: "license"}
-	key := buildLicenseKey(t, priv, claims)
+	claims := TrustClaims{Iss: "straja.ai", Sub: "trust"}
+	key := buildTrustKey(t, priv, claims)
 
-	_, err := VerifyLicenseKey("BADPREFIX-"+key, pub)
+	_, err := VerifyTrustKey("BADPREFIX-"+key, pub)
 	if err == nil {
 		t.Fatalf("expected prefix error, got nil")
 	}
 }
 
-func TestVerifyLicenseKey_InvalidSignature(t *testing.T) {
+func TestVerifyTrustKey_InvalidSignature(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	claims := LicenseClaims{Iss: "straja.ai", Sub: "license"}
-	key := buildLicenseKey(t, priv, claims)
+	claims := TrustClaims{Iss: "straja.ai", Sub: "trust"}
+	key := buildTrustKey(t, priv, claims)
 
 	// Corrupt the decoded payload so the signature definitely fails.
-	raw := strings.TrimPrefix(key, "STRAJA-FREE-")
+	raw := strings.TrimPrefix(key, "STRAJA-TRUST-")
 	decoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		t.Fatalf("decode key: %v", err)
@@ -68,9 +68,9 @@ func TestVerifyLicenseKey_InvalidSignature(t *testing.T) {
 		t.Fatalf("decoded key empty")
 	}
 	decoded[len(decoded)-1] ^= 0xFF
-	badKey := "STRAJA-FREE-" + base64.RawURLEncoding.EncodeToString(decoded)
+	badKey := "STRAJA-TRUST-" + base64.RawURLEncoding.EncodeToString(decoded)
 
-	_, err = VerifyLicenseKey(badKey, pub)
+	_, err = VerifyTrustKey(badKey, pub)
 	if err == nil {
 		t.Fatalf("expected verification error, got nil")
 	}

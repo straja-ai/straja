@@ -10,10 +10,10 @@ import (
 
 // ValidationMeta tracks when a bundle version was last validated online.
 type ValidationMeta struct {
-	Version            string `json:"version"`
-	LastValidatedAt    string `json:"last_validated_at"`
-	LicenseFingerprint string `json:"license_fingerprint,omitempty"`
-	Source             string `json:"source,omitempty"`
+	Version          string `json:"version"`
+	LastValidatedAt  string `json:"last_validated_at"`
+	TrustFingerprint string `json:"trust_fingerprint,omitempty"`
+	Source           string `json:"source,omitempty"`
 }
 
 func validationMetaPath(baseDir string) string {

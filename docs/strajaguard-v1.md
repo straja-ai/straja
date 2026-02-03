@@ -2,7 +2,7 @@
 
 Sources: `internal/strajaguard/*`, `internal/server/server.go`, `internal/config/config.go`
 
-StrajaGuard is the local ML classifier used by the security layer. It runs via ONNX Runtime and uses a signed bundle downloaded from the license server.
+StrajaGuard is the local ML classifier used by the security layer. It runs via ONNX Runtime and uses a signed bundle downloaded from the trust service.
 
 ## Enablement
 
@@ -75,24 +75,28 @@ strajaguard:
 
 See `internal/config/config.go` and `internal/server/server.go` for the path resolution logic.
 
-## License resolution
+## Trust key resolution
 
-License keys are resolved via `resolveLicense` in `internal/config/config.go`:
+A trust key is required to enable Straja’s signed safety models. It ensures the integrity and authenticity of local intelligence bundles. All models run locally.
 
-1) Env var named by `intelligence.license_key_env` (default `STRAJA_LICENSE_KEY`)
-2) `intel.strajaguard_v1.license_key`
-3) `intelligence.license_key`
+Trust keys are resolved via `resolveTrust` in `internal/config/config.go`:
 
-Placeholder values such as `STRAJA-FREE-XXXX` are treated as empty.
+1) Env var named by `intelligence.trust_key_env` (default `STRAJA_TRUST_KEY`)
+2) `intel.strajaguard_v1.trust_key`
+3) `intelligence.trust_key`
 
-Offline verification uses the embedded Ed25519 public key (`internal/license/license.go`), which can be overridden with `STRAJA_LICENSE_PUBLIC_KEY`.
+Placeholder values such as `STRAJA-TRUST-XXXX` are treated as empty.
+
+Without a trust key, StrajaGuard intelligence is disabled and the gateway runs regex-only detection.
+
+Offline verification uses the embedded Ed25519 public key (`internal/trust/trust.go`), which can be overridden with `STRAJA_TRUST_PUBLIC_KEY`.
 
 ## Online validation and bundle download
 
-When a license key is present, StrajaGuard validates it against:
+When a trust key is present, StrajaGuard validates it against:
 
-- `intel.strajaguard_v1.license_server_base_url` (default `https://straja.ai`)
-- Endpoint: `POST /api/license/validate`
+- `intel.strajaguard_v1.trust_server_base_url` (default `https://straja.ai`)
+- Endpoint: `POST /api/trustkey/validate`
 
 If validation succeeds, StrajaGuard downloads:
 
@@ -100,7 +104,7 @@ If validation succeeds, StrajaGuard downloads:
 - `manifest.sig`
 - bundle files listed in the manifest
 
-All downloads are authenticated with a short-lived bundle token from the license validation response. See `internal/strajaguard/bundle.go`.
+All downloads are authenticated with a short-lived bundle token from the trust validation response. See `internal/strajaguard/bundle.go`.
 
 ## Signature and integrity verification
 
@@ -114,11 +118,11 @@ See `internal/strajaguard/bundle.go` and `internal/strajaguard/verify.go`.
 ## Caching and offline behavior
 
 - Bundle state is stored in `state.json` (current + previous version).
-- Validation metadata is stored in `validation_meta.json` (last validated time, license fingerprint).
+- Validation metadata is stored in `validation_meta.json` (last validated time, trust fingerprint).
 
 When online validation fails:
 
-- Invalid license => StrajaGuard disabled (`disabled_invalid_license`).
+- Invalid trust key => StrajaGuard disabled (`disabled_invalid_trust_key`).
 - Network error and a cached bundle exists => verify integrity and load cached bundle (`offline_cached_bundle`).
 - Network error with no cached bundle => `disabled_missing_bundle`.
 - Any other validation failure => `disabled_invalid_bundle`.

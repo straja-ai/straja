@@ -9,65 +9,65 @@ import (
 
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/intel"
-	"github.com/straja-ai/straja/internal/license"
 	"github.com/straja-ai/straja/internal/policy"
+	"github.com/straja-ai/straja/internal/trust"
 	"go.opentelemetry.io/otel/trace"
 )
 
-func TestValidateLicenseOnline_OKStatusesKeepEnabled(t *testing.T) {
+func TestValidateTrustOnline_OKStatusesKeepEnabled(t *testing.T) {
 	cases := []string{"ok", "active"}
 	for _, status := range cases {
 		t.Run(status, func(t *testing.T) {
 			s := &Server{
 				cfg: &config.Config{
 					Intelligence: config.IntelligenceConfig{
-						LicenseServerURL: "https://example.test/validate",
+						TrustServerURL: "https://example.test/validate",
 					},
 				},
-				licenseKey:    "dummy",
-				licenseClaims: &license.LicenseClaims{Tier: "other"},
-				intelStatus:   "enabled",
-				intelEnabled:  true,
-				httpClient:    fakeHTTPClient(`{"status":"` + status + `","tier":"free","message":"Valid license"}`),
+				trustKey:     "dummy",
+				trustClaims:  &trust.TrustClaims{Tier: "other"},
+				intelStatus:  "enabled",
+				intelEnabled: true,
+				httpClient:   fakeHTTPClient(`{"status":"` + status + `","tier":"free","message":"Valid trust"}`),
 			}
 
-			if err := s.ValidateLicenseOnline(context.Background()); err != nil {
+			if err := s.ValidateTrustOnline(context.Background()); err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
 			if s.intelStatus != "enabled" {
 				t.Fatalf("expected intelStatus enabled, got %s", s.intelStatus)
 			}
-			if got := s.licenseClaims.Tier; got != "free" {
+			if got := s.trustClaims.Tier; got != "free" {
 				t.Fatalf("expected tier updated to free, got %s", got)
 			}
 		})
 	}
 }
 
-func TestValidateLicenseOnline_NonOKDisablesIntel(t *testing.T) {
+func TestValidateTrustOnline_NonOKDisablesIntel(t *testing.T) {
 	s := &Server{
 		cfg: &config.Config{
 			Intelligence: config.IntelligenceConfig{
-				LicenseServerURL: "https://example.test/validate",
+				TrustServerURL: "https://example.test/validate",
 			},
 			Policy: config.PolicyConfig{},
 		},
-		licenseKey:    "dummy",
-		licenseClaims: &license.LicenseClaims{},
-		intelStatus:   "enabled",
-		intelEnabled:  true,
-		policy:        policy.NewBasic(config.PolicyConfig{}, config.SecurityConfig{}, intel.NewNoop(), nil, nil, trace.NewNoopTracerProvider().Tracer("test"), config.StrajaGuardConfig{}),
-		httpClient:    fakeHTTPClient(`{"status":"revoked","message":"Revoked"}`),
+		trustKey:     "dummy",
+		trustClaims:  &trust.TrustClaims{},
+		intelStatus:  "enabled",
+		intelEnabled: true,
+		policy:       policy.NewBasic(config.PolicyConfig{}, config.SecurityConfig{}, intel.NewNoop(), nil, nil, trace.NewNoopTracerProvider().Tracer("test"), config.StrajaGuardConfig{}),
+		httpClient:   fakeHTTPClient(`{"status":"revoked","message":"Revoked"}`),
 	}
 
-	if err := s.ValidateLicenseOnline(context.Background()); err != nil {
+	if err := s.ValidateTrustOnline(context.Background()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if s.intelEnabled {
 		t.Fatalf("expected intelEnabled to be false after revoke")
 	}
-	if s.intelStatus != "regex_only_invalid_license" {
-		t.Fatalf("expected regex_only_invalid_license, got %s", s.intelStatus)
+	if s.intelStatus != "regex_only_invalid_trust_key" {
+		t.Fatalf("expected regex_only_invalid_trust_key, got %s", s.intelStatus)
 	}
 }
 

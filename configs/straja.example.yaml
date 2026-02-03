@@ -76,10 +76,10 @@ policy:
 
 intelligence:
   enabled: true
-  license_key: "STRAJA-FREE-XXX-XXX-XXXXX"
-  license_server_url: "https://straja.ai/api/license/validate"
+  trust_key: "STRAJA-TRUST-XXX-XXX-XXXXX"
+  trust_server_url: "https://straja.ai/api/trustkey/validate"
   bundle_cache_dir: "./bundles"
-  license_key_env: "STRAJA_LICENSE_KEY"
+  trust_key_env: "STRAJA_TRUST_KEY"
   auto_update: true
   update_check_interval: "6h"
 
@@ -88,7 +88,7 @@ intel:
     family: strajaguard_v1_specialists
   strajaguard_v1:
     enabled: true
-    license_server_base_url: "https://straja.ai"
+    trust_server_base_url: "https://straja.ai"
     request_timeout_seconds: 300
     bundle_download_timeout_seconds: 1800
     intel_dir: "./intel"

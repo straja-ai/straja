@@ -28,14 +28,14 @@ type Config struct {
 	ResponseGuard   ResponseGuardConfig       `yaml:"response_guard"`
 	Intel           IntelConfig               `yaml:"intel"`
 	StrajaGuard     StrajaGuardConfig         `yaml:"strajaguard"`
-	// ResolvedLicenseKey is populated at runtime (env-first) for both intelligence and StrajaGuard.
-	ResolvedLicenseKey string `yaml:"-"`
-	// ResolvedStrajaGuardLicenseKey is populated at runtime (env-first) specifically for StrajaGuard.
-	ResolvedStrajaGuardLicenseKey string `yaml:"-"`
-	ResolvedStrajaGuardSource     string `yaml:"-"`
+	// ResolvedTrustKey is populated at runtime (env-first) for both intelligence and StrajaGuard.
+	ResolvedTrustKey string `yaml:"-"`
+	// ResolvedStrajaGuardTrustKey is populated at runtime (env-first) specifically for StrajaGuard.
+	ResolvedStrajaGuardTrustKey string `yaml:"-"`
+	ResolvedStrajaGuardSource   string `yaml:"-"`
 }
 
-// IntelConfig holds ML bundle + license settings.
+// IntelConfig holds ML bundle + trust settings.
 type IntelConfig struct {
 	StrajaGuardV1 StrajaGuardV1Config     `yaml:"strajaguard_v1"`
 	StrajaGuard   StrajaGuardFamilyConfig `yaml:"strajaguard"`
@@ -48,17 +48,17 @@ type StrajaGuardFamilyConfig struct {
 
 // StrajaGuardV1Config controls StrajaGuard bundle fetching + validation.
 type StrajaGuardV1Config struct {
-	Enabled                       bool   `yaml:"enabled"`
-	LicenseServerBaseURL          string `yaml:"license_server_base_url"`
-	LicenseKey                    string `yaml:"license_key"`
-	RequestTimeoutSeconds         int    `yaml:"request_timeout_seconds"` // legacy fallback
-	LicenseValidateTimeoutSeconds int    `yaml:"license_validate_timeout_seconds"`
-	BundleDownloadTimeoutSeconds  int    `yaml:"bundle_download_timeout_seconds"`
-	IntelDir                      string `yaml:"intel_dir"`
-	VersionFile                   string `yaml:"version_file"`
-	AllowRegexOnly                bool   `yaml:"allow_regex_only"`
-	UpdateOnStart                 bool   `yaml:"update_on_start"`
-	RequireML                     bool   `yaml:"require_ml"`
+	Enabled                      bool   `yaml:"enabled"`
+	TrustServerBaseURL           string `yaml:"trust_server_base_url"`
+	TrustKey                     string `yaml:"trust_key"`
+	RequestTimeoutSeconds        int    `yaml:"request_timeout_seconds"` // legacy fallback
+	TrustValidateTimeoutSeconds  int    `yaml:"trust_validate_timeout_seconds"`
+	BundleDownloadTimeoutSeconds int    `yaml:"bundle_download_timeout_seconds"`
+	IntelDir                     string `yaml:"intel_dir"`
+	VersionFile                  string `yaml:"version_file"`
+	AllowRegexOnly               bool   `yaml:"allow_regex_only"`
+	UpdateOnStart                bool   `yaml:"update_on_start"`
+	RequireML                    bool   `yaml:"require_ml"`
 }
 
 // StrajaGuardConfig controls runtime settings for StrajaGuard inference.
@@ -212,16 +212,16 @@ type IntelligenceConfig struct {
 	// at all. When false, Straja becomes a pure routing + activation proxy.
 	Enabled bool `yaml:"enabled"`
 
-	// LicenseKey is the offline-verifiable license string (e.g. "STRAJA-FREE-...")
-	LicenseKey string `yaml:"license_key"`
+	// TrustKey is the offline-verifiable trust string (e.g. "STRAJA-TRUST-...")
+	TrustKey string `yaml:"trust_key"`
 
-	// LicenseServerURL is an optional online validation endpoint.
-	LicenseServerURL string `yaml:"license_server_url"`
+	// TrustServerURL is an optional online validation endpoint.
+	TrustServerURL string `yaml:"trust_server_url"`
 
 	// These fields are placeholders for Phase 2 and later
-	// (bundle download, license, updates).
+	// (bundle download, trust, updates).
 	BundleCacheDir      string `yaml:"bundle_cache_dir"`
-	LicenseKeyEnv       string `yaml:"license_key_env"`
+	TrustKeyEnv         string `yaml:"trust_key_env"`
 	AutoUpdate          bool   `yaml:"auto_update"`
 	UpdateCheckInterval string `yaml:"update_check_interval"`
 }
@@ -231,9 +231,9 @@ type IntelligenceConfig struct {
 func (c IntelligenceConfig) IsZero() bool {
 	return !c.Enabled &&
 		c.BundleCacheDir == "" &&
-		c.LicenseKeyEnv == "" &&
-		c.LicenseKey == "" &&
-		c.LicenseServerURL == "" &&
+		c.TrustKeyEnv == "" &&
+		c.TrustKey == "" &&
+		c.TrustServerURL == "" &&
 		!c.AutoUpdate &&
 		c.UpdateCheckInterval == ""
 }
@@ -522,7 +522,7 @@ func defaultConfig() *Config {
 		Intelligence: IntelligenceConfig{
 			Enabled:             true,
 			BundleCacheDir:      "~/.straja/bundles",
-			LicenseKeyEnv:       "STRAJA_LICENSE_KEY",
+			TrustKeyEnv:         "STRAJA_TRUST_KEY",
 			AutoUpdate:          true,
 			UpdateCheckInterval: "6h",
 		},
@@ -738,7 +738,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Intelligence = IntelligenceConfig{
 			Enabled:             true,
 			BundleCacheDir:      "~/.straja/bundles",
-			LicenseKeyEnv:       "STRAJA_LICENSE_KEY",
+			TrustKeyEnv:         "STRAJA_TRUST_KEY",
 			AutoUpdate:          true,
 			UpdateCheckInterval: "6h",
 		}
@@ -746,8 +746,8 @@ func applyDefaults(cfg *Config) {
 		if cfg.Intelligence.BundleCacheDir == "" {
 			cfg.Intelligence.BundleCacheDir = "~/.straja/bundles"
 		}
-		if cfg.Intelligence.LicenseKeyEnv == "" {
-			cfg.Intelligence.LicenseKeyEnv = "STRAJA_LICENSE_KEY"
+		if cfg.Intelligence.TrustKeyEnv == "" {
+			cfg.Intelligence.TrustKeyEnv = "STRAJA_TRUST_KEY"
 		}
 		if cfg.Intelligence.UpdateCheckInterval == "" {
 			cfg.Intelligence.UpdateCheckInterval = "6h"
@@ -764,7 +764,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Security.applyDefaults()
 	}
 
-	// Intel defaults (bundle + license flow)
+	// Intel defaults (bundle + trust flow)
 	if cfg.Intel == (IntelConfig{}) {
 		cfg.Intel = defaultIntelConfig()
 	} else {
@@ -796,32 +796,32 @@ func applyDefaults(cfg *Config) {
 		cfg.Security.BundleDir = defaultBundleDir
 	}
 
-	resolveLicense(cfg)
+	resolveTrust(cfg)
 }
 
-func resolveLicense(cfg *Config) {
+func resolveTrust(cfg *Config) {
 	if cfg == nil {
 		return
 	}
-	envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv)
+	envName := strings.TrimSpace(cfg.Intelligence.TrustKeyEnv)
 	envVal := ""
 	envPresent := false
 	if envName != "" {
 		if v, ok := os.LookupEnv(envName); ok {
 			envPresent = true
 			envVal = strings.TrimSpace(v)
-			if isPlaceholderLicenseKey(envVal) {
+			if isPlaceholderTrustKey(envVal) {
 				envVal = ""
 			}
 		}
 	}
 	// YAML values are dev fallbacks; ignore placeholders.
-	fileVal := strings.TrimSpace(cfg.Intelligence.LicenseKey)
-	if isPlaceholderLicenseKey(fileVal) {
+	fileVal := strings.TrimSpace(cfg.Intelligence.TrustKey)
+	if isPlaceholderTrustKey(fileVal) {
 		fileVal = ""
 	}
-	sgFileVal := strings.TrimSpace(cfg.Intel.StrajaGuardV1.LicenseKey)
-	if isPlaceholderLicenseKey(sgFileVal) {
+	sgFileVal := strings.TrimSpace(cfg.Intel.StrajaGuardV1.TrustKey)
+	if isPlaceholderTrustKey(sgFileVal) {
 		sgFileVal = ""
 	}
 
@@ -832,36 +832,36 @@ func resolveLicense(cfg *Config) {
 	if resolved == "" {
 		resolved = fileVal
 	}
-	cfg.ResolvedLicenseKey = resolved
+	cfg.ResolvedTrustKey = resolved
 
 	sgResolved := ""
-	sgSource := "intelligence.license_key"
+	sgSource := "intelligence.trust_key"
 	if envPresent {
 		sgResolved = envVal
 		sgSource = "env:" + envName
 	}
 	if sgResolved == "" && sgFileVal != "" {
 		sgResolved = sgFileVal
-		sgSource = "intel.strajaguard_v1.license_key"
+		sgSource = "intel.strajaguard_v1.trust_key"
 	}
 	if sgResolved == "" && fileVal != "" {
 		sgResolved = fileVal
-		sgSource = "intelligence.license_key"
+		sgSource = "intelligence.trust_key"
 	}
 
-	cfg.ResolvedStrajaGuardLicenseKey = sgResolved
+	cfg.ResolvedStrajaGuardTrustKey = sgResolved
 	cfg.ResolvedStrajaGuardSource = sgSource
 }
 
-func isPlaceholderLicenseKey(k string) bool {
+func isPlaceholderTrustKey(k string) bool {
 	k = strings.TrimSpace(strings.ToUpper(k))
 	if k == "" {
 		return true
 	}
 	samples := []string{
-		"STRAJA-FREE-XXXX",
-		"STRAJA-FREE-XXX-XXX-XXXXX",
-		"YOUR_LICENSE_KEY",
+		"STRAJA-TRUST-XXXX",
+		"STRAJA-TRUST-XXX-XXX-XXXXX",
+		"YOUR_TRUST_KEY",
 	}
 	for _, s := range samples {
 		if k == strings.ToUpper(s) {
@@ -874,16 +874,16 @@ func isPlaceholderLicenseKey(k string) bool {
 func defaultIntelConfig() IntelConfig {
 	return IntelConfig{
 		StrajaGuardV1: StrajaGuardV1Config{
-			Enabled:                       true,
-			LicenseServerBaseURL:          "https://straja.ai",
-			RequestTimeoutSeconds:         60,
-			LicenseValidateTimeoutSeconds: 10,
-			BundleDownloadTimeoutSeconds:  30,
-			IntelDir:                      "./intel",
-			VersionFile:                   "version",
-			AllowRegexOnly:                false,
-			UpdateOnStart:                 true,
-			RequireML:                     true,
+			Enabled:                      true,
+			TrustServerBaseURL:           "https://straja.ai",
+			RequestTimeoutSeconds:        60,
+			TrustValidateTimeoutSeconds:  10,
+			BundleDownloadTimeoutSeconds: 30,
+			IntelDir:                     "./intel",
+			VersionFile:                  "version",
+			AllowRegexOnly:               false,
+			UpdateOnStart:                true,
+			RequireML:                    true,
 		},
 		StrajaGuard: StrajaGuardFamilyConfig{},
 	}
@@ -896,17 +896,17 @@ func (c *IntelConfig) applyDefaults() {
 		c.StrajaGuardV1 = def.StrajaGuardV1
 	}
 
-	if c.StrajaGuardV1.LicenseServerBaseURL == "" {
-		c.StrajaGuardV1.LicenseServerBaseURL = def.StrajaGuardV1.LicenseServerBaseURL
+	if c.StrajaGuardV1.TrustServerBaseURL == "" {
+		c.StrajaGuardV1.TrustServerBaseURL = def.StrajaGuardV1.TrustServerBaseURL
 	}
 	if c.StrajaGuardV1.RequestTimeoutSeconds == 0 {
 		c.StrajaGuardV1.RequestTimeoutSeconds = def.StrajaGuardV1.RequestTimeoutSeconds
 	}
-	if c.StrajaGuardV1.LicenseValidateTimeoutSeconds == 0 {
+	if c.StrajaGuardV1.TrustValidateTimeoutSeconds == 0 {
 		if c.StrajaGuardV1.RequestTimeoutSeconds > 0 {
-			c.StrajaGuardV1.LicenseValidateTimeoutSeconds = c.StrajaGuardV1.RequestTimeoutSeconds
+			c.StrajaGuardV1.TrustValidateTimeoutSeconds = c.StrajaGuardV1.RequestTimeoutSeconds
 		} else {
-			c.StrajaGuardV1.LicenseValidateTimeoutSeconds = def.StrajaGuardV1.LicenseValidateTimeoutSeconds
+			c.StrajaGuardV1.TrustValidateTimeoutSeconds = def.StrajaGuardV1.TrustValidateTimeoutSeconds
 		}
 	}
 	if c.StrajaGuardV1.BundleDownloadTimeoutSeconds == 0 {
@@ -931,8 +931,8 @@ func (c *IntelConfig) applyDefaults() {
 	if envVal, ok := envBool("STRAJA_REQUIRE_ML"); ok {
 		c.StrajaGuardV1.RequireML = envVal
 	}
-	if v, ok := envInt("STRAJA_LICENSE_VALIDATE_TIMEOUT_SECONDS"); ok && v > 0 {
-		c.StrajaGuardV1.LicenseValidateTimeoutSeconds = v
+	if v, ok := envInt("STRAJA_TRUST_VALIDATE_TIMEOUT_SECONDS"); ok && v > 0 {
+		c.StrajaGuardV1.TrustValidateTimeoutSeconds = v
 	}
 	if v, ok := envInt("STRAJA_BUNDLE_DOWNLOAD_TIMEOUT_SECONDS"); ok && v > 0 {
 		c.StrajaGuardV1.BundleDownloadTimeoutSeconds = v

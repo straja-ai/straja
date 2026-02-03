@@ -37,7 +37,7 @@ grep "  ${asset}$" checksums.txt | $sha_cmd -c -
 Set required environment variables before running:
 
 ```bash
-export STRAJA_LICENSE_KEY="STRAJA-FREE-..."
+export STRAJA_TRUST_KEY="STRAJA-TRUST-..."
 export OPENAI_API_KEY="sk-..."
 export STRAJA_CONSOLE_SESSION_SECRET="replace-with-a-random-string"
 ```
@@ -100,7 +100,7 @@ docker run --rm \
   -e STRAJA_BUNDLE_CACHE_DIR="/var/lib/straja/bundles" \
   -e STRAJA_BUNDLE_DIR="/var/lib/straja/bundles/strajaguard_v1" \
   -e OPENAI_API_KEY="sk-..." \
-  -e STRAJA_LICENSE_KEY="your-license" \
+  -e STRAJA_TRUST_KEY="your-trust-key" \
   -e STRAJA_CONSOLE_SESSION_SECRET="replace-with-a-random-string" \
   straja:local
 ```

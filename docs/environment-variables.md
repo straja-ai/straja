@@ -38,19 +38,19 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317
 export OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 ```
 
-## License keys and verification
+## Trust keys and verification
 
-Source: `internal/config/config.go`, `internal/license/license.go`
+Source: `internal/config/config.go`, `internal/trust/trust.go`
 
-- `STRAJA_LICENSE_KEY` (default license env name; can be changed via `intelligence.license_key_env`)
-- `STRAJA_LICENSE_PUBLIC_KEY` (override the embedded license public key)
+- `STRAJA_TRUST_KEY` (default trust env name; can be changed via `intelligence.trust_key_env`)
+- `STRAJA_TRUST_PUBLIC_KEY` (override the embedded trust public key)
 
-Precedence for the license key is described in `configuration.md`.
+Precedence for the trust key is described in `configuration.md`.
 
 Example:
 
 ```bash
-export STRAJA_LICENSE_KEY="STRAJA-FREE-..."
+export STRAJA_TRUST_KEY="STRAJA-TRUST-..."
 ```
 
 ## Bundle paths
@@ -76,7 +76,7 @@ Source: `internal/config/config.go`
 - `STRAJA_ALLOW_REGEX_ONLY` (overrides `intel.strajaguard_v1.allow_regex_only`)
 - `STRAJA_UPDATE_ON_START` (overrides `intel.strajaguard_v1.update_on_start`)
 - `STRAJA_REQUIRE_ML` (overrides `intel.strajaguard_v1.require_ml`)
-- `STRAJA_LICENSE_VALIDATE_TIMEOUT_SECONDS` (overrides `intel.strajaguard_v1.license_validate_timeout_seconds`)
+- `STRAJA_TRUST_VALIDATE_TIMEOUT_SECONDS` (overrides `intel.strajaguard_v1.trust_validate_timeout_seconds`)
 - `STRAJA_BUNDLE_DOWNLOAD_TIMEOUT_SECONDS` (overrides `intel.strajaguard_v1.bundle_download_timeout_seconds`)
 
 ## StrajaGuard runtime tuning
@@ -120,7 +120,7 @@ Source: `internal/mockprovider/mockprovider.go`
 
 Source: `internal/server/server.go`
 
-- `STRAJA_VERSION` (sent in online license validation payloads)
+- `STRAJA_VERSION` (sent in online trust validation payloads)
 
 ## Provider API keys
 

@@ -16,22 +16,22 @@ func TestSGFallbackNetworkUsesCache(t *testing.T) {
 	}
 }
 
-func TestSGFallbackInvalidLicenseNoCache(t *testing.T) {
-	allow, status, reason := sgFallbackDecision(true, strajaguard.ValidateInvalidLicense, "v1")
+func TestSGFallbackInvalidTrustNoCache(t *testing.T) {
+	allow, status, reason := sgFallbackDecision(true, strajaguard.ValidateInvalidTrust, "v1")
 	if allow {
 		t.Fatalf("expected allowCache=false")
 	}
-	if status != "disabled_invalid_license" || reason != "invalid_license" {
+	if status != "disabled_invalid_trust_key" || reason != "invalid_trust_key" {
 		t.Fatalf("unexpected status/reason: %s/%s", status, reason)
 	}
 }
 
-func TestSGFallbackMissingLicenseNoCache(t *testing.T) {
+func TestSGFallbackMissingTrustKeyNoCache(t *testing.T) {
 	allow, status, reason := sgFallbackDecision(false, strajaguard.ValidateOtherError, "v1")
 	if allow {
 		t.Fatalf("expected allowCache=false")
 	}
-	if status != "disabled_missing_license" || reason != "missing_license" {
+	if status != "disabled_missing_trust_key" || reason != "missing_trust_key" {
 		t.Fatalf("unexpected status/reason: %s/%s", status, reason)
 	}
 }

@@ -28,14 +28,14 @@ docker run --rm \
   -e STRAJA_BUNDLE_CACHE_DIR="/var/lib/straja/bundles" \
   -e STRAJA_BUNDLE_DIR="/var/lib/straja/bundles/strajaguard_v1" \
   -e OPENAI_API_KEY="sk-..." \
-  -e STRAJA_LICENSE_KEY="your-license" \
+  -e STRAJA_TRUST_KEY="your-trust-key" \
   -e STRAJA_CONSOLE_SESSION_SECRET="replace-with-a-random-string" \
   straja:local
 ```
 
 ## Production notes
 
-- Do not bake provider or license keys into the image; inject them via environment or a secrets manager.
+- Do not bake provider or trust keys into the image; inject them via environment or a secrets manager.
 - Keep `allow_private_networks: false` for providers unless you explicitly need localhost/private endpoints.
 - Use `max_request_body_bytes`, `max_messages`, `max_total_message_chars`, and `max_in_flight_requests` to protect the gateway.
 - Consider enabling activation sinks (`activation.*`) for auditability and `/readyz` for health monitoring.

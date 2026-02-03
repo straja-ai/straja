@@ -36,13 +36,15 @@ fi
 grep "  ${asset}$" checksums.txt | $sha_cmd -c -
 ```
 
-## 2) Set your Straja license key
+## 2) Set your Straja trust key
+
+A trust key is required to enable Straja’s signed safety models. It ensures the integrity and authenticity of local intelligence bundles. All models run locally.
 
 ```bash
-export STRAJA_LICENSE_KEY="STRAJA-FREE-..."
+export STRAJA_TRUST_KEY="STRAJA-TRUST-..."
 ```
 
-If you do not have a license key, get a free one at `https://straja.ai`.
+If you do not have a trust key, request one at `https://straja.ai`.
 
 ## 3) Export your provider API key
 

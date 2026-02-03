@@ -25,13 +25,13 @@ import (
 	"github.com/straja-ai/straja/internal/consoleauth"
 	"github.com/straja-ai/straja/internal/inference"
 	"github.com/straja-ai/straja/internal/intel"
-	"github.com/straja-ai/straja/internal/license"
 	"github.com/straja-ai/straja/internal/mockprovider"
 	"github.com/straja-ai/straja/internal/policy"
 	"github.com/straja-ai/straja/internal/provider"
 	"github.com/straja-ai/straja/internal/redact"
 	"github.com/straja-ai/straja/internal/strajaguard"
 	"github.com/straja-ai/straja/internal/telemetry"
+	"github.com/straja-ai/straja/internal/trust"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -60,9 +60,9 @@ type Server struct {
 	securityThresholds                 map[string]float32
 	telemetry                          *telemetry.Provider
 	projectProviders                   map[string]string // project ID -> provider name
-	licenseClaims                      *license.LicenseClaims
+	trustClaims                        *trust.TrustClaims
 	intelEnabled                       bool
-	licenseKey                         string
+	trustKey                           string
 	intelStatus                        string
 	intelMeta                          *strajaguard.ValidationMeta
 	intelBundleVer                     string
@@ -167,21 +167,21 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	// robots.txt served at root so crawlers see demo protections before any auth/other routes.
 	mux.HandleFunc("/robots.txt", handleRobots)
 
-	// Resolve license key with env override (env wins; placeholder treated as empty).
-	licenseKey := strings.TrimSpace(cfg.ResolvedLicenseKey)
-	envName := strings.TrimSpace(cfg.Intelligence.LicenseKeyEnv)
-	redact.Logf("license: using %s set=%t", envName, licenseKey != "")
-	sgLicenseKey := strings.TrimSpace(cfg.ResolvedStrajaGuardLicenseKey)
+	// Resolve trust key with env override (env wins; placeholder treated as empty).
+	trustKey := strings.TrimSpace(cfg.ResolvedTrustKey)
+	envName := strings.TrimSpace(cfg.Intelligence.TrustKeyEnv)
+	redact.Logf("trust: using %s set=%t", envName, trustKey != "")
+	sgTrustKey := strings.TrimSpace(cfg.ResolvedStrajaGuardTrustKey)
 	sgSource := strings.TrimSpace(cfg.ResolvedStrajaGuardSource)
 	if sgSource == "" {
-		sgSource = "intelligence.license_key"
+		sgSource = "intelligence.trust_key"
 	}
-	redact.Logf("strajaguard: license key resolved set=%t source=%s", sgLicenseKey != "", sgSource)
+	redact.Logf("strajaguard: trust key resolved set=%t source=%s", sgTrustKey != "", sgSource)
 
-	// Build intelligence engine (bundle-backed regex or noop) with offline license verification.
+	// Build intelligence engine (bundle-backed regex or noop) with offline trust verification.
 	var (
 		intelEngine    intel.Engine = intel.NewRegexBundle(cfg.Policy)
-		licenseClaims  *license.LicenseClaims
+		trustClaims    *trust.TrustClaims
 		intelEnabled   = cfg.Intelligence.Enabled
 		intelStatus    = "online_validated"
 		intelBundleVer string
@@ -190,23 +190,23 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	if !intelEnabled {
 		redact.Logf("intelligence disabled via config; running in routing-only mode")
 		intelEngine = intel.NewNoop()
-		intelStatus = "disabled_missing_license"
+		intelStatus = "disabled_missing_trust_key"
 	} else {
-		if strings.TrimSpace(licenseKey) == "" {
-			redact.Logf("license key not provided; running regex-only (no ML bundle)")
-			intelStatus = "disabled_missing_license"
+		if strings.TrimSpace(trustKey) == "" {
+			redact.Logf("Trust key missing or invalid. Required to verify signed intelligence bundles. running regex-only (no ML bundle)")
+			intelStatus = "disabled_missing_trust_key"
 		} else {
-			pubKey, err := license.DefaultPublicKey()
+			pubKey, err := trust.DefaultPublicKey()
 			if err != nil {
-				redact.Logf("license public key unavailable: %v; running regex-only", err)
+				redact.Logf("trust public key unavailable: %v; running regex-only", err)
 				intelStatus = "offline_cached_bundle"
 			} else {
-				claims, err := license.VerifyLicenseKey(licenseKey, pubKey)
+				claims, err := trust.VerifyTrustKey(trustKey, pubKey)
 				if err != nil {
-					redact.Logf("license verification failed: %v; running regex-only", err)
+					redact.Logf("Trust key missing or invalid. Required to verify signed intelligence bundles. verification error: %v; running regex-only", err)
 					intelStatus = "offline_cached_bundle"
 				} else {
-					licenseClaims = claims
+					trustClaims = claims
 					intelEngine = intel.NewRegexBundle(cfg.Policy)
 					intelStatus = "online_validated"
 				}
@@ -267,7 +267,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 			cachedMeta = &meta
 		}
 
-		if sgLicenseKey == "" {
+		if sgTrustKey == "" {
 			_, sgStatus, sgReason = sgFallbackDecision(false, strajaguard.ValidateOtherError, "")
 		} else if err := os.MkdirAll(strajaGuardDir, 0o755); err != nil {
 			sgReason = "invalid_bundle"
@@ -275,12 +275,12 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		} else {
 			ctx := context.Background()
 
-			valRes, outcome, err := strajaguard.ValidateLicense(ctx, cfg.Intel.StrajaGuardV1.LicenseServerBaseURL, sgLicenseKey, currentVersion, sgFamily, cfg.Intel.StrajaGuardV1.LicenseValidateTimeoutSeconds)
+			valRes, outcome, err := strajaguard.ValidateTrust(ctx, cfg.Intel.StrajaGuardV1.TrustServerBaseURL, sgTrustKey, currentVersion, sgFamily, cfg.Intel.StrajaGuardV1.TrustValidateTimeoutSeconds)
 			if err != nil || outcome != strajaguard.ValidateOK {
-				redact.Logf("strajaguard: license validate failed outcome=%s err=%v family=%s current_version=%s", outcome, err, sgFamily, currentVersion)
+				redact.Logf("strajaguard: trust validate failed outcome=%s err=%v family=%s current_version=%s", outcome, err, sgFamily, currentVersion)
 			}
 			if err == nil && valRes != nil && outcome == strajaguard.ValidateOK {
-				redact.Logf("strajaguard: license validate returned version=%s update_available=%t", valRes.BundleInfo.Version, valRes.BundleInfo.UpdateAvailable)
+				redact.Logf("strajaguard: trust validate returned version=%s update_available=%t", valRes.BundleInfo.Version, valRes.BundleInfo.UpdateAvailable)
 				dir, err := strajaguard.EnsureStrajaGuardVersion(ctx, strajaGuardDir, sgFamily, valRes.BundleInfo.Version, valRes.BundleInfo.ManifestURL, valRes.BundleInfo.SignatureURL, valRes.BundleInfo.FileBaseURL, valRes.BundleToken, cfg.Intel.StrajaGuardV1.BundleDownloadTimeoutSeconds)
 				if err != nil {
 					redact.Logf("strajaguard: bundle version=%s verification failed: %v", valRes.BundleInfo.Version, err)
@@ -316,12 +316,12 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 						state.PreviousVersion = state.CurrentVersion
 						state.CurrentVersion = valRes.BundleInfo.Version
 						_ = strajaguard.SaveBundleState(strajaGuardDir, state)
-						fp := licenseFingerprint(sgLicenseKey)
+						fp := trustFingerprint(sgTrustKey)
 						meta := strajaguard.ValidationMeta{
-							Version:            state.CurrentVersion,
-							LastValidatedAt:    time.Now().UTC().Format(time.RFC3339),
-							LicenseFingerprint: fp,
-							Source:             "online",
+							Version:          state.CurrentVersion,
+							LastValidatedAt:  time.Now().UTC().Format(time.RFC3339),
+							TrustFingerprint: fp,
+							Source:           "online",
 						}
 						if err := strajaguard.SaveValidationMeta(strajaGuardDir, meta); err == nil {
 							sgMeta = &meta
@@ -341,7 +341,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 				}
 			} else {
 				switch outcome {
-				case strajaguard.ValidateInvalidLicense:
+				case strajaguard.ValidateInvalidTrust:
 					_, sgStatus, sgReason = sgFallbackDecision(true, outcome, currentVersion)
 				case strajaguard.ValidateNetworkError:
 					allowCache, nextStatus, nextReason := sgFallbackDecision(true, outcome, currentVersion)
@@ -473,9 +473,9 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	}
 	ipLimiter := newIPRateLimiter(cfg.Server.RateLimitPerIP, cfg.Server.RateLimitPerIPBurst)
 
-	licenseHTTPTimeout := time.Duration(cfg.Intel.StrajaGuardV1.LicenseValidateTimeoutSeconds) * time.Second
-	if licenseHTTPTimeout <= 0 {
-		licenseHTTPTimeout = 10 * time.Second
+	trustHTTPTimeout := time.Duration(cfg.Intel.StrajaGuardV1.TrustValidateTimeoutSeconds) * time.Second
+	if trustHTTPTimeout <= 0 {
+		trustHTTPTimeout = 10 * time.Second
 	}
 
 	activationEmitter := buildActivationEmitter(cfg)
@@ -494,13 +494,13 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		securityThresholds:                 buildSecurityThresholds(cfg.Security),
 		telemetry:                          telProvider,
 		projectProviders:                   projectProviders,
-		licenseClaims:                      licenseClaims,
+		trustClaims:                        trustClaims,
 		intelEnabled:                       intelEnabled,
-		licenseKey:                         licenseKey,
+		trustKey:                           trustKey,
 		intelStatus:                        intelStatus,
 		intelMeta:                          intelMeta,
 		intelBundleVer:                     intelBundleVer,
-		httpClient:                         &http.Client{Timeout: licenseHTTPTimeout},
+		httpClient:                         &http.Client{Timeout: trustHTTPTimeout},
 		inFlightLimiter:                    limiter,
 		ipLimiter:                          ipLimiter,
 		strajaGuardModel:                   sgModel,
@@ -521,7 +521,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		bundleTimeout = 30 * time.Second
 	}
 
-	redact.Logf("gateway hardening: read_header_timeout=%s read_timeout=%s write_timeout=%s idle_timeout=%s max_body_bytes=%d max_nonstream_response_bytes=%d max_in_flight=%d rate_limit_per_ip=%d rate_limit_per_ip_burst=%d upstream_timeout=%s license_validate_timeout=%s bundle_download_timeout=%s require_ml=%t allow_regex_only=%t",
+	redact.Logf("gateway hardening: read_header_timeout=%s read_timeout=%s write_timeout=%s idle_timeout=%s max_body_bytes=%d max_nonstream_response_bytes=%d max_in_flight=%d rate_limit_per_ip=%d rate_limit_per_ip_burst=%d upstream_timeout=%s trust_validate_timeout=%s bundle_download_timeout=%s require_ml=%t allow_regex_only=%t",
 		cfg.Server.ReadHeaderTimeout,
 		cfg.Server.ReadTimeout,
 		cfg.Server.WriteTimeout,
@@ -532,7 +532,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		cfg.Server.RateLimitPerIP,
 		cfg.Server.RateLimitPerIPBurst,
 		cfg.Server.UpstreamTimeout,
-		licenseHTTPTimeout,
+		trustHTTPTimeout,
 		bundleTimeout,
 		cfg.Intel.StrajaGuardV1.RequireML,
 		cfg.Intel.StrajaGuardV1.AllowRegexOnly,
@@ -568,8 +568,8 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	}
 
 	if s.intelEnabled {
-		if err := s.ValidateLicenseOnline(context.Background()); err != nil {
-			redact.Logf("license online validation failed (continuing with offline-verified license): %v", err)
+		if err := s.ValidateTrustOnline(context.Background()); err != nil {
+			redact.Logf("trust online validation failed (continuing with offline-verified trust): %v", err)
 		}
 	}
 
@@ -651,14 +651,14 @@ func buildSecurityThresholds(cfg config.SecurityConfig) map[string]float32 {
 	return out
 }
 
-// ValidateLicenseOnline optionally validates the license key once at startup.
-func (s *Server) ValidateLicenseOnline(ctx context.Context) error {
+// ValidateTrustOnline optionally validates the trust key once at startup.
+func (s *Server) ValidateTrustOnline(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	url := strings.TrimSpace(s.cfg.Intelligence.LicenseServerURL)
-	if url == "" || strings.TrimSpace(s.licenseKey) == "" {
+	url := strings.TrimSpace(s.cfg.Intelligence.TrustServerURL)
+	if url == "" || strings.TrimSpace(s.trustKey) == "" {
 		return nil
 	}
 
@@ -674,27 +674,27 @@ func (s *Server) ValidateLicenseOnline(ctx context.Context) error {
 	}
 
 	payload := struct {
-		LicenseKey     string `json:"license_key"`
+		TrustKey       string `json:"trust_key"`
 		GatewayVersion string `json:"gateway_version,omitempty"`
 	}{
-		LicenseKey:     s.licenseKey,
+		TrustKey:       s.trustKey,
 		GatewayVersion: os.Getenv("STRAJA_VERSION"),
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal license payload: %w", err)
+		return fmt.Errorf("marshal trust payload: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build license request: %w", err)
+		return fmt.Errorf("build trust request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		redact.Logf("license online validation warning: %v", err)
+		redact.Logf("trust online validation warning: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -705,14 +705,14 @@ func (s *Server) ValidateLicenseOnline(ctx context.Context) error {
 		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		redact.Logf("license online validation decode error: %v", err)
+		redact.Logf("trust online validation decode error: %v", err)
 		return err
 	}
 
 	status := strings.ToLower(strings.TrimSpace(res.Status))
 	if status == "ok" || status == "active" {
-		if res.Tier != "" && s.licenseClaims != nil {
-			s.licenseClaims.Tier = res.Tier
+		if res.Tier != "" && s.trustClaims != nil {
+			s.trustClaims.Tier = res.Tier
 		}
 		s.intelStatus = "enabled"
 		return nil
@@ -721,7 +721,7 @@ func (s *Server) ValidateLicenseOnline(ctx context.Context) error {
 	// Any non-ok status disables intelligence for this run.
 	reason := res.Message
 	if reason == "" {
-		reason = fmt.Sprintf("license status=%s", res.Status)
+		reason = fmt.Sprintf("trust status=%s", res.Status)
 	}
 	s.disableIntelligence(reason)
 	return nil
@@ -733,13 +733,13 @@ func (s *Server) disableIntelligence(reason string) {
 	}
 	redact.Logf("disabling intelligence: %s", reason)
 	s.intelEnabled = false
-	s.licenseClaims = nil
+	s.trustClaims = nil
 	tr := trace.NewNoopTracerProvider().Tracer("noop")
 	if s.telemetry != nil {
 		tr = s.telemetry.Tracer()
 	}
 	s.policy = policy.NewBasic(s.cfg.Policy, s.cfg.Security, intel.NewRegexBundle(s.cfg.Policy), s.strajaGuardModel, s.specialistsEngine, tr, s.cfg.StrajaGuard)
-	s.intelStatus = "regex_only_invalid_license"
+	s.intelStatus = "regex_only_invalid_trust_key"
 }
 
 // buildProviderRegistry constructs all configured providers.
@@ -1610,15 +1610,15 @@ func sinkNames(sinks []config.ActivationSinkConfig) []string {
 	return out
 }
 
-func isPlaceholderLicenseKey(k string) bool {
+func isPlaceholderTrustKey(k string) bool {
 	k = strings.TrimSpace(strings.ToUpper(k))
 	if k == "" {
 		return true
 	}
 	samples := []string{
-		"STRAJA-FREE-XXXX",
-		"STRAJA-FREE-XXXX…",
-		"STRAJA-FREE-XXXX-PLACEHOLDER",
+		"STRAJA-TRUST-XXXX",
+		"STRAJA-TRUST-XXXX…",
+		"STRAJA-TRUST-XXXX-PLACEHOLDER",
 	}
 	for _, s := range samples {
 		if k == s {
@@ -1628,7 +1628,7 @@ func isPlaceholderLicenseKey(k string) bool {
 	return false
 }
 
-func licenseFingerprint(k string) string {
+func trustFingerprint(k string) string {
 	k = strings.TrimSpace(k)
 	if k == "" {
 		return ""
@@ -1642,7 +1642,7 @@ func reasonForFallback(err error) string {
 		return "validate_failed_network"
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "invalid") || strings.Contains(strings.ToLower(err.Error()), "unknown") || strings.Contains(strings.ToLower(err.Error()), "unauthorized") {
-		return "invalid_license"
+		return "invalid_trust_key"
 	}
 	if isNetworkyError(err) {
 		return "validate_failed_network"
@@ -1651,14 +1651,14 @@ func reasonForFallback(err error) string {
 }
 
 // sgFallbackDecision determines whether cached bundles may be used and what status/reason to report.
-func sgFallbackDecision(hasLicense bool, outcome strajaguard.LicenseValidationOutcome, currentVersion string) (allowCache bool, status string, reason string) {
-	if !hasLicense {
-		return false, "disabled_missing_license", "missing_license"
+func sgFallbackDecision(hasTrust bool, outcome strajaguard.TrustValidationOutcome, currentVersion string) (allowCache bool, status string, reason string) {
+	if !hasTrust {
+		return false, "disabled_missing_trust_key", "missing_trust_key"
 	}
 
 	switch outcome {
-	case strajaguard.ValidateInvalidLicense:
-		return false, "disabled_invalid_license", "invalid_license"
+	case strajaguard.ValidateInvalidTrust:
+		return false, "disabled_invalid_trust_key", "invalid_trust_key"
 	case strajaguard.ValidateNetworkError:
 		if strings.TrimSpace(currentVersion) != "" {
 			return true, "offline_cached_bundle", "network_error"

@@ -29,7 +29,7 @@ Straja provides:
 ## Quickstart (minimal)
 
 1. Install the binary (download the latest release archive).
-2. Set your Straja license key.
+2. Set your Straja trust key.
 3. Export your provider API key (example below uses OpenAI).
 4. Set a console session secret.
 5. Review the included `straja.yaml`.

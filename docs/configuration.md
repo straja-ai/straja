@@ -156,17 +156,18 @@ When `security.enabled` is `true`, PII/prompt-injection/jailbreak are primarily 
 Source: `internal/config/config.go` and `internal/server/server.go`
 
 - `enabled` (bool, default `true`)
-- `license_key` (string, default empty)
-- `license_server_url` (string, default empty)
+- `trust_key` (string, default empty)
+- `trust_server_url` (string, default empty)
 - `bundle_cache_dir` (string, default `"~/.straja/bundles"`)
-- `license_key_env` (string, default `"STRAJA_LICENSE_KEY"`)
+- `trust_key_env` (string, default `"STRAJA_TRUST_KEY"`)
 - `auto_update` (bool, default `true`)
 - `update_check_interval` (string, default `"6h"`)
 
 Notes:
 
-- `license_key_env` controls which env var name is checked for a license key. The env value (if set) overrides YAML values. Placeholder values such as `STRAJA-FREE-XXXX` are treated as empty.
-- `license_server_url` is used for an optional online license validation at startup (`internal/server/server.go`). If empty, no request is made.
+- A trust key is required to enable Straja’s signed safety models. It ensures the integrity and authenticity of local intelligence bundles. All models run locally.
+- `trust_key_env` controls which env var name is checked for a trust key. The env value (if set) overrides YAML values. Placeholder values such as `STRAJA-TRUST-XXXX` are treated as empty.
+- `trust_server_url` is used for optional online trust validation at startup (`internal/server/server.go`). If empty, no request is made.
 - `bundle_cache_dir`, `auto_update`, and `update_check_interval` are defined but not referenced by runtime code in this repo (current no-op).
 - Setting `intelligence.enabled: false` swaps in a no-op intel engine, so regex-based detections and output redaction do not run.
 
@@ -312,10 +313,10 @@ When the specialists family is enabled, the gateway loads an embedded default sp
 `intel.strajaguard_v1` options:
 
 - `enabled` (bool, default `true`)
-- `license_server_base_url` (string, default `"https://straja.ai"`)
-- `license_key` (string, default empty)
+- `trust_server_base_url` (string, default `"https://straja.ai"`)
+- `trust_key` (string, default empty)
 - `request_timeout_seconds` (int, default `60`) (legacy fallback)
-- `license_validate_timeout_seconds` (int, default `10`)
+- `trust_validate_timeout_seconds` (int, default `10`)
 - `bundle_download_timeout_seconds` (int, default `30`)
 - `intel_dir` (string, default `"./intel"`)
 - `version_file` (string, default `"version"`) (defined; currently only used by helper functions, not by server startup flow)
@@ -325,7 +326,7 @@ When the specialists family is enabled, the gateway loads an embedded default sp
 
 Timeout inheritance:
 
-- If `license_validate_timeout_seconds` or `bundle_download_timeout_seconds` are zero, they fall back to `request_timeout_seconds` (if set), otherwise to their defaults.
+- If `trust_validate_timeout_seconds` or `bundle_download_timeout_seconds` are zero, they fall back to `request_timeout_seconds` (if set), otherwise to their defaults.
 
 ## `strajaguard`
 

@@ -19,9 +19,9 @@ func newGuardTestServer(t *testing.T, mutate func(*config.Config)) *Server {
 		{ID: "demo", Provider: "upstream", APIKeys: []string{"test-key"}},
 	}
 	cfg.Intelligence.Enabled = true
-	cfg.Intelligence.LicenseKey = "test-license"
-	cfg.ResolvedLicenseKey = "test-license"
-	cfg.ResolvedStrajaGuardLicenseKey = "test-license"
+	cfg.Intelligence.TrustKey = "test-trust"
+	cfg.ResolvedTrustKey = "test-trust"
+	cfg.ResolvedStrajaGuardTrustKey = "test-trust"
 	cfg.Policy.PIIEntities = config.PIIEntitiesConfig{
 		Email:      true,
 		Phone:      true,
