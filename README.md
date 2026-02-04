@@ -65,7 +65,7 @@ This project is under active development. APIs and configuration may evolve as t
 
 ## License
 
-MIT
+Apache License, Version 2.0.
 
 ## Contact
 
