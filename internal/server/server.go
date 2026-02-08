@@ -551,6 +551,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	mux.HandleFunc("/v1/toolgate/explain", s.wrapHandler(s.handleToolgateExplain, handlerOptions{limitBody: true, useLimiter: true}))
 
 	// Serve console + static
+	// Note: console is for local/trusted networks only.
 	mux.Handle("/console/", console.Handler(s.cfg.Console.Mode))
 	mux.Handle("/console", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(console.RobotsTagHeader, console.RobotsTagValue)
