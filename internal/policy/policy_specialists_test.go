@@ -53,6 +53,37 @@ func TestBasicPolicy_SpecialistsHits(t *testing.T) {
 				"jailbreak":              0.92,
 				"contains_personal_data": 1.0,
 			},
+			Detections: &safety.StrajaGuardDetections{
+				PromptInjection: &safety.CategoryDetections{
+					Ensemble: safety.EnsembleResult{
+						Method:         "any",
+						Threshold:      0.8,
+						Score:          0.95,
+						Attack:         true,
+						ValidDetectors: 1,
+						TotalDetectors: 1,
+						Status:         "ok",
+					},
+					Detectors: []safety.DetectorResult{
+						{ID: "pi_deberta_v3", Kind: "sequence_classification", ModelRef: "prompt_injection/model.onnx", Score: f32(0.95), LatencyMs: 10},
+					},
+				},
+				Jailbreak: &safety.CategoryDetections{
+					Ensemble: safety.EnsembleResult{
+						Method:         "any",
+						Threshold:      0.8,
+						Score:          0.92,
+						Attack:         true,
+						ValidDetectors: 2,
+						TotalDetectors: 2,
+						Status:         "ok",
+					},
+					Detectors: []safety.DetectorResult{
+						{ID: "jb_v1", Kind: "sequence_classification", ModelRef: "jailbreak/model.onnx", Score: f32(0.9), LatencyMs: 12},
+						{ID: "jb_2xl", Kind: "qwen_next_token", ModelRef: "jailbreak2xl/model.onnx", Score: f32(0.92), LatencyMs: 30},
+					},
+				},
+			},
 			PIIEntities: []safety.PIIEntity{
 				{EntityType: "EMAIL", StartByte: 5, EndByte: 15, Source: "pii_ner"},
 			},
@@ -96,6 +127,16 @@ func TestBasicPolicy_SpecialistsHits(t *testing.T) {
 	if !containsStr(piiSources, strajaguard.SpecialistSourcePIINER) {
 		t.Fatalf("expected pii source %s, got %v", strajaguard.SpecialistSourcePIINER, piiSources)
 	}
+
+	if req.StrajaGuardDetections == nil {
+		t.Fatalf("expected StrajaGuardDetections to be populated")
+	}
+	if req.StrajaGuardDetections.Jailbreak == nil || len(req.StrajaGuardDetections.Jailbreak.Detectors) != 2 {
+		t.Fatalf("expected jailbreak detector details to be present, got %+v", req.StrajaGuardDetections.Jailbreak)
+	}
+	if req.StrajaGuardDetections.PromptInjection == nil || len(req.StrajaGuardDetections.PromptInjection.Detectors) != 1 {
+		t.Fatalf("expected prompt_injection detector details to be present, got %+v", req.StrajaGuardDetections.PromptInjection)
+	}
 }
 
 func hasCategory(hits []safety.PolicyHit, category string) bool {
@@ -124,3 +165,5 @@ func containsStr(list []string, val string) bool {
 	}
 	return false
 }
+
+func f32(v float32) *float32 { return &v }

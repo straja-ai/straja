@@ -143,6 +143,9 @@ Key notes:
 - When `intel.strajaguard.family: strajaguard_v1_specialists` is enabled, `intel.strajaguard.model` is `strajaguard_v1_specialists` and ML scores include `prompt_injection`, `jailbreak`, and `contains_personal_data`.
 - When specialists are enabled, `intel.strajaguard.specialists_config_source` is `"embedded"` or `"file"` (config override).
 - Specialists hits carry sources: `ml:straja/prompt_injection`, `ml:straja/jailbreak`, and `ner:straja/pii_ner`.
+- When specialists ensembles are enabled, additive transparency fields are included under `request.strajaguard` for:
+  - `request.strajaguard.prompt_injection` (`ensemble` + per-detector `detectors`)
+  - `request.strajaguard.jailbreak` (`ensemble` + per-detector `detectors`)
 
 ## Request status API
 

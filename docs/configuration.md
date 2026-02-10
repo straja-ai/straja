@@ -347,3 +347,12 @@ Source: `internal/config/config.go`, `internal/strajaguard/specialists.go`
 Override the embedded specialists config:
 
 - `config_path` (string, optional) — path to a custom `strajaguard_specialists.yaml`. If the file exists, it is used; otherwise the embedded default is used.
+
+Specialists config supports multi-detector ensembles for request-side:
+
+- `detectors.prompt_injection`: list of detectors
+- `detectors.jailbreak`: list of detectors
+- `ensemble.prompt_injection`: `{ method: any|mean, threshold: float }`
+- `ensemble.jailbreak`: `{ method: any|mean, threshold: float }`
+
+PII (`pii_ner`) remains a single specialist under `specialists.pii_ner`.

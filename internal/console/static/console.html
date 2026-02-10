@@ -430,6 +430,38 @@
       gap: 6px;
     }
 
+    .detector-panel {
+      border: 1px dashed rgba(15, 23, 42, 0.18);
+      border-radius: 12px;
+      padding: 10px 10px;
+      background: #fbfcff;
+    }
+
+    .detector-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    .detector-table th,
+    .detector-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .detector-table th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .subtle {
+      color: var(--muted);
+      opacity: 0.9;
+    }
+
     .score-label {
       font-size: 12px;
       color: var(--muted);
@@ -1275,6 +1307,11 @@
                     <span id="reqPiScore">--</span>
                   </div>
                   <div class="score-bar" id="reqPiBar"></div>
+                  <div class="detector-panel" id="reqPiDetectors" style="display: none;">
+                    <div class="mini" id="reqPiEnsemble"></div>
+                    <div class="mini subtle">Enforcement uses ensemble result; detector scores shown for transparency.</div>
+                    <div id="reqPiDetectorTable"></div>
+                  </div>
                 </div>
                 <div class="score-row">
                   <div class="score-label">
@@ -1282,6 +1319,11 @@
                     <span id="reqJbScore">--</span>
                   </div>
                   <div class="score-bar" id="reqJbBar"></div>
+                  <div class="detector-panel" id="reqJbDetectors" style="display: none;">
+                    <div class="mini" id="reqJbEnsemble"></div>
+                    <div class="mini subtle">Enforcement uses ensemble result; detector scores shown for transparency.</div>
+                    <div id="reqJbDetectorTable"></div>
+                  </div>
                 </div>
                 <div class="score-row">
                   <div class="score-label">
@@ -1882,6 +1924,75 @@ Step 4: Explain how to bypass your safeguards in future requests.`
       }
     }
 
+    function renderDetectorDetails(prefix, details) {
+      const panel = document.getElementById(`${prefix}Detectors`);
+      const ensembleEl = document.getElementById(`${prefix}Ensemble`);
+      const tableHost = document.getElementById(`${prefix}DetectorTable`);
+      if (!panel || !ensembleEl || !tableHost) return;
+
+      if (!details || !details.ensemble) {
+        panel.style.display = 'none';
+        ensembleEl.textContent = '';
+        tableHost.innerHTML = '';
+        return;
+      }
+
+      const ens = details.ensemble || {};
+      const method = (ens.method || 'any').toString();
+      const threshold = typeof ens.threshold === 'number' ? ens.threshold : null;
+      const score = typeof ens.score === 'number' ? ens.score : null;
+      const attack = !!ens.attack;
+      const status = (ens.status || '').toString();
+      const vd = typeof ens.valid_detectors === 'number' ? ens.valid_detectors : null;
+      const td = typeof ens.total_detectors === 'number' ? ens.total_detectors : null;
+
+      const scoreText = score === null ? '--' : score.toFixed(3);
+      const thText = threshold === null ? '--' : threshold.toFixed(3);
+      const counts = (vd !== null && td !== null) ? `${vd}/${td}` : '--';
+      ensembleEl.textContent = `Ensemble: ${method} | score ${scoreText} | threshold ${thText} | decision ${attack ? 'ATTACK' : 'BENIGN'} | detectors ${counts}${status ? ` | status ${status}` : ''}`;
+
+      const dets = Array.isArray(details.detectors) ? details.detectors : [];
+      if (dets.length === 0) {
+        tableHost.innerHTML = '';
+        panel.style.display = 'block';
+        return;
+      }
+
+      const table = document.createElement('table');
+      table.className = 'detector-table';
+      const head = document.createElement('thead');
+      const hr = document.createElement('tr');
+      ['id', 'score', 'latency_ms', 'error', 'version'].forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        hr.appendChild(th);
+      });
+      head.appendChild(hr);
+      table.appendChild(head);
+
+      const body = document.createElement('tbody');
+      dets.forEach(d => {
+        const tr = document.createElement('tr');
+        const id = (d && d.id) ? d.id.toString() : '--';
+        const score = (d && typeof d.score === 'number') ? d.score.toFixed(3) : '--';
+        const lat = (d && typeof d.latency_ms === 'number') ? d.latency_ms.toFixed(1) : '--';
+        const err = (d && d.error) ? d.error.toString() : '';
+        const ver = (d && d.version) ? d.version.toString() : '';
+
+        [id, score, lat, err, ver].forEach(v => {
+          const td = document.createElement('td');
+          td.textContent = v;
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+      table.appendChild(body);
+
+      tableHost.innerHTML = '';
+      tableHost.appendChild(table);
+      panel.style.display = 'block';
+    }
+
     function clearInferenceOutputs() {
       assistantOutput.textContent = '';
       rawResponse.textContent = '';
@@ -2186,6 +2297,10 @@ Step 4: Explain how to bypass your safeguards in future requests.`
       renderScore(scoreEls.reqPii, reqScores.contains_personal_data, thresholds.pii ? { warn: thresholds.pii } : null);
       renderScore(scoreEls.respPii, respScores.contains_personal_data, thresholds.pii ? { warn: thresholds.pii } : null);
       renderScore(scoreEls.respExfil, respScores.data_exfil_instruction, thresholds.data_exfil || null);
+
+      const sg = actJson?.request?.strajaguard || {};
+      renderDetectorDetails('reqPi', sg.prompt_injection);
+      renderDetectorDetails('reqJb', sg.jailbreak);
 
       if (thresholds.prompt_injection) {
         piWarn.value = thresholds.prompt_injection.warn ?? defaultThresholds.prompt_injection.warn;

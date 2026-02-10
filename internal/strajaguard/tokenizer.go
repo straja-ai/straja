@@ -142,6 +142,10 @@ func loadTokenizerFromJSON(path string) (Tokenizer, error) {
 		tok := newUnigramTokenizer(tokens, scores, vocabMap, raw.Model.UnkID, raw.Model.ByteFallback, clsID, sepID, padID)
 		return tok, nil
 	}
+	if modelType == "bpe" {
+		// Re-decode with the richer BPE schema.
+		return parseBPETokenizerJSON(data)
+	}
 
 	if vocab := vocabFromAny(raw.Model.Vocab); len(vocab) > 0 {
 		return newTokenizerFromVocab(vocab), nil

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "embed"
@@ -42,6 +43,7 @@ type SpecialistsEngine interface {
 type SpecialistsResult struct {
 	Scores      map[string]float32
 	PIIEntities []safety.PIIEntity
+	Detections  *safety.StrajaGuardDetections
 }
 
 type requestIDKey struct{}
@@ -65,6 +67,13 @@ func requestIDFromContext(ctx context.Context) string {
 }
 
 type SpecialistsConfig struct {
+	// Detectors is the preferred (multi-detector) config for prompt injection and jailbreak.
+	Detectors SpecialistsDetectorsConfig `yaml:"detectors"`
+	// Ensemble controls aggregation for prompt injection and jailbreak.
+	Ensemble SpecialistsEnsembleConfig `yaml:"ensemble"`
+
+	// Specialists is legacy single-specialist config (still used for pii_ner, and as a fallback
+	// for prompt_injection/jailbreak when Detectors is omitted).
 	Specialists map[string]SpecialistConfig `yaml:"specialists"`
 }
 
@@ -77,12 +86,56 @@ type SpecialistConfig struct {
 
 type Specialists struct {
 	seqLen int
-	models map[string]*specialistModel
+	categories map[string]*categoryEngine
+	piiNER     *specialistModel
 }
+
+type SpecialistsDetectorsConfig struct {
+	PromptInjection []DetectorSpec `yaml:"prompt_injection"`
+	Jailbreak       []DetectorSpec `yaml:"jailbreak"`
+}
+
+type SpecialistsEnsembleConfig struct {
+	PromptInjection EnsembleSpec `yaml:"prompt_injection"`
+	Jailbreak       EnsembleSpec `yaml:"jailbreak"`
+}
+
+type DetectorSpec struct {
+	ID           string `yaml:"id"`
+	Kind         string `yaml:"kind"`
+	ModelRef     string `yaml:"model_ref"`
+	TokenizerDir string `yaml:"tokenizer_dir"`
+	MaxTokens    int    `yaml:"max_tokens"`
+	Enabled      *bool  `yaml:"enabled"`
+
+	// qwen_next_token specific assets (bundle-relative paths).
+	PromptTemplate string `yaml:"prompt_template"`
+	LabelTokens    string `yaml:"label_tokens"`
+}
+
+type EnsembleSpec struct {
+	Method    string  `yaml:"method"`    // any | mean
+	Threshold float32 `yaml:"threshold"` // used only for "attack" boolean in transparency payloads
+}
+
+type Detector interface {
+	Evaluate(ctx context.Context, normalizedText string) safety.DetectorResult
+}
+
+type categoryEngine struct {
+	category string
+	method   string
+	threshold float32
+	detectors []Detector
+}
+
+var warnLegacySpecialistsOnce sync.Once
 
 type specialistModel struct {
 	id             string
 	kind           string
+	modelRef       string
+	version        string
 	modelPath      string
 	tokenizer      Tokenizer
 	labels         []string
@@ -105,6 +158,51 @@ type specialistSession struct {
 	output        *ort.Tensor[float32]
 }
 
+type sequenceDetector struct {
+	m *specialistModel
+}
+
+func (d *sequenceDetector) Evaluate(ctx context.Context, normalizedText string) safety.DetectorResult {
+	if d == nil || d.m == nil {
+		return safety.DetectorResult{
+			ID:    "",
+			Kind:  "sequence_classification",
+			Error: "detector not initialized",
+		}
+	}
+	start := time.Now()
+	score, err := d.m.runSequence(normalizedText, requestIDFromContext(ctx))
+	lat := time.Since(start)
+
+	out := safety.DetectorResult{
+		ID:        d.m.id,
+		Kind:      d.m.kind,
+		ModelRef:  d.m.modelRef,
+		LatencyMs: float64(lat.Microseconds()) / 1000.0,
+		Version:   d.m.version,
+	}
+	if err != nil {
+		out.Error = redact.String(sanitizeDetectorError(err.Error(), d.m.modelPath, d.m.modelRef))
+		return out
+	}
+	out.Score = ptrF32(score)
+	return out
+}
+
+func ptrF32(v float32) *float32 { return &v }
+
+func sanitizeDetectorError(msg string, modelPath string, modelRef string) string {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return msg
+	}
+	// Avoid leaking absolute paths in activation payloads.
+	if strings.TrimSpace(modelPath) != "" {
+		msg = strings.ReplaceAll(msg, modelPath, strings.TrimSpace(modelRef))
+	}
+	return msg
+}
+
 // LoadSpecialistsEngine builds a multi-model specialists engine from a bundle dir.
 func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, configPath string) (*Specialists, string, error) {
 	if bundleDir == "" {
@@ -118,7 +216,7 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 	if err != nil {
 		return nil, "", fmt.Errorf("load specialists config: %w", err)
 	}
-	if len(cfg.Specialists) == 0 {
+	if len(cfg.Specialists) == 0 && len(cfg.Detectors.PromptInjection) == 0 && len(cfg.Detectors.Jailbreak) == 0 {
 		return nil, "", errors.New("specialists config is empty")
 	}
 	redact.Logf("strajaguard specialists: config_source=%s", source)
@@ -145,94 +243,91 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 		interThr = defaultInterThreads
 	}
 
-	models := make(map[string]*specialistModel, len(cfg.Specialists))
-	for id, spec := range cfg.Specialists {
-		if strings.TrimSpace(spec.Kind) == "" {
-			return nil, "", fmt.Errorf("specialist %s missing kind", id)
-		}
-		modelDir := filepath.Dir(spec.Onnx)
-		if modelDir == "." || modelDir == "" {
-			modelDir = id
-		}
+	versions := loadModelVersionsFromManifest(bundleDir)
 
-		modelPath := resolveSpecialistModelPath(bundleDir, spec.Onnx)
-		if modelPath == "" {
-			return nil, "", fmt.Errorf("specialist %s model missing", id)
-		}
-
-		tokenizerDir := filepath.Join(bundleDir, filepath.FromSlash(spec.TokenizerDir))
-		if tokenizerDir == "" || tokenizerDir == bundleDir {
-			tokenizerDir = filepath.Join(bundleDir, filepath.FromSlash(modelDir))
-		}
-		tokenizer, err := LoadTokenizerFromDir(tokenizerDir)
-		if err != nil {
-			return nil, "", fmt.Errorf("specialist %s load tokenizer: %w", id, err)
-		}
-
-		configDir := filepath.Join(bundleDir, filepath.FromSlash(modelDir))
-		meta, err := loadSpecialistMeta(configDir)
-		if err != nil {
-			return nil, "", fmt.Errorf("specialist %s load config: %w", id, err)
-		}
-		labels, numLabels := meta.Labels, meta.NumLabels
-		if strings.EqualFold(spec.Kind, "token_classification") && len(labels) == 0 {
-			return nil, "", fmt.Errorf("specialist %s missing token labels", id)
-		}
-		if numLabels <= 0 {
-			numLabels = len(labels)
-		}
-		if numLabels <= 0 {
-			numLabels = 1
-		}
-
-		modelSeqLen := seqLen
-		if spec.MaxTokens > 0 {
-			modelSeqLen = spec.MaxTokens
-		}
-
-		needsTokenType := meta.RequiresTokenType
-		outputName, outputDims, err := selectOutputInfo(modelPath)
-		if err != nil {
-			return nil, "", fmt.Errorf("specialist %s output selection: %w", id, err)
-		}
-		if debugML() {
-			redact.Logf("strajaguard debug ml: model=%s output_name=%s output_dims=%v", id, outputName, outputDims)
-		}
-		attackIdx, attackLabel := pickAttackClass(id, meta, numLabels)
-		if debugML() {
-			redact.Logf("strajaguard debug ml: model=%s attack_class_index=%d attack_label=%s", id, attackIdx, attackLabel)
-		}
-		sessions := make(chan *specialistSession, poolSize)
-		for i := 0; i < poolSize; i++ {
-			ss, err := newSpecialistSession(modelPath, modelSeqLen, numLabels, outputDims, intraThr, interThr, strings.EqualFold(spec.Kind, "token_classification"), needsTokenType, outputName)
-			if err != nil {
-				return nil, "", fmt.Errorf("specialist %s create onnx session %d/%d: %w", id, i+1, poolSize, err)
-			}
-			sessions <- ss
-		}
-
-		models[id] = &specialistModel{
-			id:             id,
-			kind:           strings.TrimSpace(strings.ToLower(spec.Kind)),
-			modelPath:      modelPath,
-			tokenizer:      tokenizer,
-			labels:         labels,
-			seqLen:         modelSeqLen,
-			sessions:       sessions,
-			poolSize:       poolSize,
-			numLabels:      numLabels,
-			needsTokenType: needsTokenType,
-			outputName:     outputName,
-			outputDims:     outputDims,
-			attackIdx:      attackIdx,
-			attackLabel:    attackLabel,
-		}
-		redact.Logf("strajaguard specialists: loaded %s kind=%s model=%s", id, spec.Kind, filepath.Base(modelPath))
+	promptSpecs, jailbreakSpecs, piiSpec, legacyPresent, legacyUsed := normalizeDetectorConfig(cfg)
+	if legacyPresent && !legacyUsed && (len(cfg.Detectors.PromptInjection) > 0 || len(cfg.Detectors.Jailbreak) > 0) {
+		warnLegacySpecialistsOnce.Do(func() {
+			redact.Logf("strajaguard specialists: both legacy 'specialists' and new 'detectors' config present; using 'detectors'")
+		})
 	}
 
+	categories := map[string]*categoryEngine{}
+	buildCategory := func(category string, method string, threshold float32, specs []DetectorSpec) (*categoryEngine, error) {
+		eng := &categoryEngine{
+			category:  category,
+			method:    normalizeEnsembleMethod(method),
+			threshold: normalizeEnsembleThreshold(threshold),
+			detectors: nil,
+		}
+		seen := map[string]bool{}
+		for _, spec := range specs {
+			if spec.Enabled != nil && !*spec.Enabled {
+				continue
+			}
+			if strings.TrimSpace(spec.ID) == "" {
+				return nil, fmt.Errorf("%s detector missing id", category)
+			}
+			if seen[spec.ID] {
+				return nil, fmt.Errorf("%s detector id %q not unique", category, spec.ID)
+			}
+			seen[spec.ID] = true
+			kind := strings.TrimSpace(strings.ToLower(spec.Kind))
+			if kind == "" {
+				return nil, fmt.Errorf("%s detector %s missing kind", category, spec.ID)
+			}
+			modelRef := strings.TrimSpace(spec.ModelRef)
+			if modelRef == "" {
+				return nil, fmt.Errorf("%s detector %s missing model_ref", category, spec.ID)
+			}
+
+			switch kind {
+			case "sequence_classification":
+				m, err := loadSequenceDetectorModel(bundleDir, seqLen, intraThr, interThr, poolSize, category, spec, versions)
+				if err != nil {
+					return nil, err
+				}
+				eng.detectors = append(eng.detectors, &sequenceDetector{m: m})
+			case "qwen_next_token":
+				d, err := loadQwenNextTokenDetector(bundleDir, seqLen, intraThr, interThr, poolSize, spec, versions)
+				if err != nil {
+					return nil, err
+				}
+				eng.detectors = append(eng.detectors, d)
+			default:
+				return nil, fmt.Errorf("%s detector %s unsupported kind %q", category, spec.ID, spec.Kind)
+			}
+		}
+		return eng, nil
+	}
+
+	piEng, err := buildCategory("prompt_injection", cfg.Ensemble.PromptInjection.Method, cfg.Ensemble.PromptInjection.Threshold, promptSpecs)
+	if err != nil {
+		return nil, "", err
+	}
+	jbEng, err := buildCategory("jailbreak", cfg.Ensemble.Jailbreak.Method, cfg.Ensemble.Jailbreak.Threshold, jailbreakSpecs)
+	if err != nil {
+		return nil, "", err
+	}
+	redact.Logf("strajaguard specialists: category=prompt_injection detectors=%d method=%s threshold=%.3f", len(piEng.detectors), piEng.method, piEng.threshold)
+	redact.Logf("strajaguard specialists: category=jailbreak detectors=%d method=%s threshold=%.3f", len(jbEng.detectors), jbEng.method, jbEng.threshold)
+	categories["prompt_injection"] = piEng
+	categories["jailbreak"] = jbEng
+
+	var piiNER *specialistModel
+	if piiSpec != nil && strings.TrimSpace(piiSpec.Kind) != "" {
+		m, err := loadNERModel(bundleDir, seqLen, intraThr, interThr, poolSize, "pii_ner", *piiSpec, versions)
+		if err != nil {
+			return nil, "", err
+		}
+		piiNER = m
+	}
+
+	_ = legacyUsed
 	return &Specialists{
-		seqLen: seqLen,
-		models: models,
+		seqLen:      seqLen,
+		categories:  categories,
+		piiNER:      piiNER,
 	}, source, nil
 }
 
@@ -280,6 +375,252 @@ func parseSpecialistsConfig(data []byte) (*SpecialistsConfig, error) {
 	return &cfg, nil
 }
 
+func normalizeDetectorConfig(cfg *SpecialistsConfig) (prompt []DetectorSpec, jailbreak []DetectorSpec, pii *SpecialistConfig, legacyPresent bool, legacyUsed bool) {
+	if cfg == nil {
+		return nil, nil, nil, false, false
+	}
+
+	legacyPresent = len(cfg.Specialists) > 0 && (cfg.Specialists["prompt_injection"].Kind != "" || cfg.Specialists["jailbreak"].Kind != "")
+
+	// Preferred path: new multi-detector config.
+	if len(cfg.Detectors.PromptInjection) > 0 || len(cfg.Detectors.Jailbreak) > 0 {
+		return cfg.Detectors.PromptInjection, cfg.Detectors.Jailbreak, cfg.Specialists["pii_ner"].ptr(), legacyPresent, false
+	}
+
+	// Legacy fallback: a single specialist per category under "specialists".
+	legacyUsed = true
+	if spec, ok := cfg.Specialists["prompt_injection"]; ok && strings.TrimSpace(spec.Kind) != "" {
+		prompt = []DetectorSpec{legacyToDetector("prompt_injection", spec)}
+	}
+	if spec, ok := cfg.Specialists["jailbreak"]; ok && strings.TrimSpace(spec.Kind) != "" {
+		jailbreak = []DetectorSpec{legacyToDetector("jailbreak", spec)}
+	}
+	if spec, ok := cfg.Specialists["pii_ner"]; ok && strings.TrimSpace(spec.Kind) != "" {
+		cpy := spec
+		pii = &cpy
+	}
+	return prompt, jailbreak, pii, legacyPresent, legacyUsed
+}
+
+func legacyToDetector(category string, spec SpecialistConfig) DetectorSpec {
+	return DetectorSpec{
+		ID:           category,
+		Kind:         spec.Kind,
+		ModelRef:     spec.Onnx,
+		TokenizerDir: spec.TokenizerDir,
+		MaxTokens:    spec.MaxTokens,
+		Enabled:      nil,
+	}
+}
+
+func (c SpecialistConfig) ptr() *SpecialistConfig {
+	if strings.TrimSpace(c.Kind) == "" && strings.TrimSpace(c.Onnx) == "" && strings.TrimSpace(c.TokenizerDir) == "" {
+		return nil
+	}
+	cc := c
+	return &cc
+}
+
+func loadModelVersionsFromManifest(bundleDir string) map[string]string {
+	// Best-effort: manifest metadata is optional and older bundles don't have it.
+	path := filepath.Join(bundleDir, "manifest.json")
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	var raw struct {
+		Metadata struct {
+			Models []struct {
+				ModelRef string `json:"model_ref"`
+				Version  string `json:"version"`
+			} `json:"models"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, m := range raw.Metadata.Models {
+		ref := strings.TrimSpace(m.ModelRef)
+		ver := strings.TrimSpace(m.Version)
+		if ref == "" || ver == "" {
+			continue
+		}
+		out[ref] = ver
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func loadSequenceDetectorModel(bundleDir string, defaultSeqLen, intraThr, interThr, poolSize int, category string, spec DetectorSpec, versions map[string]string) (*specialistModel, error) {
+	id := strings.TrimSpace(spec.ID)
+	modelRef := strings.TrimSpace(spec.ModelRef)
+	modelPath := resolveSpecialistModelPath(bundleDir, modelRef)
+	if modelPath == "" {
+		return nil, fmt.Errorf("specialist %s model missing", id)
+	}
+
+	modelDir := filepath.Dir(filepath.FromSlash(modelRef))
+	if modelDir == "." || modelDir == "" {
+		modelDir = id
+	}
+
+	tokenizerDir := filepath.Join(bundleDir, filepath.FromSlash(strings.TrimSpace(spec.TokenizerDir)))
+	if tokenizerDir == "" || tokenizerDir == bundleDir {
+		tokenizerDir = filepath.Join(bundleDir, filepath.FromSlash(modelDir))
+	}
+	tokenizer, err := LoadTokenizerFromDir(tokenizerDir)
+	if err != nil {
+		return nil, fmt.Errorf("specialist %s load tokenizer: %w", id, err)
+	}
+
+	configDir := filepath.Join(bundleDir, filepath.FromSlash(modelDir))
+	meta, err := loadSpecialistMeta(configDir)
+	if err != nil {
+		return nil, fmt.Errorf("specialist %s load config: %w", id, err)
+	}
+	labels, numLabels := meta.Labels, meta.NumLabels
+	if numLabels <= 0 {
+		numLabels = len(labels)
+	}
+	if numLabels <= 0 {
+		numLabels = 1
+	}
+
+	modelSeqLen := defaultSeqLen
+	if spec.MaxTokens > 0 {
+		modelSeqLen = spec.MaxTokens
+	}
+
+	needsTokenType := meta.RequiresTokenType
+	outputName, outputDims, err := selectOutputInfo(modelPath)
+	if err != nil {
+		return nil, fmt.Errorf("specialist %s output selection: %w", id, err)
+	}
+	if debugML() {
+		redact.Logf("strajaguard debug ml: model=%s output_name=%s output_dims=%v", id, outputName, outputDims)
+	}
+	attackIdx, attackLabel := pickAttackClass(strings.TrimSpace(strings.ToLower(category)), meta, numLabels)
+	if debugML() {
+		redact.Logf("strajaguard debug ml: model=%s attack_class_index=%d attack_label=%s", id, attackIdx, attackLabel)
+	}
+	sessions := make(chan *specialistSession, poolSize)
+	for i := 0; i < poolSize; i++ {
+		ss, err := newSpecialistSession(modelPath, modelSeqLen, numLabels, outputDims, intraThr, interThr, false, needsTokenType, outputName)
+		if err != nil {
+			return nil, fmt.Errorf("specialist %s create onnx session %d/%d: %w", id, i+1, poolSize, err)
+		}
+		sessions <- ss
+	}
+	version := ""
+	if versions != nil {
+		version = versions[modelRef]
+	}
+	m := &specialistModel{
+		id:             id,
+		kind:           "sequence_classification",
+		modelRef:       modelRef,
+		version:        version,
+		modelPath:      modelPath,
+		tokenizer:      tokenizer,
+		labels:         labels,
+		seqLen:         modelSeqLen,
+		sessions:       sessions,
+		poolSize:       poolSize,
+		numLabels:      numLabels,
+		needsTokenType: needsTokenType,
+		outputName:     outputName,
+		outputDims:     outputDims,
+		attackIdx:      attackIdx,
+		attackLabel:    attackLabel,
+	}
+	redact.Logf("strajaguard specialists: loaded detector=%s kind=%s model=%s", id, m.kind, filepath.Base(modelPath))
+	return m, nil
+}
+
+func loadNERModel(bundleDir string, defaultSeqLen, intraThr, interThr, poolSize int, id string, spec SpecialistConfig, versions map[string]string) (*specialistModel, error) {
+	id = strings.TrimSpace(id)
+	modelRef := strings.TrimSpace(spec.Onnx)
+	modelPath := resolveSpecialistModelPath(bundleDir, modelRef)
+	if modelPath == "" {
+		return nil, fmt.Errorf("specialist %s model missing", id)
+	}
+	modelDir := filepath.Dir(filepath.FromSlash(modelRef))
+	if modelDir == "." || modelDir == "" {
+		modelDir = id
+	}
+
+	tokenizerDir := filepath.Join(bundleDir, filepath.FromSlash(strings.TrimSpace(spec.TokenizerDir)))
+	if tokenizerDir == "" || tokenizerDir == bundleDir {
+		tokenizerDir = filepath.Join(bundleDir, filepath.FromSlash(modelDir))
+	}
+	tokenizer, err := LoadTokenizerFromDir(tokenizerDir)
+	if err != nil {
+		return nil, fmt.Errorf("specialist %s load tokenizer: %w", id, err)
+	}
+
+	configDir := filepath.Join(bundleDir, filepath.FromSlash(modelDir))
+	meta, err := loadSpecialistMeta(configDir)
+	if err != nil {
+		return nil, fmt.Errorf("specialist %s load config: %w", id, err)
+	}
+	labels, numLabels := meta.Labels, meta.NumLabels
+	if len(labels) == 0 {
+		return nil, fmt.Errorf("specialist %s missing token labels", id)
+	}
+	if numLabels <= 0 {
+		numLabels = len(labels)
+	}
+	if numLabels <= 0 {
+		numLabels = 1
+	}
+	modelSeqLen := defaultSeqLen
+	if spec.MaxTokens > 0 {
+		modelSeqLen = spec.MaxTokens
+	}
+
+	needsTokenType := meta.RequiresTokenType
+	outputName, outputDims, err := selectOutputInfo(modelPath)
+	if err != nil {
+		return nil, fmt.Errorf("specialist %s output selection: %w", id, err)
+	}
+
+	sessions := make(chan *specialistSession, poolSize)
+	for i := 0; i < poolSize; i++ {
+		ss, err := newSpecialistSession(modelPath, modelSeqLen, numLabels, outputDims, intraThr, interThr, true, needsTokenType, outputName)
+		if err != nil {
+			return nil, fmt.Errorf("specialist %s create onnx session %d/%d: %w", id, i+1, poolSize, err)
+		}
+		sessions <- ss
+	}
+	version := ""
+	if versions != nil {
+		version = versions[modelRef]
+	}
+	m := &specialistModel{
+		id:             id,
+		kind:           "token_classification",
+		modelRef:       modelRef,
+		version:        version,
+		modelPath:      modelPath,
+		tokenizer:      tokenizer,
+		labels:         labels,
+		seqLen:         modelSeqLen,
+		sessions:       sessions,
+		poolSize:       poolSize,
+		numLabels:      numLabels,
+		needsTokenType: needsTokenType,
+		outputName:     outputName,
+		outputDims:     outputDims,
+		attackIdx:      0,
+		attackLabel:    "",
+	}
+	redact.Logf("strajaguard specialists: loaded %s kind=%s model=%s", id, m.kind, filepath.Base(modelPath))
+	return m, nil
+}
+
 // AnalyzeText runs all configured specialists on the text.
 func (s *Specialists) AnalyzeText(ctx context.Context, text string) (*SpecialistsResult, error) {
 	if s == nil {
@@ -287,30 +628,32 @@ func (s *Specialists) AnalyzeText(ctx context.Context, text string) (*Specialist
 	}
 	res := &SpecialistsResult{
 		Scores: map[string]float32{},
+		Detections: &safety.StrajaGuardDetections{},
 	}
-	var errs []string
 	reqID := requestIDFromContext(ctx)
 
-	if model, ok := s.models["prompt_injection"]; ok {
-		score, err := model.runSequence(text, reqID)
-		if err != nil {
-			errs = append(errs, "prompt_injection: "+err.Error())
-		} else {
-			res.Scores["prompt_injection"] = score
+	if eng, ok := s.categories["prompt_injection"]; ok && eng != nil {
+		d := eng.evaluate(ctx, text)
+		res.Detections.PromptInjection = d
+		res.Scores["prompt_injection"] = d.Ensemble.Score
+		if debugML() {
+			redact.Logf("strajaguard debug ml: category=prompt_injection request=%s score=%.4f status=%s", reqID, d.Ensemble.Score, d.Ensemble.Status)
 		}
 	}
-	if model, ok := s.models["jailbreak"]; ok {
-		score, err := model.runSequence(text, reqID)
-		if err != nil {
-			errs = append(errs, "jailbreak: "+err.Error())
-		} else {
-			res.Scores["jailbreak"] = score
+	if eng, ok := s.categories["jailbreak"]; ok && eng != nil {
+		d := eng.evaluate(ctx, text)
+		res.Detections.Jailbreak = d
+		res.Scores["jailbreak"] = d.Ensemble.Score
+		if debugML() {
+			redact.Logf("strajaguard debug ml: category=jailbreak request=%s score=%.4f status=%s", reqID, d.Ensemble.Score, d.Ensemble.Status)
 		}
 	}
-	if model, ok := s.models["pii_ner"]; ok {
-		entities, err := model.runNER(text, reqID)
+
+	if s.piiNER != nil {
+		entities, err := s.piiNER.runNER(text, reqID)
 		if err != nil {
-			errs = append(errs, "pii_ner: "+err.Error())
+			// PII behavior stays as-is; treat errors as non-fatal (fail-open) and let regex handle the rest.
+			redact.Logf("strajaguard pii_ner error: %v", err)
 		} else {
 			res.PIIEntities = entities
 			if len(entities) > 0 {
@@ -321,9 +664,7 @@ func (s *Specialists) AnalyzeText(ctx context.Context, text string) (*Specialist
 		}
 	}
 
-	if len(errs) > 0 {
-		return res, errors.New(strings.Join(errs, "; "))
-	}
+	// If neither category is configured, omit the field to keep payloads lean.
 	return res, nil
 }
 
@@ -337,6 +678,133 @@ func (s *Specialists) Warmup(sample string) (time.Duration, error) {
 		return 0, err
 	}
 	return time.Since(start), nil
+}
+
+func normalizeEnsembleMethod(method string) string {
+	m := strings.ToLower(strings.TrimSpace(method))
+	switch m {
+	case "", "any":
+		return "any"
+	case "mean":
+		return "mean"
+	default:
+		// Keep runtime tolerant; treat unknown values as default.
+		return "any"
+	}
+}
+
+func normalizeEnsembleThreshold(v float32) float32 {
+	// Default aligns with the gateway's historical block thresholds.
+	if v <= 0 {
+		return 0.80
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func (e *categoryEngine) evaluate(ctx context.Context, text string) *safety.CategoryDetections {
+	if e == nil {
+		return &safety.CategoryDetections{
+			Ensemble: safety.EnsembleResult{
+				Method:         "any",
+				Threshold:      0,
+				Score:          0,
+				Attack:         false,
+				ValidDetectors: 0,
+				TotalDetectors: 0,
+				Status:         "disabled",
+			},
+		}
+	}
+
+	enabled := e.detectors
+	if len(enabled) == 0 {
+		return &safety.CategoryDetections{
+			Ensemble: safety.EnsembleResult{
+				Method:         e.method,
+				Threshold:      e.threshold,
+				Score:          0,
+				Attack:         false,
+				ValidDetectors: 0,
+				TotalDetectors: 0,
+				Status:         "disabled",
+			},
+		}
+	}
+
+	type item struct {
+		r safety.DetectorResult
+	}
+	out := make([]item, len(enabled))
+	var wg sync.WaitGroup
+	wg.Add(len(enabled))
+
+	for i := range enabled {
+		i := i
+		go func() {
+			defer wg.Done()
+			out[i].r = enabled[i].Evaluate(ctx, text)
+		}()
+	}
+	wg.Wait()
+
+	// Stable ordering (by detector id) for UI/tests.
+	results := make([]safety.DetectorResult, 0, len(out))
+	for _, it := range out {
+		results = append(results, it.r)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].ID < results[j].ID
+	})
+
+	valid := make([]float32, 0, len(results))
+	for _, r := range results {
+		if r.Error != "" || r.Score == nil {
+			continue
+		}
+		valid = append(valid, *r.Score)
+	}
+
+	ens := safety.EnsembleResult{
+		Method:         e.method,
+		Threshold:      e.threshold,
+		Score:          0,
+		Attack:         false,
+		ValidDetectors: len(valid),
+		TotalDetectors: len(results),
+		Status:         "ok",
+	}
+	if len(valid) == 0 {
+		ens.Status = "all_detectors_failed"
+		return &safety.CategoryDetections{
+			Ensemble:  ens,
+			Detectors: results,
+		}
+	}
+
+	switch e.method {
+	case "mean":
+		var sum float32
+		for _, v := range valid {
+			sum += v
+		}
+		ens.Score = sum / float32(len(valid))
+	default: // any
+		max := valid[0]
+		for _, v := range valid[1:] {
+			if v > max {
+				max = v
+			}
+		}
+		ens.Score = max
+	}
+	ens.Attack = ens.Score >= e.threshold
+	return &safety.CategoryDetections{
+		Ensemble:  ens,
+		Detectors: results,
+	}
 }
 
 func (m *specialistModel) runSequence(text string, requestID string) (float32, error) {
