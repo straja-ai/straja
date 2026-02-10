@@ -85,7 +85,7 @@ type SpecialistConfig struct {
 }
 
 type Specialists struct {
-	seqLen int
+	seqLen     int
 	categories map[string]*categoryEngine
 	piiNER     *specialistModel
 }
@@ -123,8 +123,8 @@ type Detector interface {
 }
 
 type categoryEngine struct {
-	category string
-	method   string
+	category  string
+	method    string
 	threshold float32
 	detectors []Detector
 }
@@ -325,9 +325,9 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 
 	_ = legacyUsed
 	return &Specialists{
-		seqLen:      seqLen,
-		categories:  categories,
-		piiNER:      piiNER,
+		seqLen:     seqLen,
+		categories: categories,
+		piiNER:     piiNER,
 	}, source, nil
 }
 
@@ -627,40 +627,68 @@ func (s *Specialists) AnalyzeText(ctx context.Context, text string) (*Specialist
 		return nil, errors.New("specialists engine not initialized")
 	}
 	res := &SpecialistsResult{
-		Scores: map[string]float32{},
+		Scores:     map[string]float32{},
 		Detections: &safety.StrajaGuardDetections{},
 	}
 	reqID := requestIDFromContext(ctx)
 
+	// Run categories + PII in parallel to reduce end-to-end request latency.
+	// Each category engine already runs its detectors concurrently.
+	var wg sync.WaitGroup
+	var pi *safety.CategoryDetections
+	var jb *safety.CategoryDetections
+	var entities []safety.PIIEntity
+
 	if eng, ok := s.categories["prompt_injection"]; ok && eng != nil {
-		d := eng.evaluate(ctx, text)
-		res.Detections.PromptInjection = d
-		res.Scores["prompt_injection"] = d.Ensemble.Score
-		if debugML() {
-			redact.Logf("strajaguard debug ml: category=prompt_injection request=%s score=%.4f status=%s", reqID, d.Ensemble.Score, d.Ensemble.Status)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pi = eng.evaluate(ctx, text)
+		}()
 	}
 	if eng, ok := s.categories["jailbreak"]; ok && eng != nil {
-		d := eng.evaluate(ctx, text)
-		res.Detections.Jailbreak = d
-		res.Scores["jailbreak"] = d.Ensemble.Score
-		if debugML() {
-			redact.Logf("strajaguard debug ml: category=jailbreak request=%s score=%.4f status=%s", reqID, d.Ensemble.Score, d.Ensemble.Status)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			jb = eng.evaluate(ctx, text)
+		}()
+	}
+	if s.piiNER != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ents, err := s.piiNER.runNER(text, reqID)
+			if err != nil {
+				// PII behavior stays as-is; treat errors as non-fatal (fail-open) and let regex handle the rest.
+				redact.Logf("strajaguard pii_ner error: %v", err)
+				return
+			}
+			entities = ents
+		}()
 	}
 
+	wg.Wait()
+
+	if pi != nil {
+		res.Detections.PromptInjection = pi
+		res.Scores["prompt_injection"] = pi.Ensemble.Score
+		if debugML() {
+			redact.Logf("strajaguard debug ml: category=prompt_injection request=%s score=%.4f status=%s", reqID, pi.Ensemble.Score, pi.Ensemble.Status)
+		}
+	}
+	if jb != nil {
+		res.Detections.Jailbreak = jb
+		res.Scores["jailbreak"] = jb.Ensemble.Score
+		if debugML() {
+			redact.Logf("strajaguard debug ml: category=jailbreak request=%s score=%.4f status=%s", reqID, jb.Ensemble.Score, jb.Ensemble.Status)
+		}
+	}
 	if s.piiNER != nil {
-		entities, err := s.piiNER.runNER(text, reqID)
-		if err != nil {
-			// PII behavior stays as-is; treat errors as non-fatal (fail-open) and let regex handle the rest.
-			redact.Logf("strajaguard pii_ner error: %v", err)
+		res.PIIEntities = entities
+		if len(entities) > 0 {
+			res.Scores["contains_personal_data"] = 1.0
 		} else {
-			res.PIIEntities = entities
-			if len(entities) > 0 {
-				res.Scores["contains_personal_data"] = 1.0
-			} else {
-				res.Scores["contains_personal_data"] = 0.0
-			}
+			res.Scores["contains_personal_data"] = 0.0
 		}
 	}
 
@@ -685,8 +713,10 @@ func normalizeEnsembleMethod(method string) string {
 	switch m {
 	case "", "any":
 		return "any"
-	case "mean":
+	case "mean", "avg", "average":
 		return "mean"
+	case "median":
+		return "median"
 	default:
 		// Keep runtime tolerant; treat unknown values as default.
 		return "any"
@@ -791,6 +821,15 @@ func (e *categoryEngine) evaluate(ctx context.Context, text string) *safety.Cate
 			sum += v
 		}
 		ens.Score = sum / float32(len(valid))
+	case "median":
+		vals := append([]float32(nil), valid...)
+		sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+		n := len(vals)
+		if n%2 == 1 {
+			ens.Score = vals[n/2]
+		} else {
+			ens.Score = (vals[n/2-1] + vals[n/2]) / 2
+		}
 	default: // any
 		max := valid[0]
 		for _, v := range valid[1:] {

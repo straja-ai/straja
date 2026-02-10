@@ -167,3 +167,21 @@ func TestEnsembleConcurrency(t *testing.T) {
 	}
 }
 
+func TestEnsembleMedian_TwoDetectorsAveragesMiddle(t *testing.T) {
+	eng := &categoryEngine{
+		category:  "jailbreak",
+		method:    "median",
+		threshold: 0.8,
+		detectors: []Detector{
+			fakeDetector{id: "a", score: f32(0.1)},
+			fakeDetector{id: "b", score: f32(0.9)},
+		},
+	}
+	got := eng.evaluate(context.Background(), "x")
+	if got.Ensemble.Score != 0.5 {
+		t.Fatalf("expected median score 0.5, got %.4f", got.Ensemble.Score)
+	}
+	if got.Ensemble.Attack {
+		t.Fatalf("expected attack=false")
+	}
+}

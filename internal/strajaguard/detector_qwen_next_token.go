@@ -24,14 +24,14 @@ import (
 //   - token_logits[float32]{1,K}
 //   - logsumexp[float32]{1,K}
 type qwenNextTokenDetector struct {
-	id     string
-	kind   string
+	id       string
+	kind     string
 	modelRef string
-	version string
+	version  string
 
-	seqLen int
-	tokenizer Tokenizer
-	promptTemplate string
+	seqLen            int
+	tokenizer         Tokenizer
+	promptTemplate    string
 	jailbreakTokenIDs []int
 	benignTokenIDs    []int
 	maxLen            int
@@ -137,32 +137,32 @@ func loadQwenNextTokenDetector(bundleDir string, defaultSeqLen, intraThr, interT
 	}
 	redact.Logf("strajaguard specialists: loaded detector=%s kind=qwen_next_token model=%s", id, filepath.Base(modelPath))
 	return &qwenNextTokenDetector{
-		id:               id,
-		kind:             "qwen_next_token",
-		modelRef:         modelRef,
-		version:          version,
-		seqLen:           modelSeqLen,
-		tokenizer:        tok,
-		promptTemplate:   promptTemplate,
+		id:                id,
+		kind:              "qwen_next_token",
+		modelRef:          modelRef,
+		version:           version,
+		seqLen:            modelSeqLen,
+		tokenizer:         tok,
+		promptTemplate:    promptTemplate,
 		jailbreakTokenIDs: labels.Jailbreak,
 		benignTokenIDs:    labels.Benign,
 		maxLen:            maxLen,
 		outputName:        outputName,
 		vocabSize:         0,
-		sessions:         sessions,
+		sessions:          sessions,
 	}, nil
 }
 
-func (d *qwenNextTokenDetector) Evaluate(ctx context.Context, normalizedText string) safety.DetectorResult {
+func (d *qwenNextTokenDetector) Evaluate(ctx context.Context, normalizedText string) (out safety.DetectorResult) {
 	start := time.Now()
-	out := safety.DetectorResult{
+	out = safety.DetectorResult{
 		ID:       d.id,
 		Kind:     d.kind,
 		ModelRef: d.modelRef,
 		Version:  d.version,
 	}
 	defer func() {
-		out.LatencyMs = float64(time.Since(start).Microseconds()) / 1000.0
+		out.LatencyMs = float64(time.Since(start)) / float64(time.Millisecond)
 	}()
 
 	if d == nil || d.sessions == nil || d.tokenizer == nil {
@@ -181,12 +181,14 @@ func (d *qwenNextTokenDetector) Evaluate(ctx context.Context, normalizedText str
 	defer func() { d.sessions <- ss }()
 
 	// Build batch=2 inputs: jailbreak row + benign row.
-	jbIDs, jbMask, err := buildLabelInput(d.tokenizer, prompt, d.jailbreakTokenIDs, d.seqLen)
+	// Tokenize prompt once to avoid duplicate work; we only differ in the label suffix tokens.
+	baseIDs, baseMask := d.tokenizer.Encode(prompt, d.seqLen)
+	jbIDs, jbMask, err := buildLabelFromEncoded(baseIDs, baseMask, d.jailbreakTokenIDs)
 	if err != nil {
 		out.Error = redact.String(err.Error())
 		return out
 	}
-	bnIDs, bnMask, err := buildLabelInput(d.tokenizer, prompt, d.benignTokenIDs, d.seqLen)
+	bnIDs, bnMask, err := buildLabelFromEncoded(baseIDs, baseMask, d.benignTokenIDs)
 	if err != nil {
 		out.Error = redact.String(err.Error())
 		return out
@@ -226,35 +228,78 @@ func (d *qwenNextTokenDetector) Evaluate(ctx context.Context, normalizedText str
 	lpJB := scoreRow(tokenLogits[:k], logsumexp[:k], k, len(d.jailbreakTokenIDs))
 	lpBN := scoreRow(tokenLogits[k:2*k], logsumexp[k:2*k], k, len(d.benignTokenIDs))
 	score := probFromLogProbs(lpJB, lpBN)
+	// NOTE: The exported Jailbreak-Detector-2-XL adapter appears to emit higher
+	// likelihood for the token sequence "benign" on jailbreak-y prompts and vice-versa
+	// (empirically observed). We invert here so the returned score consistently means
+	// jailbreak confidence (higher => more jailbreak-like), aligned with other detectors.
+	score = 1 - score
+	if debugML() {
+		previewK := k
+		if previewK > 8 {
+			previewK = 8
+		}
+		reqID := requestIDFromContext(ctx)
+		reductTail := func(v []float32) []float32 {
+			if len(v) > previewK {
+				return v[len(v)-previewK:]
+			}
+			return v
+		}
+		redact.Logf(
+			"strajaguard debug ml: request_id=%s model=%s lp_jb=%.4f lp_bn=%.4f score=%.6f k=%d jb_len=%d bn_len=%d jb_logits=%v jb_lse=%v bn_logits=%v bn_lse=%v",
+			reqID,
+			d.id,
+			lpJB,
+			lpBN,
+			score,
+			k,
+			len(d.jailbreakTokenIDs),
+			len(d.benignTokenIDs),
+			reductTail(tokenLogits[:k]),
+			reductTail(logsumexp[:k]),
+			reductTail(tokenLogits[k:2*k]),
+			reductTail(logsumexp[k:2*k]),
+		)
+	}
 	out.Score = &score
 	return out
 }
 
-func buildLabelInput(tok Tokenizer, prompt string, labelIDs []int, seqLen int) ([]int64, []int64, error) {
-	ids, mask := tok.Encode(prompt, seqLen)
-	if len(ids) != seqLen || len(mask) != seqLen {
-		return nil, nil, fmt.Errorf("tokenizer returned unexpected lengths ids=%d mask=%d seq_len=%d", len(ids), len(mask), seqLen)
+func buildLabelFromEncoded(baseIDs []int64, baseMask []int64, labelIDs []int) ([]int64, []int64, error) {
+	if len(baseIDs) == 0 || len(baseMask) == 0 || len(baseIDs) != len(baseMask) {
+		return nil, nil, fmt.Errorf("unexpected base token lengths ids=%d mask=%d", len(baseIDs), len(baseMask))
 	}
+	seqLen := len(baseIDs)
+	if seqLen <= 0 {
+		return nil, nil, fmt.Errorf("seqLen must be > 0")
+	}
+	if len(labelIDs) == 0 {
+		return nil, nil, fmt.Errorf("labelIDs empty")
+	}
+
+	// Determine how many prompt tokens are "active" (attention_mask != 0).
 	n := 0
-	for _, v := range mask {
+	for _, v := range baseMask {
 		if v != 0 {
 			n++
 		}
 	}
 	padID := int64(0)
-	if n >= 0 && n < len(ids) {
-		padID = ids[n]
+	if n >= 0 && n < len(baseIDs) {
+		padID = baseIDs[n]
 	}
 
+	// Copy the active prompt prefix.
 	prefix := make([]int64, 0, n)
-	for i := 0; i < n && i < len(ids); i++ {
-		prefix = append(prefix, ids[i])
+	for i := 0; i < n && i < len(baseIDs); i++ {
+		prefix = append(prefix, baseIDs[i])
 	}
 	lbl := make([]int64, 0, len(labelIDs))
 	for _, v := range labelIDs {
 		lbl = append(lbl, int64(v))
 	}
 	if len(lbl) >= seqLen {
+		// Keep only the last seqLen label tokens.
 		lbl = lbl[len(lbl)-seqLen:]
 		prefix = nil
 	}
@@ -263,6 +308,7 @@ func buildLabelInput(tok Tokenizer, prompt string, labelIDs []int, seqLen int) (
 		prefix = prefix[len(prefix)-space:]
 	}
 	combined := append(prefix, lbl...)
+
 	outIDs := make([]int64, seqLen)
 	outMask := make([]int64, seqLen)
 	pad := seqLen - len(combined)

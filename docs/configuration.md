@@ -352,7 +352,7 @@ Specialists config supports multi-detector ensembles for request-side:
 
 - `detectors.prompt_injection`: list of detectors
 - `detectors.jailbreak`: list of detectors
-- `ensemble.prompt_injection`: `{ method: any|mean, threshold: float }`
-- `ensemble.jailbreak`: `{ method: any|mean, threshold: float }`
+- `ensemble.prompt_injection`: `{ method: any|mean|median, threshold: float }`
+- `ensemble.jailbreak`: `{ method: any|mean|median, threshold: float }`
 
 PII (`pii_ner`) remains a single specialist under `specialists.pii_ner`.
