@@ -180,29 +180,22 @@ func (d *qwenNextTokenDetector) Evaluate(ctx context.Context, normalizedText str
 	ss := <-d.sessions
 	defer func() { d.sessions <- ss }()
 
-	// Build batch=2 inputs: jailbreak row + benign row.
-	// Tokenize prompt once to avoid duplicate work; we only differ in the label suffix tokens.
+	// Build batch=2 inputs.
+	// IMPORTANT: The exported jailbreak2xl ONNX wrapper already scores BOTH label sequences
+	// (jailbreak vs benign) internally by gathering logits for the label token IDs.
+	// Therefore, the model input should be the SAME prompt context for both rows; we do NOT
+	// append the label tokens to the input.
 	baseIDs, baseMask := d.tokenizer.Encode(prompt, d.seqLen)
-	jbIDs, jbMask, err := buildLabelFromEncoded(baseIDs, baseMask, d.jailbreakTokenIDs)
-	if err != nil {
-		out.Error = redact.String(err.Error())
-		return out
-	}
-	bnIDs, bnMask, err := buildLabelFromEncoded(baseIDs, baseMask, d.benignTokenIDs)
-	if err != nil {
-		out.Error = redact.String(err.Error())
-		return out
-	}
 	inIDs := ss.inputIDs.GetData()
 	inMask := ss.attentionMask.GetData()
 	if len(inIDs) != 2*d.seqLen || len(inMask) != 2*d.seqLen {
 		out.Error = fmt.Sprintf("unexpected input tensor sizes ids=%d mask=%d", len(inIDs), len(inMask))
 		return out
 	}
-	copy(inIDs[:d.seqLen], jbIDs)
-	copy(inMask[:d.seqLen], jbMask)
-	copy(inIDs[d.seqLen:], bnIDs)
-	copy(inMask[d.seqLen:], bnMask)
+	copy(inIDs[:d.seqLen], baseIDs)
+	copy(inMask[:d.seqLen], baseMask)
+	copy(inIDs[d.seqLen:], baseIDs)
+	copy(inMask[d.seqLen:], baseMask)
 
 	if err := ss.session.Run(); err != nil {
 		out.Error = redact.String(sanitizeDetectorError(err.Error(), d.modelRef, d.modelRef))
@@ -228,11 +221,6 @@ func (d *qwenNextTokenDetector) Evaluate(ctx context.Context, normalizedText str
 	lpJB := scoreRow(tokenLogits[:k], logsumexp[:k], k, len(d.jailbreakTokenIDs))
 	lpBN := scoreRow(tokenLogits[k:2*k], logsumexp[k:2*k], k, len(d.benignTokenIDs))
 	score := probFromLogProbs(lpJB, lpBN)
-	// NOTE: The exported Jailbreak-Detector-2-XL adapter appears to emit higher
-	// likelihood for the token sequence "benign" on jailbreak-y prompts and vice-versa
-	// (empirically observed). We invert here so the returned score consistently means
-	// jailbreak confidence (higher => more jailbreak-like), aligned with other detectors.
-	score = 1 - score
 	if debugML() {
 		previewK := k
 		if previewK > 8 {
@@ -286,7 +274,6 @@ func buildLabelFromEncoded(baseIDs []int64, baseMask []int64, labelIDs []int) ([
 	}
 	padID := int64(0)
 	if n >= 0 && n < len(baseIDs) {
-		padID = baseIDs[n]
 	}
 
 	// Copy the active prompt prefix.
@@ -332,10 +319,16 @@ func scoreRow(tokenLogits []float32, logsumexp []float32, k int, labelLen int) f
 		start = 0
 	}
 	lp := float64(0)
+	count := 0
 	for i := start; i < k && i < len(tokenLogits) && i < len(logsumexp); i++ {
 		lp += float64(tokenLogits[i]) - float64(logsumexp[i])
+		count++
 	}
-	return lp
+	if count <= 0 {
+		return 0
+	}
+	// Normalize by label length to avoid bias toward shorter labels.
+	return lp / float64(count)
 }
 
 func probFromLogProbs(lpA, lpB float64) float32 {

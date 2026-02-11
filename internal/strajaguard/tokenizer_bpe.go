@@ -19,15 +19,15 @@ import (
 //
 // It is designed for deterministic, CPU-only inference on the gateway.
 type BPETokenizer struct {
-	vocab        map[string]int64
-	mergeRanks   map[string]int
-	unkID        int64
-	padID        int64
-	special      []string          // sorted by length desc for greedy matching
-	specialIDs   map[string]int64
-	encodeRe     *regexp.Regexp
-	byteEncoder  map[byte]rune
-	cache        map[string][]string
+	vocab       map[string]int64
+	mergeRanks  map[string]int
+	unkID       int64
+	padID       int64
+	special     []string // sorted by length desc for greedy matching
+	specialIDs  map[string]int64
+	encodeRe    *regexp.Regexp
+	byteEncoder map[byte]rune
+	cache       map[string][]string
 }
 
 func (t *BPETokenizer) VocabSize() int {
@@ -59,7 +59,7 @@ func newBPETokenizer(vocab map[string]int64, merges []string, unkID int64, padID
 	// GPT-2 regex used by ByteLevel pre-tokenizer, adapted for Go's regexp engine.
 	// Go does not support lookaheads (e.g. (?!\S)), so we omit the trailing-space-only branch.
 	// This is sufficient for deterministic tokenization for our classifier use case.
-	encodeRe, err := regexp.Compile(`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+`)
+	encodeRe, err := regexp.Compile(`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+`)
 	if err != nil {
 		return nil, err
 	}
@@ -259,10 +259,10 @@ func (t *BPETokenizer) bpe(token string) []string {
 func parseBPETokenizerJSON(data []byte) (*BPETokenizer, error) {
 	var raw struct {
 		Model struct {
-			Type   string            `json:"type"`
-			Vocab  map[string]int64  `json:"vocab"`
-			Merges any               `json:"merges"`
-			UnkID  int64             `json:"unk_id"`
+			Type   string           `json:"type"`
+			Vocab  map[string]int64 `json:"vocab"`
+			Merges any              `json:"merges"`
+			UnkID  int64            `json:"unk_id"`
 		} `json:"model"`
 		AddedTokens []struct {
 			ID      int64  `json:"id"`
