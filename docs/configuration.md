@@ -355,4 +355,18 @@ Specialists config supports multi-detector ensembles for request-side:
 - `ensemble.prompt_injection`: `{ method: any|mean|median, threshold: float }`
 - `ensemble.jailbreak`: `{ method: any|mean|median, threshold: float }`
 
+Per-detector fields:
+
+- `id` (string, required)
+- `enabled` (bool, optional; default `true`)
+- `kind` (string, required; `sequence_classification` or `qwen_next_token`)
+- `model_ref` (string, required; bundle-relative ONNX path)
+- `tokenizer_dir` (string, required; bundle-relative tokenizer directory)
+- `max_tokens` (int, optional)
+- `attack_idx` (int, optional; for binary models where attack class is index `1`)
+- `prompt_template` (string, required for `qwen_next_token`)
+- `label_tokens` (string, required for `qwen_next_token`)
+
+When `enabled: false`, the detector is not loaded into memory, not executed for scoring, and excluded from ensemble aggregation.
+
 PII (`pii_ner`) remains a single specialist under `specialists.pii_ner`.

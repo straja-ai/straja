@@ -1,14 +1,32 @@
 detectors:
   prompt_injection:
-    - id: pi_deberta_v3
+    - id: prompt_injection_deberta_v3
+      enabled: false
       kind: sequence_classification
-      model_ref: prompt_injection/model.onnx
-      tokenizer_dir: prompt_injection/
+      model_ref: prompt_injection_deberta_v3/model.onnx
+      tokenizer_dir: prompt_injection_deberta_v3/
+      max_tokens: 256
+    - id: prompt_injection_vijil
+      enabled: true
+      kind: sequence_classification
+      model_ref: prompt_injection_vijil/model.onnx
+      tokenizer_dir: prompt_injection_vijil/
+      attack_idx: 1
+      max_tokens: 256
   jailbreak:
-    - id: jb_2xl
+    - id: jailbreak_jackhhao
+      enabled: false
+      kind: sequence_classification
+      model_ref: jailbreak_jackhhao/model.onnx
+      tokenizer_dir: jailbreak_jackhhao/
+      attack_idx: 1
+      max_tokens: 256
+    - id: jailbreak2xl
+      enabled: true
       kind: qwen_next_token
       model_ref: jailbreak2xl/model.onnx
       tokenizer_dir: jailbreak2xl/
+      max_tokens: 256
       prompt_template: jailbreak2xl/prompt_template.txt
       label_tokens: jailbreak2xl/label_tokens.json
 ensemble:

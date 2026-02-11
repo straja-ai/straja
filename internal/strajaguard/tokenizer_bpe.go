@@ -25,9 +25,15 @@ type BPETokenizer struct {
 	padID       int64
 	special     []string // sorted by length desc for greedy matching
 	specialIDs  map[string]int64
+	template    []bpeTemplatePiece // optional post-processor template for single sequence
 	encodeRe    *regexp.Regexp
 	byteEncoder map[byte]rune
 	cache       map[string][]string
+}
+
+type bpeTemplatePiece struct {
+	isSequence bool
+	specialID  int64
 }
 
 func (t *BPETokenizer) VocabSize() int {
@@ -98,6 +104,7 @@ func newBPETokenizer(vocab map[string]int64, merges []string, unkID int64, padID
 		padID:       padID,
 		special:     special,
 		specialIDs:  specialIDs,
+		template:    nil,
 		encodeRe:    encodeRe,
 		byteEncoder: bytesToUnicode(),
 		cache:       make(map[string][]string),
@@ -135,6 +142,9 @@ func (t *BPETokenizer) Encode(text string, seqLen int) ([]int64, []int64) {
 		}
 	}
 
+	// Apply single-sequence template processing (e.g. [CLS] A [SEP]) when configured.
+	ids = t.applyTemplate(ids)
+
 	if len(ids) > seqLen {
 		ids = ids[:seqLen]
 	}
@@ -150,6 +160,21 @@ func (t *BPETokenizer) Encode(text string, seqLen int) ([]int64, []int64) {
 		}
 	}
 	return outIDs, attn
+}
+
+func (t *BPETokenizer) applyTemplate(ids []int64) []int64 {
+	if len(t.template) == 0 {
+		return ids
+	}
+	out := make([]int64, 0, len(ids)+len(t.template))
+	for _, p := range t.template {
+		if p.isSequence {
+			out = append(out, ids...)
+			continue
+		}
+		out = append(out, p.specialID)
+	}
+	return out
 }
 
 func (t *BPETokenizer) splitSpecial(s string) []string {
@@ -281,7 +306,9 @@ func parseBPETokenizerJSON(data []byte) (*BPETokenizer, error) {
 			Special bool   `json:"special"`
 		} `json:"added_tokens"`
 		PostProcessor struct {
-			SpecialTokens map[string]specialTokenMeta `json:"special_tokens"`
+			Type          string                        `json:"type"`
+			Single        []map[string]specialTokenMeta `json:"single"`
+			SpecialTokens map[string]specialTokenMeta   `json:"special_tokens"`
 		} `json:"post_processor"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -311,7 +338,39 @@ func parseBPETokenizerJSON(data []byte) (*BPETokenizer, error) {
 	if padID < 0 {
 		padID = pickSpecialID(raw.Model.Vocab, raw.PostProcessor.SpecialTokens, "[PAD]")
 	}
-	return newBPETokenizer(raw.Model.Vocab, merges, raw.Model.UnkID, padID, specialIDs)
+	tok, err := newBPETokenizer(raw.Model.Vocab, merges, raw.Model.UnkID, padID, specialIDs)
+	if err != nil {
+		return nil, err
+	}
+	tok.template = parseBPETemplateSingle(raw.PostProcessor.Type, raw.PostProcessor.Single, specialIDs)
+	return tok, nil
+}
+
+func parseBPETemplateSingle(ppType string, single []map[string]specialTokenMeta, specialIDs map[string]int64) []bpeTemplatePiece {
+	if strings.ToLower(strings.TrimSpace(ppType)) != "templateprocessing" || len(single) == 0 {
+		return nil
+	}
+	out := make([]bpeTemplatePiece, 0, len(single))
+	for _, item := range single {
+		if seq, ok := item["Sequence"]; ok {
+			if strings.EqualFold(strings.TrimSpace(seq.ID), "A") {
+				out = append(out, bpeTemplatePiece{isSequence: true})
+			}
+			continue
+		}
+		if sp, ok := item["SpecialToken"]; ok {
+			// Prefer explicit ids field from tokenizer.json metadata.
+			if len(sp.IDs) > 0 {
+				out = append(out, bpeTemplatePiece{specialID: sp.IDs[0]})
+				continue
+			}
+			// Fallback via special token key lookup.
+			if id, ok := specialIDs[sp.ID]; ok {
+				out = append(out, bpeTemplatePiece{specialID: id})
+			}
+		}
+	}
+	return out
 }
 
 func parseBPETokenizerMerges(raw any) []string {

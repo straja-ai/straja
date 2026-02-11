@@ -65,7 +65,7 @@ func TestBasicPolicy_SpecialistsHits(t *testing.T) {
 						Status:         "ok",
 					},
 					Detectors: []safety.DetectorResult{
-						{ID: "pi_deberta_v3", Kind: "sequence_classification", ModelRef: "prompt_injection/model.onnx", Score: f32(0.95), LatencyMs: 10},
+						{ID: "prompt_injection_deberta_v3", Kind: "sequence_classification", ModelRef: "prompt_injection_deberta_v3/model.onnx", Score: f32(0.95), LatencyMs: 10},
 					},
 				},
 				Jailbreak: &safety.CategoryDetections{
@@ -79,7 +79,7 @@ func TestBasicPolicy_SpecialistsHits(t *testing.T) {
 						Status:         "ok",
 					},
 					Detectors: []safety.DetectorResult{
-						{ID: "jb_2xl", Kind: "qwen_next_token", ModelRef: "jailbreak2xl/model.onnx", Score: f32(0.92), LatencyMs: 30},
+						{ID: "jailbreak2xl", Kind: "qwen_next_token", ModelRef: "jailbreak2xl/model.onnx", Score: f32(0.92), LatencyMs: 30},
 					},
 				},
 			},

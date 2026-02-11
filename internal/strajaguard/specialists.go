@@ -107,10 +107,18 @@ type DetectorSpec struct {
 	TokenizerDir string `yaml:"tokenizer_dir"`
 	MaxTokens    int    `yaml:"max_tokens"`
 	Enabled      *bool  `yaml:"enabled"`
+	AttackIdx    *int   `yaml:"attack_idx"`
 
 	// qwen_next_token specific assets (bundle-relative paths).
 	PromptTemplate string `yaml:"prompt_template"`
 	LabelTokens    string `yaml:"label_tokens"`
+}
+
+func detectorEnabled(spec DetectorSpec) bool {
+	if spec.Enabled == nil {
+		return true
+	}
+	return *spec.Enabled
 }
 
 type EnsembleSpec struct {
@@ -262,7 +270,8 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 		}
 		seen := map[string]bool{}
 		for _, spec := range specs {
-			if spec.Enabled != nil && !*spec.Enabled {
+			if !detectorEnabled(spec) {
+				redact.Logf("strajaguard specialists: category=%s detector=%s enabled=false (skipping load)", category, strings.TrimSpace(spec.ID))
 				continue
 			}
 			if strings.TrimSpace(spec.ID) == "" {
@@ -503,6 +512,17 @@ func loadSequenceDetectorModel(bundleDir string, defaultSeqLen, intraThr, interT
 		redact.Logf("strajaguard debug ml: model=%s output_name=%s output_dims=%v", id, outputName, outputDims)
 	}
 	attackIdx, attackLabel := pickAttackClass(strings.TrimSpace(strings.ToLower(category)), meta, numLabels)
+	if spec.AttackIdx != nil {
+		idx := *spec.AttackIdx
+		if idx >= 0 && idx < numLabels {
+			attackIdx = idx
+			if lbl, ok := meta.ID2Label[idx]; ok {
+				attackLabel = lbl
+			} else {
+				attackLabel = fmt.Sprintf("%d", idx)
+			}
+		}
+	}
 	if debugML() {
 		redact.Logf("strajaguard debug ml: model=%s attack_class_index=%d attack_label=%s", id, attackIdx, attackLabel)
 	}
@@ -1078,18 +1098,18 @@ func loadSpecialistMeta(dir string) (specialistMeta, error) {
 	configPath := filepath.Join(dir, "config.json")
 	if data, err := os.ReadFile(configPath); err == nil {
 		var cfg struct {
-			NumLabels     int               `json:"num_labels"`
-			ID2Label      map[string]string `json:"id2label"`
-			Label2ID      map[string]int    `json:"label2id"`
-			TypeVocabSize int               `json:"type_vocab_size"`
+			NumLabels     int            `json:"num_labels"`
+			ID2Label      map[string]any `json:"id2label"`
+			Label2ID      map[string]int `json:"label2id"`
+			TypeVocabSize int            `json:"type_vocab_size"`
 		}
 		if err := json.Unmarshal(data, &cfg); err != nil {
 			return meta, err
 		}
 		meta.NumLabels = cfg.NumLabels
-		meta.ID2Label = labelsMapFromID(cfg.ID2Label)
+		meta.ID2Label = labelsMapFromIDAny(cfg.ID2Label)
 		meta.Label2ID = cfg.Label2ID
-		meta.Labels = labelsFromIDMap(cfg.ID2Label)
+		meta.Labels = labelsFromIDMapAny(cfg.ID2Label)
 		meta.RequiresTokenType = cfg.TypeVocabSize > 0
 	}
 
@@ -1149,6 +1169,37 @@ func labelsFromIDMap(id2label map[string]string) []string {
 	return labels
 }
 
+func labelsFromIDMapAny(id2label map[string]any) []string {
+	if len(id2label) == 0 {
+		return nil
+	}
+	type entry struct {
+		id    int
+		label string
+	}
+	entries := make([]entry, 0, len(id2label))
+	maxID := -1
+	for k, raw := range id2label {
+		id, err := strconvAtoi(k)
+		if err != nil {
+			continue
+		}
+		lbl := strings.TrimSpace(fmt.Sprint(raw))
+		entries = append(entries, entry{id: id, label: lbl})
+		if id > maxID {
+			maxID = id
+		}
+	}
+	if maxID < 0 || len(entries) == 0 {
+		return nil
+	}
+	labels := make([]string, maxID+1)
+	for _, e := range entries {
+		labels[e.id] = e.label
+	}
+	return labels
+}
+
 func labelsFromIDMapReverse(id2label map[int]string) []string {
 	if len(id2label) == 0 {
 		return nil
@@ -1180,6 +1231,21 @@ func labelsMapFromID(id2label map[string]string) map[int]string {
 			continue
 		}
 		out[id] = v
+	}
+	return out
+}
+
+func labelsMapFromIDAny(id2label map[string]any) map[int]string {
+	if len(id2label) == 0 {
+		return nil
+	}
+	out := make(map[int]string, len(id2label))
+	for k, raw := range id2label {
+		id, err := strconvAtoi(k)
+		if err != nil {
+			continue
+		}
+		out[id] = strings.TrimSpace(fmt.Sprint(raw))
 	}
 	return out
 }

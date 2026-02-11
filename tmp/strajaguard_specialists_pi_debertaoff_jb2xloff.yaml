@@ -1,7 +1,7 @@
 detectors:
   prompt_injection:
     - id: prompt_injection_deberta_v3
-      enabled: true
+      enabled: false
       kind: sequence_classification
       model_ref: prompt_injection_deberta_v3/model.onnx
       tokenizer_dir: prompt_injection_deberta_v3/
@@ -22,7 +22,7 @@ detectors:
       attack_idx: 1
       max_tokens: 256
     - id: jailbreak2xl
-      enabled: true
+      enabled: false
       kind: qwen_next_token
       model_ref: jailbreak2xl/model.onnx
       tokenizer_dir: jailbreak2xl/

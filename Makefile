@@ -20,8 +20,23 @@ MOCK_GATEWAY_PID := /tmp/straja_mock_gateway.pid
 STRAJAGUARD_ONNX ?= intel/strajaguard_v1/strajaguard_v1.onnx
 BENCH_CONFIG ?= examples/straja.mock.yaml
 DOCKER_IMAGE ?= straja:local
+EVAL_BUNDLE ?= ../straja-intel-guard/artifacts/strajaguard_v1_specialists
+EVAL_CONFIG ?= configs/strajaguard_specialists.yaml
+EVAL_PI_INPUT ?= data/subset60_pi.jsonl
+EVAL_JB_INPUT ?= data/subset60_jb.jsonl
+EVAL_SUBSET_PI ?= data/subset60_pi.jsonl
+EVAL_SUBSET_JB ?= data/subset60_jb.jsonl
+EVAL_THRESHOLD ?= 0.8
+EVAL_SEQ_LEN ?= 256
+EVAL_MAX_SESSIONS ?= 1
+EVAL_INTRA ?= 4
+EVAL_INTER ?= 1
+EVAL_SHOW_TEXT ?= false
+EVAL_PROGRESS_EVERY ?= 25
+EVAL_OUTPUT ?= /tmp/straja_eval_detectors.jsonl
+EVAL_METRICS ?= /tmp/straja_eval_detectors.metrics.log
 
-.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run activation-receiver
+.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run activation-receiver eval eval_detectors
 
 all: build
 
@@ -143,6 +158,53 @@ bench-strajaguard: build
 	@go build -ldflags "$(LDFLAGS)" -o bin/straja-bench ./cmd/straja-bench
 	@echo ">> Running StrajaGuard benchmark ($(BENCH_CONFIG))..."
 	@MOCK_DELAY_MS=0 STRAJA_GUARD_MAX_SESSIONS=2 STRAJA_GUARD_INTRA_THREADS=4 STRAJA_GUARD_INTER_THREADS=1 ./bin/straja-bench --config=$(BENCH_CONFIG) --n=200
+
+## Evaluate specialist detectors on prompt injection + jailbreak JSONL datasets
+## Example:
+##   make eval_detectors EVAL_CONFIG=tmp/strajaguard_specialists_jb2xl_only.yaml
+## make eval is intentionally fixed to subset60 inputs.
+eval:
+	@$(MAKE) eval_detectors EVAL_PI_INPUT="$(EVAL_SUBSET_PI)" EVAL_JB_INPUT="$(EVAL_SUBSET_JB)"
+
+eval_detectors:
+	@echo ">> Running detector eval..."
+	@test -d "$(EVAL_BUNDLE)" || (echo "missing bundle dir: $(EVAL_BUNDLE)" && exit 1)
+	@test -f "$(EVAL_PI_INPUT)" || (echo "missing prompt_injection input: $(EVAL_PI_INPUT)" && exit 1)
+	@test -f "$(EVAL_JB_INPUT)" || (echo "missing jailbreak input: $(EVAL_JB_INPUT)" && exit 1)
+	@if [ -n "$(EVAL_CONFIG)" ] && [ ! -f "$(EVAL_CONFIG)" ]; then \
+		echo "missing specialists config: $(EVAL_CONFIG)"; \
+		exit 1; \
+	fi
+	@errpipe=/tmp/straja_eval_detectors_err.$$; \
+	rm -f "$$errpipe"; \
+	mkfifo "$$errpipe"; \
+	tee "$(EVAL_METRICS)" < "$$errpipe" | awk '/^PROGRESS / { print > "/dev/stderr"; fflush("/dev/stderr") }' & \
+	teepid=$$!; \
+	go run ./cmd/straja-eval \
+		-bundle "$(EVAL_BUNDLE)" \
+		-specialists-config "$(EVAL_CONFIG)" \
+		-seq-len $(EVAL_SEQ_LEN) \
+		-threshold $(EVAL_THRESHOLD) \
+		-max-sessions $(EVAL_MAX_SESSIONS) \
+		-intra $(EVAL_INTRA) \
+		-inter $(EVAL_INTER) \
+		-progress-every $(EVAL_PROGRESS_EVERY) \
+		-show-text=$(EVAL_SHOW_TEXT) \
+		"$(EVAL_PI_INPUT)" "$(EVAL_JB_INPUT)" \
+		> "$(EVAL_OUTPUT)" 2> "$$errpipe"; \
+	status=$$?; \
+	wait $$teepid; \
+	rm -f "$$errpipe"; \
+	if [ $$status -ne 0 ]; then \
+		echo ">> Eval failed. Last log lines:" >&2; \
+		tail -n 60 "$(EVAL_METRICS)" >&2 || true; \
+		exit $$status; \
+	fi; \
+	exit $$status
+	@echo ">> Eval JSONL: $(EVAL_OUTPUT)"
+	@echo ">> Eval metrics: $(EVAL_METRICS)"
+	@echo ">> Metrics summary:"
+	@bash ./scripts/format_eval_metrics.sh "$(EVAL_METRICS)"
 
 ## Build Docker image (multi-stage, distroless runtime)
 docker-build:

@@ -22,6 +22,7 @@ type OffsetTokenizer interface {
 }
 
 type specialTokenMeta struct {
+	ID  string  `json:"id"`
 	IDs []int64 `json:"ids"`
 }
 

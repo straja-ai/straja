@@ -26,7 +26,7 @@ func bundleDirLooksValid(dir, family string) bool {
 
 	switch normalizeBundleFamily(family) {
 	case "strajaguard_v1_specialists":
-		for _, name := range []string{"prompt_injection", "jailbreak2xl", "pii_ner"} {
+		for _, name := range []string{"prompt_injection_deberta_v3", "prompt_injection_vijil", "jailbreak_jackhhao", "jailbreak2xl", "pii_ner"} {
 			if !specialistDirLooksValid(filepath.Join(dir, name)) {
 				return false
 			}

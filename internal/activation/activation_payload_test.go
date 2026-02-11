@@ -21,13 +21,13 @@ func TestActivationPayload_IncludesDetectorDetails_Additive(t *testing.T) {
 			PromptInjection: &safety.CategoryDetections{
 				Ensemble: safety.EnsembleResult{Method: "any", Threshold: 0.8, Score: 0.5, Attack: false, ValidDetectors: 1, TotalDetectors: 1, Status: "ok"},
 				Detectors: []safety.DetectorResult{
-					{ID: "pi_deberta_v3", Kind: "sequence_classification", ModelRef: "prompt_injection/model.onnx", Score: f32(0.5), LatencyMs: 12},
+					{ID: "prompt_injection_deberta_v3", Kind: "sequence_classification", ModelRef: "prompt_injection_deberta_v3/model.onnx", Score: f32(0.5), LatencyMs: 12},
 				},
 			},
 			Jailbreak: &safety.CategoryDetections{
 				Ensemble: safety.EnsembleResult{Method: "any", Threshold: 0.8, Score: 0.7, Attack: false, ValidDetectors: 1, TotalDetectors: 1, Status: "ok"},
 				Detectors: []safety.DetectorResult{
-					{ID: "jb_2xl", Kind: "qwen_next_token", ModelRef: "jailbreak2xl/model.onnx", Score: f32(0.7), LatencyMs: 30},
+					{ID: "jailbreak2xl", Kind: "qwen_next_token", ModelRef: "jailbreak2xl/model.onnx", Score: f32(0.7), LatencyMs: 30},
 				},
 			},
 		},
