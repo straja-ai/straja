@@ -230,22 +230,33 @@ func (t *BPETokenizer) bpe(token string) []string {
 
 	for {
 		bestRank := int(^uint(0) >> 1)
-		bestIdx := -1
+		bestA := ""
+		bestB := ""
 		for i := 0; i < len(syms)-1; i++ {
 			key := syms[i] + "\x00" + syms[i+1]
 			if rank, ok := t.mergeRanks[key]; ok && rank < bestRank {
 				bestRank = rank
-				bestIdx = i
+				bestA = syms[i]
+				bestB = syms[i+1]
 			}
 		}
-		if bestIdx < 0 {
+		if bestA == "" {
 			break
 		}
-		merged := syms[bestIdx] + syms[bestIdx+1]
-		next := make([]string, 0, len(syms)-1)
-		next = append(next, syms[:bestIdx]...)
-		next = append(next, merged)
-		next = append(next, syms[bestIdx+2:]...)
+		// Merge all occurrences of the selected pair in this pass, matching HF/GPT BPE behavior.
+		next := make([]string, 0, len(syms))
+		for i := 0; i < len(syms); {
+			if i < len(syms)-1 && syms[i] == bestA && syms[i+1] == bestB {
+				next = append(next, bestA+bestB)
+				i += 2
+				continue
+			}
+			next = append(next, syms[i])
+			i++
+		}
+		if len(next) == len(syms) {
+			break
+		}
 		syms = next
 		if len(syms) <= 1 {
 			break
@@ -356,31 +367,33 @@ func parseBPETokenizerMerges(raw any) []string {
 func bytesToUnicode() map[byte]rune {
 	// Matches the GPT-2 byte-level BPE "bytes_to_unicode" mapping.
 	// This is widely used across byte-level tokenizers and is deterministic.
-	chars := make([]int, 0, 256)
+	bs := make([]int, 0, 256)
 	for i := int('!'); i <= int('~'); i++ {
-		chars = append(chars, i)
+		bs = append(bs, i)
 	}
 	for i := int(0xA1); i <= int(0xAC); i++ {
-		chars = append(chars, i)
+		bs = append(bs, i)
 	}
 	for i := int(0xAE); i <= int(0xFF); i++ {
-		chars = append(chars, i)
+		bs = append(bs, i)
 	}
-	seen := make(map[int]bool, len(chars))
-	for _, c := range chars {
-		seen[c] = true
+	cs := append([]int(nil), bs...)
+	seen := make(map[int]bool, len(bs))
+	for _, b := range bs {
+		seen[b] = true
 	}
 	n := 0
 	for b := 0; b < 256; b++ {
 		if seen[b] {
 			continue
 		}
-		chars = append(chars, 256+n)
+		bs = append(bs, b)
+		cs = append(cs, 256+n)
 		n++
 	}
 	out := make(map[byte]rune, 256)
-	for b := 0; b < 256; b++ {
-		out[byte(b)] = rune(chars[b])
+	for i := 0; i < len(bs); i++ {
+		out[byte(bs[i])] = rune(cs[i])
 	}
 	return out
 }

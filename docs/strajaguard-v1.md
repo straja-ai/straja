@@ -45,10 +45,9 @@ A bundle directory is considered valid when these files exist (`internal/strajag
 
 ### `strajaguard_v1_specialists`
 
-A specialists bundle contains four model subdirectories:
+A specialists bundle contains three model subdirectories:
 
 - `prompt_injection/` (sequence classification)
-- `jailbreak/` (sequence classification)
 - `jailbreak2xl/` (Qwen next-token binary classifier)
 - `pii_ner/` (token classification / NER)
 
@@ -61,7 +60,7 @@ Each specialist directory must include:
 The specialists definitions are loaded from an embedded default config (built into the gateway binary). You can override it with `strajaguard.specialists.config_path` if you want to customize detectors and ensemble aggregation for:
 
 - `prompt_injection` (single detector by default)
-- `jailbreak` (two detectors by default, aggregated via an ensemble)
+- `jailbreak` (single detector by default: `jb_2xl`)
 
 PII stays unchanged (still `pii_ner` token classification).
 

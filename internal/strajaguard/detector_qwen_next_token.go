@@ -180,22 +180,29 @@ func (d *qwenNextTokenDetector) Evaluate(ctx context.Context, normalizedText str
 	ss := <-d.sessions
 	defer func() { d.sessions <- ss }()
 
-	// Build batch=2 inputs.
-	// IMPORTANT: The exported jailbreak2xl ONNX wrapper already scores BOTH label sequences
-	// (jailbreak vs benign) internally by gathering logits for the label token IDs.
-	// Therefore, the model input should be the SAME prompt context for both rows; we do NOT
-	// append the label tokens to the input.
+	// Build batch=2 inputs with label-appended contexts so multi-token label scores are
+	// teacher-forced per row (jailbreak row and benign row can diverge after token 1).
 	baseIDs, baseMask := d.tokenizer.Encode(prompt, d.seqLen)
+	jbIDs, jbMask, err := buildLabelFromEncoded(baseIDs, baseMask, d.jailbreakTokenIDs)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	bnIDs, bnMask, err := buildLabelFromEncoded(baseIDs, baseMask, d.benignTokenIDs)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
 	inIDs := ss.inputIDs.GetData()
 	inMask := ss.attentionMask.GetData()
 	if len(inIDs) != 2*d.seqLen || len(inMask) != 2*d.seqLen {
 		out.Error = fmt.Sprintf("unexpected input tensor sizes ids=%d mask=%d", len(inIDs), len(inMask))
 		return out
 	}
-	copy(inIDs[:d.seqLen], baseIDs)
-	copy(inMask[:d.seqLen], baseMask)
-	copy(inIDs[d.seqLen:], baseIDs)
-	copy(inMask[d.seqLen:], baseMask)
+	copy(inIDs[:d.seqLen], jbIDs)
+	copy(inMask[:d.seqLen], jbMask)
+	copy(inIDs[d.seqLen:], bnIDs)
+	copy(inMask[d.seqLen:], bnMask)
 
 	if err := ss.session.Run(); err != nil {
 		out.Error = redact.String(sanitizeDetectorError(err.Error(), d.modelRef, d.modelRef))

@@ -5,10 +5,6 @@ detectors:
       model_ref: prompt_injection/model.onnx
       tokenizer_dir: prompt_injection/
   jailbreak:
-    - id: jb_v1
-      kind: sequence_classification
-      model_ref: jailbreak/model.onnx
-      tokenizer_dir: jailbreak/
     - id: jb_2xl
       kind: qwen_next_token
       model_ref: jailbreak2xl/model.onnx

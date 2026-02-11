@@ -43,7 +43,7 @@ func TestTokenizer_Qwen_Parity_HowAreYou(t *testing.T) {
 			active++
 		}
 	}
-	got := ids
+	got := ids[:active]
 
 	// HF AutoTokenizer (Qwen/Qwen2.5-0.5B-Instruct) ids for prompt_template.txt with input "how are you?"
 	want := []int64{
@@ -52,7 +52,7 @@ func TestTokenizer_Qwen_Parity_HowAreYou(t *testing.T) {
 	}
 
 	if len(got) != len(want) {
-		t.Fatalf("active token count mismatch: got=%d want=%d", len(got), len(want))
+		t.Fatalf("active token count mismatch: got=%d want=%d got_prefix=%v", len(got), len(want), got[:min(len(got), 40)])
 	}
 	for i := range want {
 		if got[i] != want[i] {

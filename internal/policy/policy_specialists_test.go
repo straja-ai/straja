@@ -74,12 +74,11 @@ func TestBasicPolicy_SpecialistsHits(t *testing.T) {
 						Threshold:      0.8,
 						Score:          0.92,
 						Attack:         true,
-						ValidDetectors: 2,
-						TotalDetectors: 2,
+						ValidDetectors: 1,
+						TotalDetectors: 1,
 						Status:         "ok",
 					},
 					Detectors: []safety.DetectorResult{
-						{ID: "jb_v1", Kind: "sequence_classification", ModelRef: "jailbreak/model.onnx", Score: f32(0.9), LatencyMs: 12},
 						{ID: "jb_2xl", Kind: "qwen_next_token", ModelRef: "jailbreak2xl/model.onnx", Score: f32(0.92), LatencyMs: 30},
 					},
 				},
@@ -131,7 +130,7 @@ func TestBasicPolicy_SpecialistsHits(t *testing.T) {
 	if req.StrajaGuardDetections == nil {
 		t.Fatalf("expected StrajaGuardDetections to be populated")
 	}
-	if req.StrajaGuardDetections.Jailbreak == nil || len(req.StrajaGuardDetections.Jailbreak.Detectors) != 2 {
+	if req.StrajaGuardDetections.Jailbreak == nil || len(req.StrajaGuardDetections.Jailbreak.Detectors) != 1 {
 		t.Fatalf("expected jailbreak detector details to be present, got %+v", req.StrajaGuardDetections.Jailbreak)
 	}
 	if req.StrajaGuardDetections.PromptInjection == nil || len(req.StrajaGuardDetections.PromptInjection.Detectors) != 1 {

@@ -18,8 +18,3 @@ ensemble:
   jailbreak:
     method: any
     threshold: 0.8
-specialists:
-  pii_ner:
-    kind: token_classification
-    onnx: pii_ner/model.onnx
-    tokenizer_dir: pii_ner/

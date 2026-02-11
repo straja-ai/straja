@@ -49,8 +49,8 @@ func TestLoadSpecialistsConfig(t *testing.T) {
 	if len(cfg.Detectors.PromptInjection) != 1 {
 		t.Fatalf("expected 1 prompt_injection detector, got %d", len(cfg.Detectors.PromptInjection))
 	}
-	if len(cfg.Detectors.Jailbreak) != 2 {
-		t.Fatalf("expected 2 jailbreak detectors, got %d", len(cfg.Detectors.Jailbreak))
+	if len(cfg.Detectors.Jailbreak) != 1 {
+		t.Fatalf("expected 1 jailbreak detector, got %d", len(cfg.Detectors.Jailbreak))
 	}
 	if _, ok := cfg.Specialists["pii_ner"]; !ok {
 		t.Fatalf("missing pii_ner specialist")
@@ -72,8 +72,8 @@ func TestLoadSpecialistsConfigFallbackEmbedded(t *testing.T) {
 	if len(cfg.Detectors.PromptInjection) != 1 {
 		t.Fatalf("expected 1 prompt_injection detector, got %d", len(cfg.Detectors.PromptInjection))
 	}
-	if len(cfg.Detectors.Jailbreak) != 2 {
-		t.Fatalf("expected 2 jailbreak detectors, got %d", len(cfg.Detectors.Jailbreak))
+	if len(cfg.Detectors.Jailbreak) != 1 {
+		t.Fatalf("expected 1 jailbreak detector, got %d", len(cfg.Detectors.Jailbreak))
 	}
 }
 
@@ -100,8 +100,8 @@ func TestLoadSpecialistsConfigOverrideFile(t *testing.T) {
 	if len(cfg.Detectors.PromptInjection) != 1 {
 		t.Fatalf("expected 1 prompt_injection detector, got %d", len(cfg.Detectors.PromptInjection))
 	}
-	if len(cfg.Detectors.Jailbreak) != 2 {
-		t.Fatalf("expected 2 jailbreak detectors, got %d", len(cfg.Detectors.Jailbreak))
+	if len(cfg.Detectors.Jailbreak) != 1 {
+		t.Fatalf("expected 1 jailbreak detector, got %d", len(cfg.Detectors.Jailbreak))
 	}
 }
 

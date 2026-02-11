@@ -25,9 +25,8 @@ func TestActivationPayload_IncludesDetectorDetails_Additive(t *testing.T) {
 				},
 			},
 			Jailbreak: &safety.CategoryDetections{
-				Ensemble: safety.EnsembleResult{Method: "any", Threshold: 0.8, Score: 0.7, Attack: false, ValidDetectors: 2, TotalDetectors: 2, Status: "ok"},
+				Ensemble: safety.EnsembleResult{Method: "any", Threshold: 0.8, Score: 0.7, Attack: false, ValidDetectors: 1, TotalDetectors: 1, Status: "ok"},
 				Detectors: []safety.DetectorResult{
-					{ID: "jb_v1", Kind: "sequence_classification", ModelRef: "jailbreak/model.onnx", Score: f32(0.6), LatencyMs: 10},
 					{ID: "jb_2xl", Kind: "qwen_next_token", ModelRef: "jailbreak2xl/model.onnx", Score: f32(0.7), LatencyMs: 30},
 				},
 			},
@@ -68,4 +67,3 @@ func TestActivationPayload_IncludesDetectorDetails_Additive(t *testing.T) {
 }
 
 func f32(v float32) *float32 { return &v }
-
