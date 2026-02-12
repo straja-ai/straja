@@ -20,6 +20,7 @@ import (
 // It is designed for deterministic, CPU-only inference on the gateway.
 type BPETokenizer struct {
 	vocab       map[string]int64
+	idToToken   map[int64]string
 	mergeRanks  map[string]int
 	unkID       int64
 	padID       int64
@@ -28,6 +29,7 @@ type BPETokenizer struct {
 	template    []bpeTemplatePiece // optional post-processor template for single sequence
 	encodeRe    *regexp.Regexp
 	byteEncoder map[byte]rune
+	byteDecoder map[rune]byte
 	cache       map[string][]string
 }
 
@@ -65,7 +67,7 @@ func newBPETokenizer(vocab map[string]int64, merges []string, unkID int64, padID
 	// GPT-2 regex used by ByteLevel pre-tokenizer, adapted for Go's regexp engine.
 	// Go does not support lookaheads (e.g. (?!\S)), so we omit the trailing-space-only branch.
 	// This is sufficient for deterministic tokenization for our classifier use case.
-	encodeRe, err := regexp.Compile(`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+`)
+	encodeRe, err := regexp.Compile(`(?i:'s|'t|'re|'ve|'m|'ll|'d)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+`)
 	if err != nil {
 		return nil, err
 	}
@@ -97,8 +99,19 @@ func newBPETokenizer(vocab map[string]int64, merges []string, unkID int64, padID
 		}
 	}
 
+	idToToken := make(map[int64]string, len(vocab))
+	for tok, id := range vocab {
+		idToToken[id] = tok
+	}
+	byteEncoder := bytesToUnicode()
+	byteDecoder := make(map[rune]byte, len(byteEncoder))
+	for b, r := range byteEncoder {
+		byteDecoder[r] = b
+	}
+
 	return &BPETokenizer{
 		vocab:       vocab,
+		idToToken:   idToToken,
 		mergeRanks:  mergeRanks,
 		unkID:       unkID,
 		padID:       padID,
@@ -106,7 +119,8 @@ func newBPETokenizer(vocab map[string]int64, merges []string, unkID int64, padID
 		specialIDs:  specialIDs,
 		template:    nil,
 		encodeRe:    encodeRe,
-		byteEncoder: bytesToUnicode(),
+		byteEncoder: byteEncoder,
+		byteDecoder: byteDecoder,
 		cache:       make(map[string][]string),
 	}, nil
 }
@@ -292,6 +306,43 @@ func (t *BPETokenizer) bpe(token string) []string {
 	return syms
 }
 
+func (t *BPETokenizer) DecodeIDs(ids []int64) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	specialByID := map[int64]bool{}
+	for _, id := range t.specialIDs {
+		specialByID[id] = true
+	}
+
+	var encoded strings.Builder
+	for _, id := range ids {
+		if specialByID[id] || id == t.padID {
+			continue
+		}
+		tok, ok := t.idToToken[id]
+		if !ok || tok == "" {
+			continue
+		}
+		encoded.WriteString(tok)
+	}
+
+	src := encoded.String()
+	if src == "" {
+		return ""
+	}
+
+	out := make([]byte, 0, len(src))
+	for _, r := range src {
+		if b, ok := t.byteDecoder[r]; ok {
+			out = append(out, b)
+			continue
+		}
+		out = append(out, []byte(string(r))...)
+	}
+	return string(out)
+}
+
 func parseBPETokenizerJSON(data []byte) (*BPETokenizer, error) {
 	var raw struct {
 		Model struct {
@@ -300,6 +351,10 @@ func parseBPETokenizerJSON(data []byte) (*BPETokenizer, error) {
 			Merges any              `json:"merges"`
 			UnkID  int64            `json:"unk_id"`
 		} `json:"model"`
+		Padding *struct {
+			PadID    int64  `json:"pad_id"`
+			PadToken string `json:"pad_token"`
+		} `json:"padding"`
 		AddedTokens []struct {
 			ID      int64  `json:"id"`
 			Content string `json:"content"`
@@ -334,11 +389,35 @@ func parseBPETokenizerJSON(data []byte) (*BPETokenizer, error) {
 		// Treat all added tokens as special for our purposes; it prevents byte-level splitting.
 		specialIDs[at.Content] = at.ID
 	}
-	padID := pickSpecialID(raw.Model.Vocab, raw.PostProcessor.SpecialTokens, "<|pad|>")
+	padID := int64(-1)
+	if raw.Padding != nil && strings.TrimSpace(raw.Padding.PadToken) != "" {
+		// HuggingFace tokenizers.json can carry explicit padding configuration.
+		padID = raw.Padding.PadID
+	}
+	if padID < 0 {
+		padID = pickSpecialID(raw.Model.Vocab, raw.PostProcessor.SpecialTokens, "<|pad|>")
+	}
 	if padID < 0 {
 		padID = pickSpecialID(raw.Model.Vocab, raw.PostProcessor.SpecialTokens, "[PAD]")
 	}
-	tok, err := newBPETokenizer(raw.Model.Vocab, merges, raw.Model.UnkID, padID, specialIDs)
+	if padID < 0 {
+		// Qwen-style tokenizers commonly use <|endoftext|> as pad/bos.
+		if id, ok := specialIDs["<|endoftext|>"]; ok {
+			padID = id
+		} else if id, ok := raw.Model.Vocab["<|endoftext|>"]; ok {
+			padID = id
+		}
+	}
+	unkID := raw.Model.UnkID
+	if unkID <= 0 {
+		// Many BPE tokenizers omit unk_id but still define an [UNK] special token.
+		if id, ok := specialIDs["[UNK]"]; ok {
+			unkID = id
+		} else if id, ok := raw.Model.Vocab["[UNK]"]; ok {
+			unkID = id
+		}
+	}
+	tok, err := newBPETokenizer(raw.Model.Vocab, merges, unkID, padID, specialIDs)
 	if err != nil {
 		return nil, err
 	}

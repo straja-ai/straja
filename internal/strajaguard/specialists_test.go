@@ -46,17 +46,18 @@ func TestLoadSpecialistsConfig(t *testing.T) {
 	if cfg == nil {
 		t.Fatalf("expected config, got nil")
 	}
-	if len(cfg.Detectors.PromptInjection) != 2 {
-		t.Fatalf("expected 2 prompt_injection detectors, got %d", len(cfg.Detectors.PromptInjection))
+	if len(cfg.Detectors.PromptInjection) != 3 {
+		t.Fatalf("expected 3 prompt_injection detectors, got %d", len(cfg.Detectors.PromptInjection))
 	}
 	if len(cfg.Detectors.Jailbreak) != 2 {
 		t.Fatalf("expected 2 jailbreak detectors, got %d", len(cfg.Detectors.Jailbreak))
 	}
-	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil"})
+	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil", "prompt_injection_hedgehog"})
 	assertDetectorIDs(t, cfg.Detectors.Jailbreak, []string{"jailbreak_jackhhao", "jailbreak2xl"})
-	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", false)
 	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", true)
-	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_hedgehog", false)
+	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", false)
 	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak2xl", true)
 	assertAttackIdx(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", 1)
 	assertAttackIdx(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", 1)
@@ -77,16 +78,17 @@ func TestLoadSpecialistsConfigFallbackEmbedded(t *testing.T) {
 	if cfg == nil {
 		t.Fatalf("expected config, got nil")
 	}
-	if len(cfg.Detectors.PromptInjection) != 2 {
-		t.Fatalf("expected 2 prompt_injection detectors, got %d", len(cfg.Detectors.PromptInjection))
+	if len(cfg.Detectors.PromptInjection) != 3 {
+		t.Fatalf("expected 3 prompt_injection detectors, got %d", len(cfg.Detectors.PromptInjection))
 	}
 	if len(cfg.Detectors.Jailbreak) != 2 {
 		t.Fatalf("expected 2 jailbreak detectors, got %d", len(cfg.Detectors.Jailbreak))
 	}
-	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil"})
+	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil", "prompt_injection_hedgehog"})
 	assertDetectorIDs(t, cfg.Detectors.Jailbreak, []string{"jailbreak_jackhhao", "jailbreak2xl"})
 	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", true)
 	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_hedgehog", true)
 	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", true)
 	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak2xl", true)
 	assertAttackIdx(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", 1)
@@ -113,17 +115,18 @@ func TestLoadSpecialistsConfigOverrideFile(t *testing.T) {
 	if cfg == nil {
 		t.Fatalf("expected config, got nil")
 	}
-	if len(cfg.Detectors.PromptInjection) != 2 {
-		t.Fatalf("expected 2 prompt_injection detectors, got %d", len(cfg.Detectors.PromptInjection))
+	if len(cfg.Detectors.PromptInjection) != 3 {
+		t.Fatalf("expected 3 prompt_injection detectors, got %d", len(cfg.Detectors.PromptInjection))
 	}
 	if len(cfg.Detectors.Jailbreak) != 2 {
 		t.Fatalf("expected 2 jailbreak detectors, got %d", len(cfg.Detectors.Jailbreak))
 	}
-	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil"})
+	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil", "prompt_injection_hedgehog"})
 	assertDetectorIDs(t, cfg.Detectors.Jailbreak, []string{"jailbreak_jackhhao", "jailbreak2xl"})
-	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", false)
 	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", true)
-	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_hedgehog", false)
+	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", false)
 	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak2xl", true)
 	assertAttackIdx(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", 1)
 	assertAttackIdx(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", 1)
@@ -149,6 +152,58 @@ func TestDetectorEnabled(t *testing.T) {
 				t.Fatalf("detectorEnabled(%s) = %v, want %v", tc.spec.ID, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSpecialistEnabled(t *testing.T) {
+	enabled := true
+	disabled := false
+	cases := []struct {
+		name string
+		spec SpecialistConfig
+		want bool
+	}{
+		{name: "nil defaults true", spec: SpecialistConfig{Kind: "token_classification", Enabled: nil}, want: true},
+		{name: "explicit true", spec: SpecialistConfig{Kind: "token_classification", Enabled: &enabled}, want: true},
+		{name: "explicit false", spec: SpecialistConfig{Kind: "token_classification", Enabled: &disabled}, want: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := specialistEnabled(tc.spec)
+			if got != tc.want {
+				t.Fatalf("specialistEnabled = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeDetectorConfig_DisabledPIINER(t *testing.T) {
+	disabled := false
+	cfg := &SpecialistsConfig{
+		Detectors: SpecialistsDetectorsConfig{
+			PromptInjection: []DetectorSpec{
+				{
+					ID:           "prompt_injection_vijil",
+					Kind:         "sequence_classification",
+					ModelRef:     "prompt_injection_vijil/model.onnx",
+					TokenizerDir: "prompt_injection_vijil/",
+					MaxTokens:    256,
+				},
+			},
+		},
+		Specialists: map[string]SpecialistConfig{
+			"pii_ner": {
+				Kind:         "token_classification",
+				Onnx:         "pii_ner/model.onnx",
+				TokenizerDir: "pii_ner/",
+				Enabled:      &disabled,
+			},
+		},
+	}
+	_, _, pii, _, _ := normalizeDetectorConfig(cfg)
+	if pii != nil {
+		t.Fatalf("expected pii_ner to be skipped when enabled=false")
 	}
 }
 

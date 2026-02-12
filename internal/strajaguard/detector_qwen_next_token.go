@@ -35,6 +35,7 @@ type qwenNextTokenDetector struct {
 	jailbreakTokenIDs []int
 	benignTokenIDs    []int
 	maxLen            int
+	decisionThreshold *float32
 
 	outputName string
 	vocabSize  int
@@ -135,6 +136,17 @@ func loadQwenNextTokenDetector(bundleDir string, defaultSeqLen, intraThr, interT
 	if versions != nil {
 		version = versions[modelRef]
 	}
+	var decisionThreshold *float32
+	if spec.DecisionThreshold != nil {
+		v := *spec.DecisionThreshold
+		if v < 0 {
+			v = 0
+		}
+		if v > 1 {
+			v = 1
+		}
+		decisionThreshold = &v
+	}
 	redact.Logf("strajaguard specialists: loaded detector=%s kind=qwen_next_token model=%s", id, filepath.Base(modelPath))
 	return &qwenNextTokenDetector{
 		id:                id,
@@ -147,6 +159,7 @@ func loadQwenNextTokenDetector(bundleDir string, defaultSeqLen, intraThr, interT
 		jailbreakTokenIDs: labels.Jailbreak,
 		benignTokenIDs:    labels.Benign,
 		maxLen:            maxLen,
+		decisionThreshold: decisionThreshold,
 		outputName:        outputName,
 		vocabSize:         0,
 		sessions:          sessions,
@@ -228,6 +241,13 @@ func (d *qwenNextTokenDetector) Evaluate(ctx context.Context, normalizedText str
 	lpJB := scoreRow(tokenLogits[:k], logsumexp[:k], k, len(d.jailbreakTokenIDs))
 	lpBN := scoreRow(tokenLogits[k:2*k], logsumexp[k:2*k], k, len(d.benignTokenIDs))
 	score := probFromLogProbs(lpJB, lpBN)
+	if d.decisionThreshold != nil {
+		if score >= *d.decisionThreshold {
+			score = 1
+		} else {
+			score = 0
+		}
+	}
 	if debugML() {
 		previewK := k
 		if previewK > 8 {

@@ -22,10 +22,12 @@ BENCH_CONFIG ?= examples/straja.mock.yaml
 DOCKER_IMAGE ?= straja:local
 EVAL_BUNDLE ?= ../straja-intel-guard/artifacts/strajaguard_v1_specialists
 EVAL_CONFIG ?= configs/strajaguard_specialists.yaml
-EVAL_PI_INPUT ?= data/subset60_pi.jsonl
-EVAL_JB_INPUT ?= data/subset60_jb.jsonl
+EVAL_PI_INPUT ?= data/prompts_pi_from_testcsv.jsonl
+EVAL_JB_INPUT ?= data/prompts_jb_from_testcsv.jsonl
 EVAL_SUBSET_PI ?= data/subset60_pi.jsonl
 EVAL_SUBSET_JB ?= data/subset60_jb.jsonl
+EVAL_SUBSET500_PI ?= data/subset500_pi.jsonl
+EVAL_SUBSET500_JB ?= data/subset500_jb.jsonl
 EVAL_THRESHOLD ?= 0.8
 EVAL_SEQ_LEN ?= 256
 EVAL_MAX_SESSIONS ?= 1
@@ -33,10 +35,11 @@ EVAL_INTRA ?= 4
 EVAL_INTER ?= 1
 EVAL_SHOW_TEXT ?= false
 EVAL_PROGRESS_EVERY ?= 25
+EVAL_VERBOSE ?= false
 EVAL_OUTPUT ?= /tmp/straja_eval_detectors.jsonl
 EVAL_METRICS ?= /tmp/straja_eval_detectors.metrics.log
 
-.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run activation-receiver eval eval_detectors
+.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run activation-receiver eval eval_detectors eval_detectors_500
 
 all: build
 
@@ -166,6 +169,10 @@ bench-strajaguard: build
 eval:
 	@$(MAKE) eval_detectors EVAL_PI_INPUT="$(EVAL_SUBSET_PI)" EVAL_JB_INPUT="$(EVAL_SUBSET_JB)"
 
+## Evaluate specialist detectors on a 500-prompt balanced subset.
+eval_detectors_500:
+	@$(MAKE) eval_detectors EVAL_PI_INPUT="$(EVAL_SUBSET500_PI)" EVAL_JB_INPUT="$(EVAL_SUBSET500_JB)"
+
 eval_detectors:
 	@echo ">> Running detector eval..."
 	@test -d "$(EVAL_BUNDLE)" || (echo "missing bundle dir: $(EVAL_BUNDLE)" && exit 1)
@@ -178,7 +185,7 @@ eval_detectors:
 	@errpipe=/tmp/straja_eval_detectors_err.$$; \
 	rm -f "$$errpipe"; \
 	mkfifo "$$errpipe"; \
-	tee "$(EVAL_METRICS)" < "$$errpipe" | awk '/^PROGRESS / { print > "/dev/stderr"; fflush("/dev/stderr") }' & \
+	tee "$(EVAL_METRICS)" < "$$errpipe" | awk -v verbose="$(EVAL_VERBOSE)" 'verbose == "true" || /^PROGRESS / { print > "/dev/stderr"; fflush("/dev/stderr") }' & \
 	teepid=$$!; \
 	go run ./cmd/straja-eval \
 		-bundle "$(EVAL_BUNDLE)" \

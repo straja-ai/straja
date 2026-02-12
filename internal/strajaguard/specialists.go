@@ -82,6 +82,7 @@ type SpecialistConfig struct {
 	Onnx         string `yaml:"onnx"`
 	TokenizerDir string `yaml:"tokenizer_dir"`
 	MaxTokens    int    `yaml:"max_tokens"`
+	Enabled      *bool  `yaml:"enabled"`
 }
 
 type Specialists struct {
@@ -108,13 +109,31 @@ type DetectorSpec struct {
 	MaxTokens    int    `yaml:"max_tokens"`
 	Enabled      *bool  `yaml:"enabled"`
 	AttackIdx    *int   `yaml:"attack_idx"`
+	// DecisionThreshold applies optional detector-local binarization for detector kinds
+	// that emit probabilistic scores (currently qwen_next_token). If omitted, raw score
+	// is used without binarization.
+	DecisionThreshold *float32 `yaml:"decision_threshold"`
 
 	// qwen_next_token specific assets (bundle-relative paths).
 	PromptTemplate string `yaml:"prompt_template"`
 	LabelTokens    string `yaml:"label_tokens"`
+
+	// qwen_refusal_pipeline assets and knobs.
+	ResponseMaxTokens int    `yaml:"response_max_tokens"`
+	RefusalModelRef   string `yaml:"refusal_classifier_model_ref"`
+	RefusalTokenizer  string `yaml:"refusal_classifier_tokenizer_dir"`
+	RefusalAttackIdx  *int   `yaml:"refusal_classifier_attack_idx"`
+	RefusalMaxTokens  int    `yaml:"refusal_classifier_max_tokens"`
 }
 
 func detectorEnabled(spec DetectorSpec) bool {
+	if spec.Enabled == nil {
+		return true
+	}
+	return *spec.Enabled
+}
+
+func specialistEnabled(spec SpecialistConfig) bool {
 	if spec.Enabled == nil {
 		return true
 	}
@@ -303,6 +322,12 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 					return nil, err
 				}
 				eng.detectors = append(eng.detectors, d)
+			case "qwen_refusal_pipeline":
+				d, err := loadQwenRefusalPipelineDetector(bundleDir, seqLen, intraThr, interThr, poolSize, category, spec, versions)
+				if err != nil {
+					return nil, err
+				}
+				eng.detectors = append(eng.detectors, d)
 			default:
 				return nil, fmt.Errorf("%s detector %s unsupported kind %q", category, spec.ID, spec.Kind)
 			}
@@ -398,13 +423,13 @@ func normalizeDetectorConfig(cfg *SpecialistsConfig) (prompt []DetectorSpec, jai
 
 	// Legacy fallback: a single specialist per category under "specialists".
 	legacyUsed = true
-	if spec, ok := cfg.Specialists["prompt_injection"]; ok && strings.TrimSpace(spec.Kind) != "" {
+	if spec, ok := cfg.Specialists["prompt_injection"]; ok && specialistEnabled(spec) && strings.TrimSpace(spec.Kind) != "" {
 		prompt = []DetectorSpec{legacyToDetector("prompt_injection", spec)}
 	}
-	if spec, ok := cfg.Specialists["jailbreak"]; ok && strings.TrimSpace(spec.Kind) != "" {
+	if spec, ok := cfg.Specialists["jailbreak"]; ok && specialistEnabled(spec) && strings.TrimSpace(spec.Kind) != "" {
 		jailbreak = []DetectorSpec{legacyToDetector("jailbreak", spec)}
 	}
-	if spec, ok := cfg.Specialists["pii_ner"]; ok && strings.TrimSpace(spec.Kind) != "" {
+	if spec, ok := cfg.Specialists["pii_ner"]; ok && specialistEnabled(spec) && strings.TrimSpace(spec.Kind) != "" {
 		cpy := spec
 		pii = &cpy
 	}
@@ -418,11 +443,14 @@ func legacyToDetector(category string, spec SpecialistConfig) DetectorSpec {
 		ModelRef:     spec.Onnx,
 		TokenizerDir: spec.TokenizerDir,
 		MaxTokens:    spec.MaxTokens,
-		Enabled:      nil,
+		Enabled:      spec.Enabled,
 	}
 }
 
 func (c SpecialistConfig) ptr() *SpecialistConfig {
+	if !specialistEnabled(c) {
+		return nil
+	}
 	if strings.TrimSpace(c.Kind) == "" && strings.TrimSpace(c.Onnx) == "" && strings.TrimSpace(c.TokenizerDir) == "" {
 		return nil
 	}
@@ -1070,6 +1098,28 @@ func resolveSpecialistModelPath(bundleDir, rel string) string {
 	if modelDir == "." || modelDir == "" {
 		modelDir = ""
 	}
+	base := filepath.Base(rel)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	if stem == "" {
+		stem = base
+	}
+
+	// Prefer explicit model_ref path when non-default file names are used
+	// (e.g. generator.onnx for pipeline detectors).
+	if base != "model.onnx" {
+		if ext != "" {
+			int8Rel := filepath.Join(modelDir, stem+".int8"+ext)
+			if _, err := os.Stat(filepath.Join(bundleDir, int8Rel)); err == nil {
+				return filepath.Join(bundleDir, int8Rel)
+			}
+		}
+		modelPath := filepath.Join(bundleDir, rel)
+		if _, err := os.Stat(modelPath); err == nil {
+			return modelPath
+		}
+	}
+
 	int8Path := filepath.Join(bundleDir, modelDir, "model.int8.onnx")
 	if _, err := os.Stat(int8Path); err == nil {
 		return int8Path
