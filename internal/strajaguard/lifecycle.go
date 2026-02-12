@@ -2,6 +2,7 @@ package strajaguard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,10 +27,8 @@ func bundleDirLooksValid(dir, family string) bool {
 
 	switch normalizeBundleFamily(family) {
 	case "strajaguard_v1_specialists":
-		for _, name := range []string{"prompt_injection", "jailbreak", "pii_ner"} {
-			if !specialistDirLooksValid(filepath.Join(dir, name)) {
-				return false
-			}
+		if !manifestFilesPresent(dir) {
+			return false
 		}
 	default:
 		required = []string{
@@ -42,6 +41,27 @@ func bundleDirLooksValid(dir, family string) bool {
 			if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func manifestFilesPresent(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return false
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return false
+	}
+	for _, f := range manifest.Files {
+		local, err := resolveBundlePath(dir, filepath.FromSlash(f.Path))
+		if err != nil {
+			return false
+		}
+		if _, err := os.Stat(local); err != nil {
+			return false
 		}
 	}
 	return true

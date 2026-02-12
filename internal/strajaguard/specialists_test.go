@@ -43,22 +43,26 @@ func TestLoadSpecialistsConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load specialists config: %v", err)
 	}
-	if cfg == nil || len(cfg.Specialists) != 3 {
-		t.Fatalf("expected 3 specialists, got %d", len(cfg.Specialists))
+	if cfg == nil {
+		t.Fatalf("expected config, got nil")
 	}
-	expect := map[string]string{
-		"prompt_injection": "sequence_classification",
-		"jailbreak":        "sequence_classification",
-		"pii_ner":          "token_classification",
+	if len(cfg.Detectors.PromptInjection) != 3 {
+		t.Fatalf("expected 3 prompt_injection detectors, got %d", len(cfg.Detectors.PromptInjection))
 	}
-	for id, kind := range expect {
-		spec, ok := cfg.Specialists[id]
-		if !ok {
-			t.Fatalf("missing specialist %s", id)
-		}
-		if spec.Kind != kind {
-			t.Fatalf("expected %s kind %s, got %s", id, kind, spec.Kind)
-		}
+	if len(cfg.Detectors.Jailbreak) != 2 {
+		t.Fatalf("expected 2 jailbreak detectors, got %d", len(cfg.Detectors.Jailbreak))
+	}
+	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil", "prompt_injection_hedgehog"})
+	assertDetectorIDs(t, cfg.Detectors.Jailbreak, []string{"jailbreak_jackhhao", "jailbreak2xl"})
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", false)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_hedgehog", false)
+	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", false)
+	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak2xl", true)
+	assertAttackIdx(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", 1)
+	assertAttackIdx(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", 1)
+	if _, ok := cfg.Specialists["pii_ner"]; !ok {
+		t.Fatalf("missing pii_ner specialist")
 	}
 }
 
@@ -71,9 +75,24 @@ func TestLoadSpecialistsConfigFallbackEmbedded(t *testing.T) {
 	if source != specialistsConfigSourceEmbedded {
 		t.Fatalf("expected source %s, got %s", specialistsConfigSourceEmbedded, source)
 	}
-	if cfg == nil || len(cfg.Specialists) != 3 {
-		t.Fatalf("expected 3 specialists, got %d", len(cfg.Specialists))
+	if cfg == nil {
+		t.Fatalf("expected config, got nil")
 	}
+	if len(cfg.Detectors.PromptInjection) != 3 {
+		t.Fatalf("expected 3 prompt_injection detectors, got %d", len(cfg.Detectors.PromptInjection))
+	}
+	if len(cfg.Detectors.Jailbreak) != 2 {
+		t.Fatalf("expected 2 jailbreak detectors, got %d", len(cfg.Detectors.Jailbreak))
+	}
+	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil", "prompt_injection_hedgehog"})
+	assertDetectorIDs(t, cfg.Detectors.Jailbreak, []string{"jailbreak_jackhhao", "jailbreak2xl"})
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_hedgehog", true)
+	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", true)
+	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak2xl", true)
+	assertAttackIdx(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", 1)
+	assertAttackIdx(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", 1)
 }
 
 func TestLoadSpecialistsConfigOverrideFile(t *testing.T) {
@@ -93,9 +112,185 @@ func TestLoadSpecialistsConfigOverrideFile(t *testing.T) {
 	if source != specialistsConfigSourceFile+":"+path {
 		t.Fatalf("expected source %s, got %s", specialistsConfigSourceFile+":"+path, source)
 	}
-	if cfg == nil || len(cfg.Specialists) != 3 {
-		t.Fatalf("expected 3 specialists, got %d", len(cfg.Specialists))
+	if cfg == nil {
+		t.Fatalf("expected config, got nil")
 	}
+	if len(cfg.Detectors.PromptInjection) != 3 {
+		t.Fatalf("expected 3 prompt_injection detectors, got %d", len(cfg.Detectors.PromptInjection))
+	}
+	if len(cfg.Detectors.Jailbreak) != 2 {
+		t.Fatalf("expected 2 jailbreak detectors, got %d", len(cfg.Detectors.Jailbreak))
+	}
+	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil", "prompt_injection_hedgehog"})
+	assertDetectorIDs(t, cfg.Detectors.Jailbreak, []string{"jailbreak_jackhhao", "jailbreak2xl"})
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", false)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_hedgehog", false)
+	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", false)
+	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak2xl", true)
+	assertAttackIdx(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", 1)
+	assertAttackIdx(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", 1)
+}
+
+func TestDetectorEnabled(t *testing.T) {
+	enabled := true
+	disabled := false
+	cases := []struct {
+		name string
+		spec DetectorSpec
+		want bool
+	}{
+		{name: "nil defaults true", spec: DetectorSpec{ID: "a", Enabled: nil}, want: true},
+		{name: "explicit true", spec: DetectorSpec{ID: "b", Enabled: &enabled}, want: true},
+		{name: "explicit false", spec: DetectorSpec{ID: "c", Enabled: &disabled}, want: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := detectorEnabled(tc.spec)
+			if got != tc.want {
+				t.Fatalf("detectorEnabled(%s) = %v, want %v", tc.spec.ID, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSpecialistEnabled(t *testing.T) {
+	enabled := true
+	disabled := false
+	cases := []struct {
+		name string
+		spec SpecialistConfig
+		want bool
+	}{
+		{name: "nil defaults true", spec: SpecialistConfig{Kind: "token_classification", Enabled: nil}, want: true},
+		{name: "explicit true", spec: SpecialistConfig{Kind: "token_classification", Enabled: &enabled}, want: true},
+		{name: "explicit false", spec: SpecialistConfig{Kind: "token_classification", Enabled: &disabled}, want: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := specialistEnabled(tc.spec)
+			if got != tc.want {
+				t.Fatalf("specialistEnabled = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeDetectorConfig_DisabledPIINER(t *testing.T) {
+	disabled := false
+	cfg := &SpecialistsConfig{
+		Detectors: SpecialistsDetectorsConfig{
+			PromptInjection: []DetectorSpec{
+				{
+					ID:           "prompt_injection_vijil",
+					Kind:         "sequence_classification",
+					ModelRef:     "prompt_injection_vijil/model.onnx",
+					TokenizerDir: "prompt_injection_vijil/",
+					MaxTokens:    256,
+				},
+			},
+		},
+		Specialists: map[string]SpecialistConfig{
+			"pii_ner": {
+				Kind:         "token_classification",
+				Onnx:         "pii_ner/model.onnx",
+				TokenizerDir: "pii_ner/",
+				Enabled:      &disabled,
+			},
+		},
+	}
+	_, _, pii, _, _ := normalizeDetectorConfig(cfg)
+	if pii != nil {
+		t.Fatalf("expected pii_ner to be skipped when enabled=false")
+	}
+}
+
+func TestLoadSpecialistsConfigExplicitDisabledDetector(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "specialists.yaml")
+	data := `
+detectors:
+  prompt_injection:
+    - id: prompt_injection_deberta_v3
+      enabled: false
+      kind: sequence_classification
+      model_ref: prompt_injection_deberta_v3/model.onnx
+      tokenizer_dir: prompt_injection_deberta_v3/
+      max_tokens: 256
+ensemble:
+  prompt_injection:
+    method: any
+    threshold: 0.8
+specialists: {}
+`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+
+	cfg, err := LoadSpecialistsConfig(path)
+	if err != nil {
+		t.Fatalf("load specialists config: %v", err)
+	}
+	if cfg == nil {
+		t.Fatalf("expected config, got nil")
+	}
+	if len(cfg.Detectors.PromptInjection) != 1 {
+		t.Fatalf("expected 1 prompt_injection detector, got %d", len(cfg.Detectors.PromptInjection))
+	}
+	d := cfg.Detectors.PromptInjection[0]
+	if strings.TrimSpace(d.ID) != "prompt_injection_deberta_v3" {
+		t.Fatalf("unexpected detector id: %q", d.ID)
+	}
+	if detectorEnabled(d) {
+		t.Fatalf("expected detector %q to be disabled", d.ID)
+	}
+}
+
+func assertDetectorIDs(t *testing.T, detectors []DetectorSpec, expected []string) {
+	t.Helper()
+	got := map[string]bool{}
+	for _, d := range detectors {
+		got[strings.TrimSpace(d.ID)] = true
+	}
+	for _, id := range expected {
+		if !got[id] {
+			t.Fatalf("expected detector id %q not found (got=%v)", id, got)
+		}
+	}
+}
+
+func assertAttackIdx(t *testing.T, detectors []DetectorSpec, id string, want int) {
+	t.Helper()
+	for _, d := range detectors {
+		if strings.TrimSpace(d.ID) != id {
+			continue
+		}
+		if d.AttackIdx == nil || *d.AttackIdx != want {
+			t.Fatalf("detector %q attack_idx: got=%v want=%d", id, d.AttackIdx, want)
+		}
+		return
+	}
+	t.Fatalf("detector %q not found", id)
+}
+
+func assertDetectorEnabled(t *testing.T, detectors []DetectorSpec, id string, want bool) {
+	t.Helper()
+	for _, d := range detectors {
+		if strings.TrimSpace(d.ID) != id {
+			continue
+		}
+		if d.Enabled == nil {
+			t.Fatalf("detector %q enabled not set explicitly in config", id)
+		}
+		got := detectorEnabled(d)
+		if got != want {
+			t.Fatalf("detector %q enabled: got=%v want=%v", id, got, want)
+		}
+		return
+	}
+	t.Fatalf("detector %q not found", id)
 }
 
 func TestMergeEntities(t *testing.T) {
@@ -123,10 +318,25 @@ func TestSpecialistsEngineSessionReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load specialists engine: %v", err)
 	}
-	for id, m := range engine.models {
-		if m.poolSize != 1 || cap(m.sessions) != 1 {
-			t.Fatalf("expected single session for %s, got pool_size=%d cap=%d", id, m.poolSize, cap(m.sessions))
+	for _, eng := range engine.categories {
+		for _, det := range eng.detectors {
+			switch d := det.(type) {
+			case *sequenceDetector:
+				if d.m.poolSize != 1 || cap(d.m.sessions) != 1 {
+					t.Fatalf("expected single session for %s, got pool_size=%d cap=%d", d.m.id, d.m.poolSize, cap(d.m.sessions))
+				}
+			case *qwenNextTokenDetector:
+				if cap(d.sessions) != 1 {
+					t.Fatalf("expected single session for %s, got cap=%d", d.id, cap(d.sessions))
+				}
+			}
 		}
+	}
+	if engine.piiNER == nil {
+		t.Fatalf("expected pii_ner model loaded")
+	}
+	if engine.piiNER.poolSize != 1 || cap(engine.piiNER.sessions) != 1 {
+		t.Fatalf("expected single session for pii_ner, got pool_size=%d cap=%d", engine.piiNER.poolSize, cap(engine.piiNER.sessions))
 	}
 	if _, err := engine.AnalyzeText(context.Background(), "hello"); err != nil {
 		t.Fatalf("analyze text: %v", err)
@@ -134,10 +344,22 @@ func TestSpecialistsEngineSessionReuse(t *testing.T) {
 	if _, err := engine.AnalyzeText(context.Background(), "hello again"); err != nil {
 		t.Fatalf("analyze text second pass: %v", err)
 	}
-	for id, m := range engine.models {
-		if len(m.sessions) != m.poolSize {
-			t.Fatalf("expected sessions returned for %s, got %d/%d", id, len(m.sessions), m.poolSize)
+	for _, eng := range engine.categories {
+		for _, det := range eng.detectors {
+			switch d := det.(type) {
+			case *sequenceDetector:
+				if len(d.m.sessions) != d.m.poolSize {
+					t.Fatalf("expected sessions returned for %s, got %d/%d", d.m.id, len(d.m.sessions), d.m.poolSize)
+				}
+			case *qwenNextTokenDetector:
+				if len(d.sessions) != cap(d.sessions) {
+					t.Fatalf("expected sessions returned for %s, got %d/%d", d.id, len(d.sessions), cap(d.sessions))
+				}
+			}
 		}
+	}
+	if len(engine.piiNER.sessions) != engine.piiNER.poolSize {
+		t.Fatalf("expected sessions returned for pii_ner, got %d/%d", len(engine.piiNER.sessions), engine.piiNER.poolSize)
 	}
 }
 

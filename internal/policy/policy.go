@@ -206,6 +206,15 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 			for k, v := range res.Scores {
 				req.SecurityScores[k] = v
 			}
+			// Always attach StrajaGuard detections for transparency. If the SpecialistsEngine
+			// doesn't populate them (older implementations), synthesize minimal details from
+			// the returned scores so activation payloads aren't empty.
+			if res.Detections != nil {
+				req.StrajaGuardDetections = res.Detections
+			} else if req.StrajaGuardDetections == nil {
+				req.StrajaGuardDetections = &safety.StrajaGuardDetections{}
+			}
+			synthesizeMissingDetectionsFromScores(req, res.Scores, p.securityCfg)
 			req.PIIEntities = append(req.PIIEntities, res.PIIEntities...)
 			req.DetectionSignals = append(req.DetectionSignals, detectionSignalsFromSpecialists(res)...)
 			sgSpan.SetAttributes(telemetry.SafeAttributes(map[string]interface{}{
@@ -242,6 +251,12 @@ func (p *Basic) BeforeModel(ctx context.Context, req *inference.Request) error {
 			req.SecurityScores = res.Scores
 			req.SecurityFlags = res.Flags
 			req.DetectionSignals = append(req.DetectionSignals, detectionSignalsFromML(res, p.securityCfg)...)
+			// StrajaGuard v1 doesn't have per-detector details; synthesize a minimal
+			// transparency payload from its per-category scores.
+			if req.StrajaGuardDetections == nil {
+				req.StrajaGuardDetections = &safety.StrajaGuardDetections{}
+			}
+			synthesizeMissingDetectionsFromScores(req, res.Scores, p.securityCfg)
 			if req.Timings != nil {
 				req.Timings.StrajaGuard += sgElapsed
 			}

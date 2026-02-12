@@ -301,12 +301,7 @@ func BundleFilesPresent(bundleDir, family string) bool {
 	family = normalizeBundleFamily(family)
 	switch family {
 	case "strajaguard_v1_specialists":
-		for _, name := range []string{"prompt_injection", "jailbreak", "pii_ner"} {
-			if !specialistDirLooksValid(filepath.Join(bundleDir, name)) {
-				return false
-			}
-		}
-		return true
+		return manifestFilesPresent(bundleDir)
 	default:
 		required := []string{
 			"strajaguard_v1.onnx",

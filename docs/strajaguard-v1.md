@@ -45,10 +45,12 @@ A bundle directory is considered valid when these files exist (`internal/strajag
 
 ### `strajaguard_v1_specialists`
 
-A specialists bundle contains three model subdirectories:
+A specialists bundle contains these model subdirectories:
 
-- `prompt_injection/` (sequence classification)
-- `jailbreak/` (sequence classification)
+- `prompt_injection_deberta_v3/` (sequence classification)
+- `prompt_injection_vijil/` (sequence classification)
+- `jailbreak_jackhhao/` (sequence classification, detector `jailbreak_jackhhao`)
+- `jailbreak2xl/` (Qwen next-token binary classifier)
 - `pii_ner/` (token classification / NER)
 
 Each specialist directory must include:
@@ -57,7 +59,17 @@ Each specialist directory must include:
 - `tokenizer/` assets (tokenizer config + vocab)
 - `config.json` (Hugging Face model config)
 
-The specialists definitions are loaded from an embedded default config (built into the gateway binary). You can override it with `strajaguard.specialists.config_path` if you want to customize the specialists list.
+The specialists definitions are loaded from an embedded default config (built into the gateway binary). You can override it with `strajaguard.specialists.config_path` if you want to customize detectors and ensemble aggregation for:
+
+- `prompt_injection` (two detectors by default, aggregated via an ensemble)
+- `jailbreak` (two detectors by default: `jailbreak_jackhhao` + `jailbreak2xl`, aggregated via an ensemble)
+
+PII stays unchanged (still `pii_ner` token classification).
+
+Each detector supports `enabled: true|false` in `strajaguard_specialists.yaml`:
+
+- `enabled: true`: detector is loaded and contributes to ensemble scoring.
+- `enabled: false`: detector is skipped at load time (no memory use), not scored, and excluded from ensemble aggregation.
 
 ### Overriding specialists config
 

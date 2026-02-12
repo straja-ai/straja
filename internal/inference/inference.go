@@ -34,6 +34,9 @@ type Request struct {
 	SecurityFlags []string
 	// PIIEntities holds detected PII spans with byte offsets.
 	PIIEntities []safety.PIIEntity
+	// StrajaGuardDetections holds request-side ensemble + per-detector details
+	// for prompt injection and jailbreak (PII stays unchanged).
+	StrajaGuardDetections *safety.StrajaGuardDetections
 	// PostPolicyHits captures policy categories triggered on model output.
 	PostPolicyHits []string
 	// PostPolicyDecisions captures merged per-category actions for output.

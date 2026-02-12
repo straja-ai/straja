@@ -66,6 +66,9 @@ type RequestPayload struct {
 	Preview   RequestPreview     `json:"preview"`
 	Hits      []ActionEntry      `json:"hits,omitempty"`
 	Scores    map[string]float32 `json:"scores,omitempty"`
+	// StrajaGuard contains request-side specialists transparency details (ensemble + per-detector results).
+	// This is additive and safe to include even when empty.
+	StrajaGuard *safety.StrajaGuardDetections `json:"strajaguard"`
 	LatencyMs float64            `json:"latency_ms"`
 }
 
@@ -178,6 +181,10 @@ func BuildEvent(params BuildParams) *Event {
 
 	requestScores := cloneFloatMap(params.Request.SecurityScores)
 	responseScores := cloneFloatMap(params.Request.PostSafetyScores)
+	sgDetails := params.Request.StrajaGuardDetections
+	if sgDetails == nil {
+		sgDetails = &safety.StrajaGuardDetections{}
+	}
 
 	requestLatencyMs := durationMillisFromTimings(params.Request.Timings, func(t *inference.Timings) time.Duration {
 		return t.PrePolicy
@@ -261,6 +268,7 @@ func BuildEvent(params BuildParams) *Event {
 			Preview:   reqPreview,
 			Hits:      requestHits,
 			Scores:    requestScores,
+			StrajaGuard: sgDetails,
 			LatencyMs: requestLatencyMs,
 		},
 		Response: ResponsePayload{

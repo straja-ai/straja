@@ -1,0 +1,24 @@
+detectors:
+  prompt_injection:
+    - id: pi_deberta_v3
+      kind: sequence_classification
+      model_ref: prompt_injection/model.onnx
+      tokenizer_dir: prompt_injection/
+  jailbreak:
+    - id: jb_v1
+      kind: sequence_classification
+      model_ref: jailbreak/model.onnx
+      tokenizer_dir: jailbreak/
+    - id: jb_2xl
+      kind: qwen_next_token
+      model_ref: jailbreak2xl/model.onnx
+      tokenizer_dir: jailbreak2xl/
+      prompt_template: jailbreak2xl/prompt_template.txt
+      label_tokens: jailbreak2xl/label_tokens.json
+ensemble:
+  prompt_injection:
+    method: any
+    threshold: 0.8
+  jailbreak:
+    method: any
+    threshold: 0.8

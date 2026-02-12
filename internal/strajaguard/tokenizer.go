@@ -22,6 +22,7 @@ type OffsetTokenizer interface {
 }
 
 type specialTokenMeta struct {
+	ID  string  `json:"id"`
 	IDs []int64 `json:"ids"`
 }
 
@@ -141,6 +142,10 @@ func loadTokenizerFromJSON(path string) (Tokenizer, error) {
 		padID := pickSpecialID(vocabMap, raw.PostProcessor.SpecialTokens, "[PAD]")
 		tok := newUnigramTokenizer(tokens, scores, vocabMap, raw.Model.UnkID, raw.Model.ByteFallback, clsID, sepID, padID)
 		return tok, nil
+	}
+	if modelType == "bpe" {
+		// Re-decode with the richer BPE schema.
+		return parseBPETokenizerJSON(data)
 	}
 
 	if vocab := vocabFromAny(raw.Model.Vocab); len(vocab) > 0 {
