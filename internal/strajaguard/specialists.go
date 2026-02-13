@@ -439,7 +439,43 @@ func parseSpecialistsConfig(data []byte) (*SpecialistsConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+	if err := validateSpecialistsConfigSchema(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+func validateSpecialistsConfigSchema(cfg *SpecialistsConfig) error {
+	if cfg == nil {
+		return errors.New("specialists config is nil")
+	}
+	// Preferred schema present.
+	if len(cfg.Detectors.PromptInjection) > 0 || len(cfg.Detectors.Jailbreak) > 0 {
+		return nil
+	}
+	if len(cfg.Specialists) == 0 {
+		return nil
+	}
+
+	allowedLegacy := map[string]bool{
+		"prompt_injection": true,
+		"jailbreak":        true,
+		"pii_ner":          true,
+	}
+	unknown := make([]string, 0, len(cfg.Specialists))
+	for name := range cfg.Specialists {
+		if !allowedLegacy[strings.TrimSpace(name)] {
+			unknown = append(unknown, strings.TrimSpace(name))
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return fmt.Errorf(
+		"unsupported specialists config schema: found specialists keys %s; expected detectors.prompt_injection/jailbreak or legacy specialists.prompt_injection/jailbreak",
+		strings.Join(unknown, ", "),
+	)
 }
 
 func cloneSpecialistConfigPtr(in *SpecialistConfig) *SpecialistConfig {

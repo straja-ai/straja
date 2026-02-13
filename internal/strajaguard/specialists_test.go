@@ -360,6 +360,30 @@ specialists: {}
 	}
 }
 
+func TestLoadSpecialistsConfigRejectsExportStyleSchema(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "specialists.yaml")
+	data := `
+specialists:
+  prompt_injection_vijil:
+    active: true
+    kind: sequence_classification
+    onnx: prompt_injection_vijil/model.onnx
+    tokenizer_dir: prompt_injection_vijil/
+  jailbreak2xl:
+    active: true
+    kind: qwen_next_token
+    onnx: jailbreak2xl/model.onnx
+    tokenizer_dir: jailbreak2xl/
+`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	if _, err := LoadSpecialistsConfig(path); err == nil {
+		t.Fatalf("expected export-style schema to be rejected")
+	}
+}
+
 func assertDetectorIDs(t *testing.T, detectors []DetectorSpec, expected []string) {
 	t.Helper()
 	got := map[string]bool{}
