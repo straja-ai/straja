@@ -1,7 +1,7 @@
 detectors:
   prompt_injection:
     - id: prompt_injection_deberta_v3
-      enabled: true
+      enabled: false
       kind: sequence_classification
       model_ref: prompt_injection_deberta_v3/model.onnx
       tokenizer_dir: prompt_injection_deberta_v3/
@@ -14,7 +14,7 @@ detectors:
       attack_idx: 1
       max_tokens: 256
     - id: prompt_injection_hedgehog
-      enabled: true
+      enabled: false
       kind: qwen_refusal_pipeline
       decision_threshold: 0.8
       model_ref: prompt_injection_hedgehog/generator.onnx
@@ -27,7 +27,7 @@ detectors:
       refusal_classifier_attack_idx: 1
   jailbreak:
     - id: jailbreak_jackhhao
-      enabled: true
+      enabled: false
       kind: sequence_classification
       model_ref: jailbreak_jackhhao/model.onnx
       tokenizer_dir: jailbreak_jackhhao/
@@ -50,6 +50,7 @@ ensemble:
     threshold: 0.8
 specialists:
   pii_ner:
+    enabled: false
     kind: token_classification
     onnx: pii_ner/model.onnx
     tokenizer_dir: pii_ner/

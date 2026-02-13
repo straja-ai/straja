@@ -107,7 +107,21 @@ func (s *Server) strajaGuardEnabled() bool {
 	if s == nil {
 		return false
 	}
-	return s.strajaGuardModel != nil || s.specialistsEngine != nil
+	if s.strajaGuardModel != nil {
+		return true
+	}
+	return specialistsEngineHealthy(s.specialistsEngine)
+}
+
+func specialistsEngineHealthy(engine strajaguard.SpecialistsEngine) bool {
+	if engine == nil {
+		return false
+	}
+	healthChecker, ok := engine.(interface{ HealthCheck() error })
+	if !ok {
+		return true
+	}
+	return healthChecker.HealthCheck() == nil
 }
 
 func normalizeSpecialistsConfigSource(source string) string {
@@ -117,6 +131,9 @@ func normalizeSpecialistsConfigSource(source string) string {
 	}
 	if strings.HasPrefix(source, "file:") {
 		return "file"
+	}
+	if strings.HasPrefix(source, "bundle:") {
+		return "bundle"
 	}
 	if source == "embedded_default" {
 		return "embedded"
@@ -927,7 +944,8 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) readiness() (readinessResponse, bool) {
 	mode := "regex_only"
-	if s.strajaGuardModel != nil {
+	specialistsHealthy := specialistsEngineHealthy(s.specialistsEngine)
+	if s.strajaGuardModel != nil || specialistsHealthy {
 		mode = "ml"
 	}
 
@@ -962,7 +980,7 @@ func (s *Server) readiness() (readinessResponse, bool) {
 		return resp, false
 	}
 
-	if s.requireML && s.strajaGuardModel == nil && s.specialistsEngine == nil {
+	if s.requireML && s.strajaGuardModel == nil && !specialistsHealthy {
 		resp.Status = "not_ready"
 		resp.Reason = "strajaguard_ml_inactive"
 		return resp, false

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/straja-ai/straja/internal/auth"
 	"github.com/straja-ai/straja/internal/config"
 	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja/internal/strajaguard"
 )
 
 func newTestConfig(t *testing.T) *config.Config {
@@ -57,6 +59,22 @@ func newTestServer(t *testing.T, cfg *config.Config) *Server {
 	authz := auth.NewAuth(cfg)
 	return New(cfg, authz, "")
 }
+
+type fakeHealthySpecialistsEngine struct{}
+
+func (f *fakeHealthySpecialistsEngine) AnalyzeText(ctx context.Context, text string) (*strajaguard.SpecialistsResult, error) {
+	return &strajaguard.SpecialistsResult{}, nil
+}
+
+func (f *fakeHealthySpecialistsEngine) HealthCheck() error { return nil }
+
+type fakeUnhealthySpecialistsEngine struct{}
+
+func (f *fakeUnhealthySpecialistsEngine) AnalyzeText(ctx context.Context, text string) (*strajaguard.SpecialistsResult, error) {
+	return &strajaguard.SpecialistsResult{}, nil
+}
+
+func (f *fakeUnhealthySpecialistsEngine) HealthCheck() error { return errors.New("assets missing") }
 
 func TestRequestBodyLimitReturns413(t *testing.T) {
 	cfg := newTestConfig(t)
@@ -188,5 +206,48 @@ func TestReadyzAllowsRegexOnlyWhenMLNotRequired(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestReadyzRequireMLFailsForUnhealthySpecialists(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.Intel.StrajaGuardV1.RequireML = true
+
+	srv := newTestServer(t, cfg)
+	srv.specialistsEngine = &fakeUnhealthySpecialistsEngine{}
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+}
+
+func TestReadinessModeRegexOnlyForUnhealthySpecialists(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.Intel.StrajaGuardV1.RequireML = false
+
+	srv := newTestServer(t, cfg)
+	srv.specialistsEngine = &fakeUnhealthySpecialistsEngine{}
+
+	resp, ready := srv.readiness()
+	if !ready {
+		t.Fatalf("expected ready=true when ML is optional")
+	}
+	if resp.Mode != "regex_only" {
+		t.Fatalf("expected regex_only mode, got %s", resp.Mode)
+	}
+}
+
+func TestStrajaGuardEnabledUsesSpecialistsHealth(t *testing.T) {
+	srv := &Server{specialistsEngine: &fakeHealthySpecialistsEngine{}}
+	if !srv.strajaGuardEnabled() {
+		t.Fatalf("expected healthy specialists to count as enabled")
+	}
+	srv.specialistsEngine = &fakeUnhealthySpecialistsEngine{}
+	if srv.strajaGuardEnabled() {
+		t.Fatalf("expected unhealthy specialists to be treated as disabled")
 	}
 }

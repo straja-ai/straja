@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -68,7 +69,7 @@ func TestLoadSpecialistsConfig(t *testing.T) {
 
 func TestLoadSpecialistsConfigFallbackEmbedded(t *testing.T) {
 	missingPath := filepath.Join(t.TempDir(), "missing.yaml")
-	cfg, source, err := loadSpecialistsConfigWithFallback(missingPath)
+	cfg, source, err := loadSpecialistsConfigWithFallback(missingPath, t.TempDir())
 	if err != nil {
 		t.Fatalf("load specialists config fallback: %v", err)
 	}
@@ -86,13 +87,27 @@ func TestLoadSpecialistsConfigFallbackEmbedded(t *testing.T) {
 	}
 	assertDetectorIDs(t, cfg.Detectors.PromptInjection, []string{"prompt_injection_deberta_v3", "prompt_injection_vijil", "prompt_injection_hedgehog"})
 	assertDetectorIDs(t, cfg.Detectors.Jailbreak, []string{"jailbreak_jackhhao", "jailbreak2xl"})
-	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_deberta_v3", false)
 	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", true)
-	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_hedgehog", true)
-	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", true)
+	assertDetectorEnabled(t, cfg.Detectors.PromptInjection, "prompt_injection_hedgehog", false)
+	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", false)
 	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak2xl", true)
 	assertAttackIdx(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", 1)
 	assertAttackIdx(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", 1)
+}
+
+func TestEmbeddedSpecialistsConfigMatchesDefaultFile(t *testing.T) {
+	embeddedCfg, err := parseSpecialistsConfig(embeddedSpecialistsConfig)
+	if err != nil {
+		t.Fatalf("parse embedded specialists config: %v", err)
+	}
+	fileCfg, err := LoadSpecialistsConfig(filepath.Join("..", "..", "configs", "strajaguard_specialists.yaml"))
+	if err != nil {
+		t.Fatalf("load specialists config file: %v", err)
+	}
+	if !reflect.DeepEqual(embeddedCfg, fileCfg) {
+		t.Fatalf("embedded specialists_default.yaml is out of sync with configs/strajaguard_specialists.yaml")
+	}
 }
 
 func TestLoadSpecialistsConfigOverrideFile(t *testing.T) {
@@ -105,7 +120,7 @@ func TestLoadSpecialistsConfigOverrideFile(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write temp config: %v", err)
 	}
-	cfg, source, err := loadSpecialistsConfigWithFallback(path)
+	cfg, source, err := loadSpecialistsConfigWithFallback(path, tmpDir)
 	if err != nil {
 		t.Fatalf("load specialists config override: %v", err)
 	}
@@ -130,6 +145,103 @@ func TestLoadSpecialistsConfigOverrideFile(t *testing.T) {
 	assertDetectorEnabled(t, cfg.Detectors.Jailbreak, "jailbreak2xl", true)
 	assertAttackIdx(t, cfg.Detectors.PromptInjection, "prompt_injection_vijil", 1)
 	assertAttackIdx(t, cfg.Detectors.Jailbreak, "jailbreak_jackhhao", 1)
+}
+
+func TestLoadSpecialistsConfigFallbackBundleFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	bundlePath := filepath.Join(tmpDir, bundleSpecialistsConfigFile)
+	data := `
+detectors:
+  prompt_injection:
+    - id: bundle_prompt
+      enabled: true
+      kind: sequence_classification
+      model_ref: bundle_prompt/model.onnx
+      tokenizer_dir: bundle_prompt/
+  jailbreak: []
+ensemble:
+  prompt_injection:
+    method: any
+    threshold: 0.8
+  jailbreak:
+    method: any
+    threshold: 0.8
+specialists: {}
+`
+	if err := os.WriteFile(bundlePath, []byte(data), 0o644); err != nil {
+		t.Fatalf("write bundle config: %v", err)
+	}
+
+	cfg, source, err := loadSpecialistsConfigWithFallback("", tmpDir)
+	if err != nil {
+		t.Fatalf("load specialists config fallback bundle: %v", err)
+	}
+	if source != specialistsConfigSourceBundle+":"+bundlePath {
+		t.Fatalf("expected source %s, got %s", specialistsConfigSourceBundle+":"+bundlePath, source)
+	}
+	if len(cfg.Detectors.PromptInjection) != 1 || strings.TrimSpace(cfg.Detectors.PromptInjection[0].ID) != "bundle_prompt" {
+		t.Fatalf("expected bundle detector config, got %+v", cfg.Detectors.PromptInjection)
+	}
+}
+
+func TestLoadSpecialistsConfigFallbackFileTakesPrecedenceOverBundle(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "custom.yaml")
+	bundlePath := filepath.Join(tmpDir, bundleSpecialistsConfigFile)
+
+	fileData := `
+detectors:
+  prompt_injection:
+    - id: file_prompt
+      enabled: true
+      kind: sequence_classification
+      model_ref: file_prompt/model.onnx
+      tokenizer_dir: file_prompt/
+  jailbreak: []
+ensemble:
+  prompt_injection:
+    method: any
+    threshold: 0.8
+  jailbreak:
+    method: any
+    threshold: 0.8
+specialists: {}
+`
+	bundleData := `
+detectors:
+  prompt_injection:
+    - id: bundle_prompt
+      enabled: true
+      kind: sequence_classification
+      model_ref: bundle_prompt/model.onnx
+      tokenizer_dir: bundle_prompt/
+  jailbreak: []
+ensemble:
+  prompt_injection:
+    method: any
+    threshold: 0.8
+  jailbreak:
+    method: any
+    threshold: 0.8
+specialists: {}
+`
+	if err := os.WriteFile(filePath, []byte(fileData), 0o644); err != nil {
+		t.Fatalf("write file config: %v", err)
+	}
+	if err := os.WriteFile(bundlePath, []byte(bundleData), 0o644); err != nil {
+		t.Fatalf("write bundle config: %v", err)
+	}
+
+	cfg, source, err := loadSpecialistsConfigWithFallback(filePath, tmpDir)
+	if err != nil {
+		t.Fatalf("load specialists config fallback precedence: %v", err)
+	}
+	if source != specialistsConfigSourceFile+":"+filePath {
+		t.Fatalf("expected source %s, got %s", specialistsConfigSourceFile+":"+filePath, source)
+	}
+	if len(cfg.Detectors.PromptInjection) != 1 || strings.TrimSpace(cfg.Detectors.PromptInjection[0].ID) != "file_prompt" {
+		t.Fatalf("expected file detector config, got %+v", cfg.Detectors.PromptInjection)
+	}
 }
 
 func TestDetectorEnabled(t *testing.T) {
@@ -427,3 +539,94 @@ func TestPickAttackClassUsesLabel2ID(t *testing.T) {
 		t.Fatalf("expected attack class index 1, got %d", attackIdx)
 	}
 }
+
+func TestHasLoadedSpecialistsModels(t *testing.T) {
+	cases := []struct {
+		name       string
+		categories map[string]*categoryEngine
+		pii        *specialistModel
+		want       bool
+	}{
+		{
+			name:       "none loaded",
+			categories: map[string]*categoryEngine{"prompt_injection": {detectors: nil}, "jailbreak": {detectors: nil}},
+			pii:        nil,
+			want:       false,
+		},
+		{
+			name:       "prompt detector loaded",
+			categories: map[string]*categoryEngine{"prompt_injection": {detectors: []Detector{&sequenceDetector{}}}, "jailbreak": {detectors: nil}},
+			pii:        nil,
+			want:       true,
+		},
+		{
+			name:       "pii loaded",
+			categories: map[string]*categoryEngine{"prompt_injection": {detectors: nil}, "jailbreak": {detectors: nil}},
+			pii:        &specialistModel{id: "pii_ner"},
+			want:       true,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := hasLoadedSpecialistsModels(tc.categories, tc.pii)
+			if got != tc.want {
+				t.Fatalf("hasLoadedSpecialistsModels() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateActiveSpecialistsAssets(t *testing.T) {
+	tmpDir := t.TempDir()
+	mustWrite := func(rel string) {
+		t.Helper()
+		path := filepath.Join(tmpDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	prompt := DetectorSpec{
+		ID:           "prompt_injection_vijil",
+		Enabled:      boolPtr(true),
+		Kind:         "sequence_classification",
+		ModelRef:     "prompt_injection_vijil/model.onnx",
+		TokenizerDir: "prompt_injection_vijil/",
+	}
+	jb := DetectorSpec{
+		ID:             "jailbreak2xl",
+		Enabled:        boolPtr(true),
+		Kind:           "qwen_next_token",
+		ModelRef:       "jailbreak2xl/model.onnx",
+		TokenizerDir:   "jailbreak2xl/",
+		PromptTemplate: "jailbreak2xl/prompt_template.txt",
+		LabelTokens:    "jailbreak2xl/label_tokens.json",
+	}
+
+	// Missing active model should fail.
+	mustWrite("prompt_injection_vijil/tokenizer.json")
+	if err := validateActiveSpecialistsAssets(tmpDir, []DetectorSpec{prompt}, nil, nil); err == nil {
+		t.Fatalf("expected missing active model to fail validation")
+	}
+
+	// Inactive detector with missing assets should pass.
+	prompt.Enabled = boolPtr(false)
+	if err := validateActiveSpecialistsAssets(tmpDir, []DetectorSpec{prompt}, nil, nil); err != nil {
+		t.Fatalf("inactive detector should not fail validation: %v", err)
+	}
+
+	// Active qwen_next_token requires model/tokenizer/template/labels.
+	mustWrite("jailbreak2xl/model.onnx")
+	mustWrite("jailbreak2xl/tokenizer.json")
+	mustWrite("jailbreak2xl/prompt_template.txt")
+	mustWrite("jailbreak2xl/label_tokens.json")
+	if err := validateActiveSpecialistsAssets(tmpDir, nil, []DetectorSpec{jb}, nil); err != nil {
+		t.Fatalf("expected qwen_next_token assets to validate: %v", err)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

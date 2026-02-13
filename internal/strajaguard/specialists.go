@@ -31,10 +31,13 @@ const (
 const (
 	specialistsConfigSourceEmbedded = "embedded_default"
 	specialistsConfigSourceFile     = "file"
+	specialistsConfigSourceBundle   = "bundle"
 )
 
 //go:embed specialists_default.yaml
 var embeddedSpecialistsConfig []byte
+
+const bundleSpecialistsConfigFile = "strajaguard_specialists.yaml"
 
 type SpecialistsEngine interface {
 	AnalyzeText(ctx context.Context, text string) (*SpecialistsResult, error)
@@ -86,9 +89,13 @@ type SpecialistConfig struct {
 }
 
 type Specialists struct {
-	seqLen     int
-	categories map[string]*categoryEngine
-	piiNER     *specialistModel
+	seqLen         int
+	bundleDir      string
+	promptSpecs    []DetectorSpec
+	jailbreakSpecs []DetectorSpec
+	piiSpec        *SpecialistConfig
+	categories     map[string]*categoryEngine
+	piiNER         *specialistModel
 }
 
 type SpecialistsDetectorsConfig struct {
@@ -239,7 +246,7 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 		seqLen = 256
 	}
 
-	cfg, source, err := loadSpecialistsConfigWithFallback(configPath)
+	cfg, source, err := loadSpecialistsConfigWithFallback(configPath, bundleDir)
 	if err != nil {
 		return nil, "", fmt.Errorf("load specialists config: %w", err)
 	}
@@ -247,6 +254,11 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 		return nil, "", errors.New("specialists config is empty")
 	}
 	redact.Logf("strajaguard specialists: config_source=%s", source)
+
+	promptSpecs, jailbreakSpecs, piiSpec, legacyPresent, legacyUsed := normalizeDetectorConfig(cfg)
+	if err := validateActiveSpecialistsAssets(bundleDir, promptSpecs, jailbreakSpecs, piiSpec); err != nil {
+		return nil, "", err
+	}
 
 	libPath := resolveSharedLibraryPath(bundleDir)
 	if libPath != "" {
@@ -272,7 +284,6 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 
 	versions := loadModelVersionsFromManifest(bundleDir)
 
-	promptSpecs, jailbreakSpecs, piiSpec, legacyPresent, legacyUsed := normalizeDetectorConfig(cfg)
 	if legacyPresent && !legacyUsed && (len(cfg.Detectors.PromptInjection) > 0 || len(cfg.Detectors.Jailbreak) > 0) {
 		warnLegacySpecialistsOnce.Do(func() {
 			redact.Logf("strajaguard specialists: both legacy 'specialists' and new 'detectors' config present; using 'detectors'")
@@ -356,12 +367,20 @@ func LoadSpecialistsEngine(bundleDir string, seqLen int, rt RuntimeSettings, con
 		}
 		piiNER = m
 	}
+	if !hasLoadedSpecialistsModels(categories, piiNER) {
+		return nil, "", errors.New("no active specialists loaded")
+	}
 
+	piiSpecCopy := cloneSpecialistConfigPtr(piiSpec)
 	_ = legacyUsed
 	return &Specialists{
-		seqLen:     seqLen,
-		categories: categories,
-		piiNER:     piiNER,
+		seqLen:         seqLen,
+		bundleDir:      bundleDir,
+		promptSpecs:    append([]DetectorSpec(nil), promptSpecs...),
+		jailbreakSpecs: append([]DetectorSpec(nil), jailbreakSpecs...),
+		piiSpec:        piiSpecCopy,
+		categories:     categories,
+		piiNER:         piiNER,
 	}, source, nil
 }
 
@@ -377,7 +396,7 @@ func LoadSpecialistsConfig(path string) (*SpecialistsConfig, error) {
 	return parseSpecialistsConfig(data)
 }
 
-func loadSpecialistsConfigWithFallback(path string) (*SpecialistsConfig, string, error) {
+func loadSpecialistsConfigWithFallback(path string, bundleDir string) (*SpecialistsConfig, string, error) {
 	if strings.TrimSpace(path) != "" {
 		info, err := os.Stat(path)
 		if err == nil && info != nil && !info.IsDir() {
@@ -386,6 +405,20 @@ func loadSpecialistsConfigWithFallback(path string) (*SpecialistsConfig, string,
 				return nil, "", err
 			}
 			return cfg, specialistsConfigSourceFile + ":" + path, nil
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, "", err
+		}
+	}
+	if strings.TrimSpace(bundleDir) != "" {
+		bundlePath := filepath.Join(bundleDir, bundleSpecialistsConfigFile)
+		info, err := os.Stat(bundlePath)
+		if err == nil && info != nil && !info.IsDir() {
+			cfg, err := LoadSpecialistsConfig(bundlePath)
+			if err != nil {
+				return nil, "", err
+			}
+			return cfg, specialistsConfigSourceBundle + ":" + bundlePath, nil
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, "", err
@@ -407,6 +440,93 @@ func parseSpecialistsConfig(data []byte) (*SpecialistsConfig, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func cloneSpecialistConfigPtr(in *SpecialistConfig) *SpecialistConfig {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+
+func validateActiveSpecialistsAssets(bundleDir string, promptSpecs, jailbreakSpecs []DetectorSpec, piiSpec *SpecialistConfig) error {
+	if strings.TrimSpace(bundleDir) == "" {
+		return errors.New("bundleDir is empty")
+	}
+	var missing []string
+	addMissing := func(msg string) {
+		if strings.TrimSpace(msg) != "" {
+			missing = append(missing, msg)
+		}
+	}
+	requireFile := func(id string, rel string, label string) {
+		rel = strings.TrimSpace(rel)
+		if rel == "" {
+			addMissing(fmt.Sprintf("specialist %s missing %s", id, label))
+			return
+		}
+		path := filepath.Join(bundleDir, filepath.FromSlash(rel))
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			addMissing(fmt.Sprintf("specialist %s missing %s: %s", id, label, rel))
+		}
+	}
+	requireTokenizer := func(id string, rel string) {
+		rel = strings.TrimSpace(rel)
+		if rel == "" {
+			addMissing(fmt.Sprintf("specialist %s missing tokenizer_dir", id))
+			return
+		}
+		path := filepath.Join(bundleDir, filepath.FromSlash(rel))
+		if !tokenizerAssetsPresent(path) {
+			addMissing(fmt.Sprintf("specialist %s missing tokenizer assets: %s", id, rel))
+		}
+	}
+	validateDetector := func(spec DetectorSpec) {
+		if !detectorEnabled(spec) {
+			return
+		}
+		id := strings.TrimSpace(spec.ID)
+		if id == "" {
+			id = "<unknown>"
+		}
+		kind := strings.TrimSpace(strings.ToLower(spec.Kind))
+		switch kind {
+		case "sequence_classification":
+			requireFile(id, spec.ModelRef, "model_ref")
+			requireTokenizer(id, spec.TokenizerDir)
+		case "qwen_next_token":
+			requireFile(id, spec.ModelRef, "model_ref")
+			requireTokenizer(id, spec.TokenizerDir)
+			requireFile(id, spec.PromptTemplate, "prompt_template")
+			requireFile(id, spec.LabelTokens, "label_tokens")
+		case "qwen_refusal_pipeline":
+			requireFile(id, spec.ModelRef, "model_ref")
+			requireTokenizer(id, spec.TokenizerDir)
+			requireFile(id, spec.PromptTemplate, "prompt_template")
+			requireFile(id, spec.RefusalModelRef, "refusal_classifier_model_ref")
+			requireTokenizer(id, spec.RefusalTokenizer)
+		default:
+			addMissing(fmt.Sprintf("specialist %s unsupported kind: %s", id, spec.Kind))
+		}
+	}
+	for _, spec := range promptSpecs {
+		validateDetector(spec)
+	}
+	for _, spec := range jailbreakSpecs {
+		validateDetector(spec)
+	}
+	if piiSpec != nil && strings.TrimSpace(piiSpec.Kind) != "" {
+		id := "pii_ner"
+		requireFile(id, piiSpec.Onnx, "onnx")
+		requireTokenizer(id, piiSpec.TokenizerDir)
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("active specialists assets missing:\n%s", strings.Join(missing, "\n"))
+	}
+	return nil
 }
 
 func normalizeDetectorConfig(cfg *SpecialistsConfig) (prompt []DetectorSpec, jailbreak []DetectorSpec, pii *SpecialistConfig, legacyPresent bool, legacyUsed bool) {
@@ -756,6 +876,14 @@ func (s *Specialists) Warmup(sample string) (time.Duration, error) {
 	return time.Since(start), nil
 }
 
+// HealthCheck verifies active specialists declared in config still exist in bundleDir.
+func (s *Specialists) HealthCheck() error {
+	if s == nil {
+		return errors.New("specialists engine not initialized")
+	}
+	return validateActiveSpecialistsAssets(s.bundleDir, s.promptSpecs, s.jailbreakSpecs, s.piiSpec)
+}
+
 func normalizeEnsembleMethod(method string) string {
 	m := strings.ToLower(strings.TrimSpace(method))
 	switch m {
@@ -1087,6 +1215,18 @@ func mergeEntities(in []safety.PIIEntity) []safety.PIIEntity {
 	}
 	out = append(out, cur)
 	return out
+}
+
+func hasLoadedSpecialistsModels(categories map[string]*categoryEngine, piiNER *specialistModel) bool {
+	if piiNER != nil {
+		return true
+	}
+	for _, eng := range categories {
+		if eng != nil && len(eng.detectors) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveSpecialistModelPath(bundleDir, rel string) string {
