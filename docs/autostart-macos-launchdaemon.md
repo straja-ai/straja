@@ -12,7 +12,6 @@ Assumptions:
 Your directory should look like:
 
 ```text
-/Users/USERNAME/straja/straja
 /Users/USERNAME/straja/run.sh
 /Users/USERNAME/straja/straja.yaml
 /Users/USERNAME/straja/lib/
