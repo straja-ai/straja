@@ -20,6 +20,11 @@ MOCK_GATEWAY_PID := /tmp/straja_mock_gateway.pid
 STRAJAGUARD_ONNX ?= intel/strajaguard_v1/strajaguard_v1.onnx
 BENCH_CONFIG ?= examples/straja.mock.yaml
 DOCKER_IMAGE ?= straja:local
+COMPETITION_IMAGE ?= straja:competition
+COMPETITION_CONFIG ?= configs/straja.competition.yaml
+COMPETITION_BUNDLE_SRC ?= ../straja-intel-guard/artifacts/strajaguard_v1_specialists
+COMPETITION_IMAGE_REF ?= docker.io/somanole/straja:competition-gsarena-v1
+COMPETITION_PLATFORMS ?= linux/amd64,linux/arm64
 EVAL_BUNDLE ?= ../straja-intel-guard/artifacts/strajaguard_v1_specialists
 EVAL_CONFIG ?= configs/strajaguard_specialists.yaml
 EVAL_PI_INPUT ?= data/prompts_pi_from_testcsv.jsonl
@@ -39,7 +44,7 @@ EVAL_VERBOSE ?= false
 EVAL_OUTPUT ?= /tmp/straja_eval_detectors.jsonl
 EVAL_METRICS ?= /tmp/straja_eval_detectors.metrics.log
 
-.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run activation-receiver eval eval_detectors eval_detectors_500
+.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run docker-build-competition docker-run-competition docker-start-competition docker-stop-competition docker-push-competition-multiarch sync-competition-bundle activation-receiver eval eval_detectors eval_detectors_500
 
 all: build
 
@@ -246,3 +251,86 @@ docker-run: docker-build
 	echo ">> Readiness response:"; \
 	cat /tmp/straja_ready.json; echo; \
 	docker rm -f straja-local >/dev/null 2>&1 || true
+
+## Sync only the active specialists bundle into this repo for container builds.
+sync-competition-bundle:
+	@echo ">> Syncing competition bundle from $(COMPETITION_BUNDLE_SRC)..."
+	@test -d "$(COMPETITION_BUNDLE_SRC)" || (echo "missing bundle dir: $(COMPETITION_BUNDLE_SRC)" && exit 1)
+	@mkdir -p intel/strajaguard_v1_specialists
+	@rsync -a --delete "$(COMPETITION_BUNDLE_SRC)/" intel/strajaguard_v1_specialists/
+	@echo ">> Bundle synced to intel/strajaguard_v1_specialists"
+
+## Build competition image (classification only, local bundle, no upstream dependency).
+docker-build-competition:
+	@echo ">> Building competition Docker image ($(COMPETITION_IMAGE))..."
+	@docker build --build-arg STRAJA_CONFIG=$(COMPETITION_CONFIG) -t $(COMPETITION_IMAGE) .
+
+## Run competition image and check readiness.
+docker-run-competition: docker-build-competition
+	@echo ">> Running $(COMPETITION_IMAGE)..."
+	@docker rm -f straja-competition >/dev/null 2>&1 || true
+	@docker run -d --name straja-competition -p 8080:8080 $(COMPETITION_IMAGE) >/dev/null
+	@echo ">> Waiting for readiness..."
+	@attempts=0; \
+	while [ $$attempts -lt 20 ]; do \
+		if docker exec straja-competition /busybox wget -qO- http://127.0.0.1:8080/readyz >/tmp/straja_ready_competition.json 2>/dev/null; then \
+			break; \
+		fi; \
+		attempts=$$((attempts+1)); \
+		sleep 1; \
+	done; \
+	if [ $$attempts -ge 20 ]; then \
+		echo "Gateway not ready after 20s"; \
+		echo ">> Container state:"; \
+		docker ps -a --filter name=straja-competition; \
+		echo ">> Last logs:"; \
+		docker logs --tail 200 straja-competition || true; \
+		docker rm -f straja-competition >/dev/null 2>&1 || true; \
+		exit 1; \
+	fi; \
+	echo ">> Readiness response:"; \
+	cat /tmp/straja_ready_competition.json; echo; \
+	echo ">> Sample check:"; \
+	docker exec straja-competition /busybox wget -qO- --post-data='{"conversation":[{"role":"user","content":"hello"}]}' --header='Content-Type: application/json' http://127.0.0.1:8080/v1/competition/check; echo; \
+	docker rm -f straja-competition >/dev/null 2>&1 || true
+
+## Start competition image and keep it running for manual testing.
+docker-start-competition: docker-build-competition
+	@echo ">> Starting $(COMPETITION_IMAGE) (persistent)..."
+	@docker rm -f straja-competition >/dev/null 2>&1 || true
+	@docker run -d --name straja-competition -p 8080:8080 $(COMPETITION_IMAGE) >/dev/null
+	@echo ">> Waiting for readiness..."
+	@attempts=0; \
+	while [ $$attempts -lt 20 ]; do \
+		if docker exec straja-competition /busybox wget -qO- http://127.0.0.1:8080/readyz >/tmp/straja_ready_competition.json 2>/dev/null; then \
+			break; \
+		fi; \
+		attempts=$$((attempts+1)); \
+		sleep 1; \
+	done; \
+	if [ $$attempts -ge 20 ]; then \
+		echo "Gateway not ready after 20s"; \
+		echo ">> Container state:"; \
+		docker ps -a --filter name=straja-competition; \
+		echo ">> Last logs:"; \
+		docker logs --tail 200 straja-competition || true; \
+		exit 1; \
+	fi; \
+	echo ">> Ready:"; \
+	cat /tmp/straja_ready_competition.json; echo; \
+	echo ">> Container kept running as 'straja-competition'"
+
+## Stop the persistent competition container.
+docker-stop-competition:
+	@echo ">> Stopping straja-competition..."
+	@docker rm -f straja-competition >/dev/null 2>&1 || true
+
+## Build and push a multi-arch competition image (amd64 + arm64) under one tag.
+docker-push-competition-multiarch:
+	@echo ">> Building and pushing multi-arch image $(COMPETITION_IMAGE_REF)..."
+	@docker buildx build \
+		--platform $(COMPETITION_PLATFORMS) \
+		--build-arg STRAJA_CONFIG=$(COMPETITION_CONFIG) \
+		-t $(COMPETITION_IMAGE_REF) \
+		--push \
+		.

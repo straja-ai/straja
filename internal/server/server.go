@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -266,12 +267,75 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		if meta, err := strajaguard.LoadValidationMeta(strajaGuardDir); err == nil {
 			cachedMeta = &meta
 		}
+		if currentVersion == "" {
+			if localVersion, err := resolveLocalBundleVersion(strajaGuardDir, ""); err == nil {
+				currentVersion = localVersion
+			}
+		}
 
-		if sgTrustKey == "" {
-			_, sgStatus, sgReason = sgFallbackDecision(false, strajaguard.ValidateOtherError, "")
-		} else if err := os.MkdirAll(strajaGuardDir, 0o755); err != nil {
+		if err := os.MkdirAll(strajaGuardDir, 0o755); err != nil {
 			sgReason = "invalid_bundle"
 			fail("strajaguard: cannot create bundle dir %s: %v; running regex-only", strajaGuardDir, err)
+		} else if !cfg.Intel.StrajaGuardV1.UpdateOnStart {
+			localVersion, err := resolveLocalBundleVersion(strajaGuardDir, currentVersion)
+			if err != nil {
+				sgStatus = "disabled_missing_bundle"
+				sgReason = "missing_bundle"
+				redact.Logf("strajaguard: update_on_start=false and no local bundle available in %s", strajaGuardDir)
+			} else {
+				bundleDir := filepath.Join(strajaGuardDir, localVersion)
+				skipIntegrityCheck := false
+				if localVersion == "." {
+					bundleDir = strajaGuardDir
+					skipIntegrityCheck = true
+					if manifestVersion := readBundleManifestVersion(bundleDir); manifestVersion != "" {
+						localVersion = manifestVersion
+					} else {
+						localVersion = "embedded"
+					}
+				}
+				integrityOK := true
+				if !skipIntegrityCheck {
+					if integErr := strajaguard.VerifyBundleIntegrity(strajaGuardDir, localVersion); integErr != nil {
+						sgStatus = "disabled_invalid_bundle"
+						sgReason = "invalid_bundle"
+						redact.Logf("strajaguard: local bundle verification failed version=%s err=%v", localVersion, integErr)
+						integrityOK = false
+					}
+				}
+				if integrityOK {
+					loadedModel, loadedSpecialists, loadedSource, loadErr := loadStrajaGuardBundleForFamily(
+						sgFamily,
+						bundleDir,
+						cfg.Security.SeqLen,
+						rt,
+						cfg.StrajaGuard.Specialists.ConfigPath,
+					)
+					if loadErr != nil {
+						sgStatus = "disabled_invalid_bundle"
+						sgReason = "invalid_bundle"
+						redact.Logf("strajaguard: local bundle version=%s failed to load: %v", localVersion, loadErr)
+					} else {
+						sgModel = loadedModel
+						sgSpecialists = loadedSpecialists
+						sgSpecialistsSource = loadedSource
+						if state.CurrentVersion != localVersion {
+							state.PreviousVersion = state.CurrentVersion
+							state.CurrentVersion = localVersion
+							_ = strajaguard.SaveBundleState(strajaGuardDir, state)
+						}
+						activeBundleVersion = localVersion
+						sgStatus = "offline_cached_bundle"
+						sgReason = "update_disabled"
+						if cachedMeta != nil {
+							sgMeta = cachedMeta
+						}
+						redact.Logf("strajaguard: loaded local bundle version=%s (update_on_start=false)", localVersion)
+					}
+				}
+			}
+		} else if sgTrustKey == "" {
+			_, sgStatus, sgReason = sgFallbackDecision(false, strajaguard.ValidateOtherError, "")
 		} else {
 			ctx := context.Background()
 
@@ -287,32 +351,21 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 					sgStatus = "disabled_invalid_bundle"
 					sgReason = "invalid_bundle"
 				} else {
-					loadFailed := false
-					switch sgFamily {
-					case "strajaguard_v1_specialists":
-						engine, src, loadErr := strajaguard.LoadSpecialistsEngine(dir, cfg.Security.SeqLen, rt, cfg.StrajaGuard.Specialists.ConfigPath)
-						if loadErr != nil {
-							redact.Logf("strajaguard: specialists bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
-							sgStatus = "disabled_invalid_bundle"
-							sgReason = "invalid_bundle"
-							loadFailed = true
-							break
-						}
-						sgSpecialists = engine
-						sgSpecialistsSource = src
-					default:
-						model, loadErr := strajaguard.LoadModel(dir, cfg.Security.SeqLen, rt)
-						if loadErr != nil {
-							redact.Logf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
-							sgStatus = "disabled_invalid_bundle"
-							sgReason = "invalid_bundle"
-							loadFailed = true
-							break
-						}
-						sgModel = model
-					}
-
-					if !loadFailed {
+					loadedModel, loadedSpecialists, loadedSource, loadErr := loadStrajaGuardBundleForFamily(
+						sgFamily,
+						dir,
+						cfg.Security.SeqLen,
+						rt,
+						cfg.StrajaGuard.Specialists.ConfigPath,
+					)
+					if loadErr != nil {
+						redact.Logf("strajaguard: bundle version=%s downloaded but failed to load: %v", valRes.BundleInfo.Version, loadErr)
+						sgStatus = "disabled_invalid_bundle"
+						sgReason = "invalid_bundle"
+					} else {
+						sgModel = loadedModel
+						sgSpecialists = loadedSpecialists
+						sgSpecialistsSource = loadedSource
 						state.PreviousVersion = state.CurrentVersion
 						state.CurrentVersion = valRes.BundleInfo.Version
 						_ = strajaguard.SaveBundleState(strajaGuardDir, state)
@@ -351,38 +404,27 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 					}
 					if integErr := strajaguard.VerifyBundleIntegrity(strajaGuardDir, currentVersion); integErr == nil {
 						bundleDir := filepath.Join(strajaGuardDir, currentVersion)
-						switch sgFamily {
-						case "strajaguard_v1_specialists":
-							engine, src, loadErr := strajaguard.LoadSpecialistsEngine(bundleDir, cfg.Security.SeqLen, rt, cfg.StrajaGuard.Specialists.ConfigPath)
-							if loadErr != nil {
-								sgStatus = "disabled_invalid_bundle"
-								sgReason = "invalid_bundle"
-							} else {
-								sgSpecialists = engine
-								sgSpecialistsSource = src
-								activeBundleVersion = currentVersion
-								sgStatus = "offline_cached_bundle"
-								sgReason = "network_error"
-								if cachedMeta != nil {
-									sgMeta = cachedMeta
-								}
-								redact.Logf("strajaguard: using offline cached bundle version=%s (reason=validate_network_error)", currentVersion)
+						loadedModel, loadedSpecialists, loadedSource, loadErr := loadStrajaGuardBundleForFamily(
+							sgFamily,
+							bundleDir,
+							cfg.Security.SeqLen,
+							rt,
+							cfg.StrajaGuard.Specialists.ConfigPath,
+						)
+						if loadErr != nil {
+							sgStatus = "disabled_invalid_bundle"
+							sgReason = "invalid_bundle"
+						} else {
+							sgModel = loadedModel
+							sgSpecialists = loadedSpecialists
+							sgSpecialistsSource = loadedSource
+							activeBundleVersion = currentVersion
+							sgStatus = "offline_cached_bundle"
+							sgReason = "network_error"
+							if cachedMeta != nil {
+								sgMeta = cachedMeta
 							}
-						default:
-							model, loadErr := strajaguard.LoadModel(bundleDir, cfg.Security.SeqLen, rt)
-							if loadErr != nil {
-								sgStatus = "disabled_invalid_bundle"
-								sgReason = "invalid_bundle"
-							} else {
-								sgModel = model
-								activeBundleVersion = currentVersion
-								sgStatus = "offline_cached_bundle"
-								sgReason = "network_error"
-								if cachedMeta != nil {
-									sgMeta = cachedMeta
-								}
-								redact.Logf("strajaguard: using offline cached bundle version=%s (reason=validate_network_error)", currentVersion)
-							}
+							redact.Logf("strajaguard: using offline cached bundle version=%s (reason=validate_network_error)", currentVersion)
 						}
 					} else {
 						sgStatus = "disabled_invalid_bundle"
@@ -545,6 +587,7 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	mux.HandleFunc("/v1/responses", s.wrapHandler(s.handleResponses, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/guard/request", s.wrapHandler(s.handleGuardRequest, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/guard/response", s.wrapHandler(s.handleGuardResponse, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/v1/competition/check", s.wrapHandler(s.handleCompetitionCheck, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/straja/requests/", s.wrapHandler(s.handleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
 	mux.HandleFunc("/v1/requests/", s.wrapHandler(s.handleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
 	mux.HandleFunc("/v1/toolgate/check", s.wrapHandler(s.handleToolgateCheck, handlerOptions{limitBody: true, useLimiter: true}))
@@ -927,7 +970,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) readiness() (readinessResponse, bool) {
 	mode := "regex_only"
-	if s.strajaGuardModel != nil {
+	if s.strajaGuardEnabled() {
 		mode = "ml"
 	}
 
@@ -1648,6 +1691,86 @@ func reasonForFallback(err error) string {
 		return "validate_failed_network"
 	}
 	return "validate_failed"
+}
+
+func resolveLocalBundleVersion(baseDir, currentVersion string) (string, error) {
+	baseDir = strings.TrimSpace(baseDir)
+	currentVersion = strings.TrimSpace(currentVersion)
+	if baseDir == "" {
+		return "", errors.New("bundle base directory is empty")
+	}
+
+	if currentVersion != "" {
+		if st, err := os.Stat(filepath.Join(baseDir, currentVersion)); err == nil && st.IsDir() {
+			return currentVersion, nil
+		}
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "manifest.json")); err == nil {
+		if _, err := os.Stat(filepath.Join(baseDir, "manifest.sig")); err == nil {
+			return ".", nil
+		}
+	}
+
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return "", err
+	}
+	versions := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := strings.TrimSpace(entry.Name())
+		if name == "" || strings.HasPrefix(name, ".") || strings.Contains(name, ".tmp-") || strings.HasSuffix(name, ".bak") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(baseDir, name, "manifest.json")); err != nil {
+			continue
+		}
+		versions = append(versions, name)
+	}
+	if len(versions) == 0 {
+		return "", errors.New("no local bundle versions found")
+	}
+	sort.Strings(versions)
+	return versions[len(versions)-1], nil
+}
+
+func readBundleManifestVersion(bundleDir string) string {
+	data, err := os.ReadFile(filepath.Join(strings.TrimSpace(bundleDir), "manifest.json"))
+	if err != nil {
+		return ""
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(manifest.Version)
+}
+
+func loadStrajaGuardBundleForFamily(
+	family string,
+	bundleDir string,
+	seqLen int,
+	rt strajaguard.RuntimeSettings,
+	specialistsConfigPath string,
+) (*strajaguard.StrajaGuardModel, strajaguard.SpecialistsEngine, string, error) {
+	switch family {
+	case "strajaguard_v1_specialists":
+		engine, src, err := strajaguard.LoadSpecialistsEngine(bundleDir, seqLen, rt, specialistsConfigPath)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return nil, engine, src, nil
+	default:
+		model, err := strajaguard.LoadModel(bundleDir, seqLen, rt)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return model, nil, "", nil
+	}
 }
 
 // sgFallbackDecision determines whether cached bundles may be used and what status/reason to report.

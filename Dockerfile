@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
 
 ARG GO_VERSION=1.25.4
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS builder
+ARG STRAJA_CONFIG=straja.yaml
+FROM --platform=$TARGETPLATFORM golang:${GO_VERSION}-bookworm AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG STRAJA_CONFIG
 
 WORKDIR /src
 
@@ -56,9 +58,11 @@ RUN mkdir -p /out/lib && \
 FROM gcr.io/distroless/base-debian12
 
 WORKDIR /app
+ARG STRAJA_CONFIG
 
-COPY --from=builder /src/straja.yaml /etc/straja/straja.yaml
+COPY --from=builder /src/${STRAJA_CONFIG} /etc/straja/straja.yaml
 COPY --from=builder /src/configs /app/configs
+COPY --from=builder /src/intel /var/lib/straja/intel
 COPY --from=builder /out/straja /app/straja
 COPY --from=builder /out/lib/ /usr/local/lib/
 COPY --from=builder /out/lib/ /usr/lib/

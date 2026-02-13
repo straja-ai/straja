@@ -1,0 +1,129 @@
+server:
+  addr: ":8080"
+  read_header_timeout: "5s"
+  read_timeout: "30s"
+  write_timeout: "120s"
+  idle_timeout: "60s"
+  max_request_body_bytes: 1048576
+  max_non_stream_response_bytes: 1048576
+  max_in_flight_requests: 32
+  rate_limit_per_ip: 50
+  rate_limit_per_ip_burst: 50
+  upstream_timeout: "30s"
+  max_messages: 64
+  max_total_message_chars: 32000
+
+default_provider: "competition_dummy"
+
+providers:
+  competition_dummy:
+    type: "openai"
+    base_url: "https://api.openai.com/v1"
+    api_key: "unused"
+
+projects:
+  - id: "competition"
+    provider: "competition_dummy"
+    api_keys:
+      - "competition-local-key"
+
+logging:
+  activation_level: "metadata"
+
+telemetry:
+  enabled: false
+
+activation:
+  enabled: false
+
+policy:
+  banned_words: "ignore"
+  banned_words_list: []
+  pii: ignore
+  pii_entities:
+    email: false
+    phone: false
+    credit_card: false
+    iban: false
+    tokens: false
+  injection: "block"
+  prompt_injection: block
+  jailbreak: block
+  toxicity: "ignore"
+
+intelligence:
+  enabled: false
+  trust_key_env: "STRAJA_TRUST_KEY"
+
+intel:
+  strajaguard:
+    family: strajaguard_v1_specialists
+  strajaguard_v1:
+    enabled: true
+    update_on_start: false
+    require_ml: true
+    allow_regex_only: false
+    intel_dir: "/var/lib/straja/intel"
+    version_file: "version"
+    trust_server_base_url: "https://straja.ai"
+    request_timeout_seconds: 10
+    trust_validate_timeout_seconds: 3
+    bundle_download_timeout_seconds: 3
+
+security:
+  enabled: true
+  bundle_dir: "/var/lib/straja/intel/strajaguard_v1_specialists"
+  seq_len: 256
+  prompt_injection:
+    regex_enabled: false
+    ml_enabled: true
+    ml_warn_threshold: 0.60
+    ml_block_threshold: 0.80
+    action_on_block: "block"
+  jailbreak:
+    regex_enabled: false
+    ml_enabled: true
+    ml_warn_threshold: 0.60
+    ml_block_threshold: 0.80
+    action_on_block: "block"
+  data_exfil:
+    regex_enabled: false
+    ml_enabled: false
+    ml_warn_threshold: 0.55
+    ml_block_threshold: 0.75
+    action_on_block: "block"
+  pii:
+    regex_enabled: false
+    ml_enabled: false
+    ml_warn_threshold: 0.50
+    action: "ignore"
+  secrets:
+    regex_enabled: false
+    ml_enabled: false
+    ml_warn_threshold: 0.5
+    ml_block_threshold: 0.85
+    action_on_regex_hit: "ignore"
+    action_on_ml_only: "ignore"
+  guard_api:
+    require_auth: false
+
+tool_gate:
+  enabled: true
+  mode: elevated_only
+  allowlist_hosts: []
+  allowlist_commands: []
+
+response_guard:
+  enabled: false
+  mode: warn
+  categories: {}
+
+console:
+  enabled: false
+
+strajaguard:
+  max_sessions: 2
+  intra_threads: 4
+  inter_threads: 1
+  specialists:
+    config_path: "/app/configs/strajaguard_specialists.yaml"

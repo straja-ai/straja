@@ -40,6 +40,25 @@ OpenAI SDKs work unchanged. No changes to model call logic are required.
 
 See the documentation below for exact commands and examples.
 
+## Competition Container (GS Arena)
+
+Use the competition profile to run classification-only mode with a local specialists bundle and no upstream model call.
+
+1. Sync the exported bundle from `straja-intel-guard`:
+   `make sync-competition-bundle COMPETITION_BUNDLE_SRC=../straja-intel-guard/artifacts/strajaguard_v1_specialists`
+2. Build the image:
+   `make docker-build-competition`
+3. Run the image:
+   `make docker-run-competition`
+
+Endpoint:
+
+- `POST /v1/competition/check`
+- Request:
+  `{"conversation":[{"role":"user","content":"string"}]}`
+- Response:
+  `{"violation":true|false,"confidence":0.0-1.0}`
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
