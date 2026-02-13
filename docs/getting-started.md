@@ -94,3 +94,9 @@ You should receive an OpenAI-compatible JSON response.
 
 - If the config file does not exist, Straja loads defaults (`internal/config/config.go`), but `config.Validate` will fail because there are no providers/projects configured.
 - Project API keys must be unique across projects (`internal/auth/auth.go`).
+
+## Auto-start on macOS
+
+If you want Straja to start automatically at boot, see:
+
+- [Straja Gateway Auto-Start on macOS (LaunchDaemon)](autostart-macos-launchdaemon.md)

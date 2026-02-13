@@ -141,6 +141,27 @@ func normalizeSpecialistsConfigSource(source string) string {
 	return source
 }
 
+func resolveConfigRelativePath(configPath, p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return p
+	}
+	if abs, err := filepath.Abs(configPath); err == nil {
+		configPath = abs
+	}
+
+	baseDir := filepath.Dir(configPath)
+	if strings.TrimSpace(baseDir) == "" {
+		return filepath.Clean(p)
+	}
+	return filepath.Clean(filepath.Join(baseDir, p))
+}
+
 func setConsoleRobotsHeader(w http.ResponseWriter) {
 	w.Header().Set(console.RobotsTagHeader, console.RobotsTagValue)
 }
@@ -245,13 +266,13 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 		sgReason            string
 		sgMeta              *strajaguard.ValidationMeta
 	)
+	cfg.Intel.StrajaGuardV1.IntelDir = resolveConfigRelativePath(configPath, cfg.Intel.StrajaGuardV1.IntelDir)
+	cfg.Security.BundleDir = resolveConfigRelativePath(configPath, cfg.Security.BundleDir)
+	cfg.StrajaGuard.Specialists.ConfigPath = resolveConfigRelativePath(configPath, cfg.StrajaGuard.Specialists.ConfigPath)
+
 	sgStatus = "disabled_missing_bundle"
 	sgFamily := config.ResolveStrajaGuardFamily(cfg)
 	strajaGuardDir := cfg.Security.BundleDir
-	if cfg.Intel.StrajaGuardV1.IntelDir != "" {
-		strajaGuardDir = filepath.Join(cfg.Intel.StrajaGuardV1.IntelDir, sgFamily)
-		cfg.Security.BundleDir = strajaGuardDir
-	}
 
 	if !cfg.Security.Enabled || !cfg.Intel.StrajaGuardV1.Enabled {
 		redact.Logf("strajaguard disabled via config; running regex-only")

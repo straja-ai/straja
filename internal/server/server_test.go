@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -249,5 +250,43 @@ func TestStrajaGuardEnabledUsesSpecialistsHealth(t *testing.T) {
 	srv.specialistsEngine = &fakeUnhealthySpecialistsEngine{}
 	if srv.strajaGuardEnabled() {
 		t.Fatalf("expected unhealthy specialists to be treated as disabled")
+	}
+}
+
+func TestNewKeepsExplicitBundleDir(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.Security.Enabled = false
+	cfg.Intel.StrajaGuardV1.Enabled = false
+	cfg.Intel.StrajaGuard.Family = "strajaguard_v1_specialists"
+	cfg.Intel.StrajaGuardV1.IntelDir = "/tmp/intel-root"
+	cfg.Security.BundleDir = "/tmp/custom-bundle"
+
+	_ = newTestServer(t, cfg)
+
+	if cfg.Security.BundleDir != "/tmp/custom-bundle" {
+		t.Fatalf("expected explicit bundle dir to be preserved, got %q", cfg.Security.BundleDir)
+	}
+}
+
+func TestNewResolvesRelativeBundleDirFromConfigPath(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.Security.Enabled = false
+	cfg.Intel.StrajaGuardV1.Enabled = false
+	cfg.Security.BundleDir = "./intel/strajaguard_v1_specialists"
+	cfg.StrajaGuard.Specialists.ConfigPath = "./configs/strajaguard_specialists.yaml"
+
+	root := t.TempDir()
+	configPath := filepath.Join(root, "etc", "straja", "straja.yaml")
+
+	authz := auth.NewAuth(cfg)
+	_ = New(cfg, authz, configPath)
+
+	wantBundleDir := filepath.Join(root, "etc", "straja", "intel", "strajaguard_v1_specialists")
+	if cfg.Security.BundleDir != wantBundleDir {
+		t.Fatalf("expected bundle dir %q, got %q", wantBundleDir, cfg.Security.BundleDir)
+	}
+	wantSpecialistsPath := filepath.Join(root, "etc", "straja", "configs", "strajaguard_specialists.yaml")
+	if cfg.StrajaGuard.Specialists.ConfigPath != wantSpecialistsPath {
+		t.Fatalf("expected specialists config path %q, got %q", wantSpecialistsPath, cfg.StrajaGuard.Specialists.ConfigPath)
 	}
 }

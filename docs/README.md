@@ -5,6 +5,7 @@ This documentation set is generated from the current repository. Every option an
 ## Contents
 
 - [Getting started](getting-started.md)
+- [Auto-start on macOS (LaunchDaemon)](autostart-macos-launchdaemon.md)
 - [Installation](installation.md)
 - [Configuration reference](configuration.md)
 - [Environment variables](environment-variables.md)
