@@ -18,11 +18,6 @@ Your directory should look like:
 /Users/USERNAME/straja/lib/
 ```
 
-Notes:
-
-- `straja.yaml` is optional.
-- `lib/` is optional.
-
 ## Step 2 -- Verify it runs manually
 
 Run:
