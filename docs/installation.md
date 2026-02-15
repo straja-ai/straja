@@ -3,35 +3,19 @@
 ## Binary (recommended)
 
 ```bash
-os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-arch="$(uname -m)"
-
-case "$os" in
-  linux|darwin) ;;
-  *) echo "Unsupported OS: $os" >&2; exit 1 ;;
-esac
-
-case "$arch" in
-  x86_64|amd64) arch="amd64" ;;
-  arm64|aarch64) arch="arm64" ;;
-  *) echo "Unsupported arch: $arch" >&2; exit 1 ;;
-esac
-
-asset="straja_${os}_${arch}.tar.gz"
-curl -L -o "${asset}" "https://github.com/straja-ai/straja/releases/latest/download/${asset}"
-tar -xzf "${asset}"
+curl -fsSL https://straja.ai/install.sh | bash
 ```
 
-Verify checksum (recommended):
+Install a specific version:
 
 ```bash
-curl -LO "https://github.com/straja-ai/straja/releases/latest/download/checksums.txt"
-if command -v sha256sum >/dev/null 2>&1; then
-  sha_cmd="sha256sum"
-else
-  sha_cmd="shasum -a 256"
-fi
-grep "  ${asset}$" checksums.txt | $sha_cmd -c -
+curl -fsSL https://straja.ai/install.sh | bash -s -- --version v0.1.0
+```
+
+Install into a custom directory:
+
+```bash
+curl -fsSL https://straja.ai/install.sh | bash -s -- --dir /opt/straja
 ```
 
 Set required environment variables before running:
@@ -48,6 +32,24 @@ Run with:
 ./straja/run.sh
 ```
 
+Update later (recommended):
+
+```bash
+./straja/straja update check
+./straja/straja update apply
+```
+
+If Straja runs as a managed service, apply and restart in one step:
+
+```bash
+./straja/straja update apply --restart
+```
+
+Notes:
+
+- `update apply` preserves your existing `straja.yaml` by default.
+- `--restart` currently supports launchd (macOS) and systemd (Linux).
+
 The default config path is `straja.yaml`. Use `--config /path/to/straja.yaml` to override (see `cmd/straja/main.go`).
 
 Windows (PowerShell, amd64):
@@ -57,6 +59,10 @@ $asset = "straja_windows_amd64.zip"
 Invoke-WebRequest -Uri "https://github.com/straja-ai/straja/releases/latest/download/$asset" -OutFile $asset
 Expand-Archive -Path $asset -DestinationPath .
 .\straja\straja.exe
+
+# Update later:
+.\straja\straja.exe update check
+.\straja\straja.exe update apply
 ```
 
 ## From source (Go)

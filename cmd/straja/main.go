@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"os"
 
 	"github.com/straja-ai/straja/internal/auth"
 	"github.com/straja-ai/straja/internal/config"
@@ -13,6 +14,10 @@ func main() {
 	addrFlag := flag.String("addr", "", "HTTP listen address (overrides config)")
 	configPath := flag.String("config", "straja.yaml", "Path to Straja config file")
 	flag.Parse()
+	args := flag.Args()
+	if len(args) > 0 && args[0] == "update" {
+		os.Exit(runUpdateCommand(args[1:]))
+	}
 
 	// Load config
 	cfg, err := config.Load(*configPath)

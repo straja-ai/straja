@@ -150,11 +150,14 @@ sudo tail -n 80 /Library/Logs/ai.straja.gateway.err.log
 
 ## Step 9 -- Updating Straja later
 
-Replace the binary at:
+Check and apply updates:
 
-`/Users/USERNAME/straja/straja`
+```bash
+sudo /Users/USERNAME/straja/straja update check
+sudo /Users/USERNAME/straja/straja update apply --restart
+```
 
-Then restart daemon:
+If restart detection fails, run:
 
 ```bash
 sudo launchctl kickstart -k system/ai.straja.gateway
