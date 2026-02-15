@@ -47,6 +47,7 @@ If Straja runs as a managed service, apply and restart in one step:
 
 Notes:
 
+- The hosted installer preserves an existing `./straja/straja.yaml`.
 - `update apply` preserves your existing `straja.yaml` by default.
 - `--restart` currently supports launchd (macOS) and systemd (Linux).
 
