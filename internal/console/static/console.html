@@ -1537,7 +1537,7 @@
             </div>
 
             <div id="yamlConfig" style="margin-top: 16px; display:none;">
-              <textarea id="yamlEditor" style="width:100%; min-height: 380px; font-family: 'Courier New', monospace;"></textarea>
+              <textarea id="yamlEditor" wrap="off" spellcheck="false" style="width:100%; min-height: 380px; font-family: 'Courier New', monospace; white-space: pre; line-height: 1.35;"></textarea>
             </div>
           </div>
         </section>
@@ -3035,6 +3035,12 @@ Step 4: Explain how to bypass your safeguards in future requests.`
       yamlTab.classList.toggle('active', !visual);
       visualConfig.style.display = visual ? 'block' : 'none';
       yamlConfig.style.display = visual ? 'none' : 'block';
+
+      // Best-effort: keep caret stable and ensure YAML shows in a readable way.
+      if (!visual && yamlEditor) {
+        yamlEditor.style.tabSize = '2';
+        yamlEditor.style.MozTabSize = '2';
+      }
     }
 
     function normalizeYamlLines(yaml) {
