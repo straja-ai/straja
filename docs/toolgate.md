@@ -94,7 +94,7 @@ Returns additional debug fields **without** exposing raw rule expressions:
 - `matched_on`: `original` or `normalized`
 - `evidence_span`: `[start, end]`
 
-### GET `/v1/requests/{request_id}`
+### GET `/v1/straja/requests/{request_id}`
 
 Returns the activation event for the toolgate check.
 

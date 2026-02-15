@@ -8,17 +8,31 @@ import (
 
 // Message is a normalized representation of a chat message.
 type Message struct {
-	Role    string
-	Content string
+	Role       string
+	Content    string
+	ContentAny any
+	ToolCalls  []ToolCall
+	ToolCallID string
+	Name       string
+}
+
+// ToolCall is a normalized tool/function call payload for chat providers.
+type ToolCall struct {
+	ID        string
+	Type      string
+	Name      string
+	Arguments string
 }
 
 // Request represents a normalized inference request that Straja operates on.
 type Request struct {
-	RequestID string
-	ProjectID string
-	Model     string
-	UserID    string
-	Messages  []Message
+	RequestID  string
+	ProjectID  string
+	Model      string
+	UserID     string
+	Messages   []Message
+	Tools      []ToolDef
+	ToolChoice any
 	// Timings captures per-stage latency for debugging/observability.
 	Timings *Timings
 	// PolicyHits captures which policy categories triggered for this request,
@@ -69,9 +83,13 @@ type Usage struct {
 
 // Response represents a normalized inference response.
 type Response struct {
-	Message Message
-	Usage   Usage
+	Message      Message
+	Usage        Usage
+	FinishReason string
 }
+
+// ToolDef stores provider tool definitions as opaque JSON-like payloads.
+type ToolDef map[string]any
 
 // Timings holds latency measurements for key stages of request processing.
 type Timings struct {

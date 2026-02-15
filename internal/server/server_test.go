@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -223,6 +224,101 @@ func TestReadyzRequireMLFailsForUnhealthySpecialists(t *testing.T) {
 
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+}
+
+func TestReadyzNotReadyWhenProjectProviderAPIKeyMissing(t *testing.T) {
+	cfg := newTestConfig(t)
+	t.Setenv("TEST_MISSING_CLAUDE_KEY", "")
+	cfg.Providers = map[string]config.ProviderConfig{
+		"claude_main": {
+			Type:      "claude",
+			BaseURL:   "https://api.anthropic.com/v1",
+			APIKeyEnv: "TEST_MISSING_CLAUDE_KEY",
+			APIKey:    "",
+		},
+	}
+	cfg.DefaultProvider = "claude_main"
+	cfg.Projects = []config.ProjectConfig{
+		{
+			ID:       "p1",
+			Provider: "claude_main",
+			APIKeys:  []string{"test-key"},
+		},
+	}
+
+	srv := newTestServer(t, cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+
+	var resp readinessResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode readyz response: %v", err)
+	}
+	if resp.Status != "not_ready" {
+		t.Fatalf("expected status not_ready, got %q", resp.Status)
+	}
+	if resp.Reason != "provider_api_key_missing" {
+		t.Fatalf("expected reason provider_api_key_missing, got %q", resp.Reason)
+	}
+	if len(resp.MissingProviderKeys) != 1 || resp.MissingProviderKeys[0] != "claude_main" {
+		t.Fatalf("expected missing provider key list [claude_main], got %#v", resp.MissingProviderKeys)
+	}
+}
+
+func TestReadyzProjectScopedProviderKeyStatus(t *testing.T) {
+	t.Setenv("TEST_READY_OPENAI_KEY", "openai-key")
+	t.Setenv("TEST_READY_CLAUDE_KEY", "")
+
+	cfg := newTestConfig(t)
+	cfg.Providers = map[string]config.ProviderConfig{
+		"openai_ok": {
+			Type:      "openai",
+			BaseURL:   "https://api.openai.com/v1",
+			APIKeyEnv: "TEST_READY_OPENAI_KEY",
+		},
+		"claude_missing": {
+			Type:      "claude",
+			BaseURL:   "https://api.anthropic.com/v1",
+			APIKeyEnv: "TEST_READY_CLAUDE_KEY",
+		},
+	}
+	cfg.DefaultProvider = "openai_ok"
+	cfg.Projects = []config.ProjectConfig{
+		{ID: "p_openai", Provider: "openai_ok", APIKeys: []string{"k1"}},
+		{ID: "p_claude", Provider: "claude_missing", APIKeys: []string{"k2"}},
+	}
+
+	srv := newTestServer(t, cfg)
+
+	reqOpenAI := httptest.NewRequest(http.MethodGet, "/readyz?project_id=p_openai", nil)
+	rrOpenAI := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rrOpenAI, reqOpenAI)
+	if rrOpenAI.Code != http.StatusOK {
+		t.Fatalf("expected openai project ready (200), got %d", rrOpenAI.Code)
+	}
+
+	reqClaude := httptest.NewRequest(http.MethodGet, "/readyz?project_id=p_claude", nil)
+	rrClaude := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rrClaude, reqClaude)
+	if rrClaude.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected claude project not ready (503), got %d", rrClaude.Code)
+	}
+	var claudeResp readinessResponse
+	if err := json.Unmarshal(rrClaude.Body.Bytes(), &claudeResp); err != nil {
+		t.Fatalf("decode claude readyz response: %v", err)
+	}
+	if claudeResp.Reason != "provider_api_key_missing" {
+		t.Fatalf("expected provider_api_key_missing, got %q", claudeResp.Reason)
+	}
+	if len(claudeResp.MissingProviderKeys) != 1 || claudeResp.MissingProviderKeys[0] != "claude_missing" {
+		t.Fatalf("expected missing provider [claude_missing], got %#v", claudeResp.MissingProviderKeys)
 	}
 }
 

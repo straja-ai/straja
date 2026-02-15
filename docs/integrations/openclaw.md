@@ -1,27 +1,24 @@
-# OpenClaw + OpenAI (Chat + Codex) via Straja
+# OpenClaw + OpenAI / Claude via Straja
 
-StrajaGuard is the core safety engine used by both the Straja gateway and the Guard API.
-The integration difference is only how it is called (proxy vs. hooks).
-
-This setup can route OpenClaw’s OpenAI traffic through Straja so you get:
+This setup routes OpenClaw model traffic through Straja so you get:
 
 - pre-LLM hardening on requests (PII, secrets, prompt-injection, jailbreak)
 - post-LLM checks on responses (PII redaction + data exfil / unsafe instruction warnings)
-- OpenAI-compatible endpoints (Chat Completions and Responses)
+- OpenAI-compatible and Claude-compatible API surfaces
 
 ## Prereqs
 
-- Straja running locally (or reachable) and configured with an OpenAI provider
-- A Straja project API key from `projects[].api_keys` in your Straja config
-- Your provider key set for Straja (e.g. `OPENAI_API_KEY`)
+- Straja running locally (or reachable)
+- A Straja project API key from `projects[].api_keys`
+- Your upstream provider key configured in Straja:
+  - OpenAI example: `OPENAI_API_KEY`
+  - Claude example: `CLAUDE_API_KEY` (or whichever env var your provider config uses)
 
-## 1) Classic OpenAI API via Straja (Chat Completions)
+## 1) OpenAI API setup via Straja
 
-Endpoint:
+### Chat Completions endpoint
 
 - `POST http://localhost:8080/v1/chat/completions`
-
-Quick test:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
@@ -33,56 +30,57 @@ curl -s http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-## 2) Codex / Responses API via Straja
-
-Endpoint:
+### Responses endpoint
 
 - `POST http://localhost:8080/v1/responses`
-
-Non-stream test:
 
 ```bash
 curl -s http://localhost:8080/v1/responses \
   -H "Authorization: Bearer <PROJECT_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.2-codex",
+    "model": "gpt-4.1-mini",
     "input": "Say hello",
     "stream": false
   }'
 ```
 
-Streaming test:
+## 2) Claude API setup via Straja
+
+### Messages endpoint
+
+- `POST http://localhost:8080/v1/messages`
 
 ```bash
-curl -N http://localhost:8080/v1/responses \
-  -H "Authorization: Bearer <PROJECT_API_KEY>" \
+curl -s http://localhost:8080/v1/messages \
+  -H "x-api-key: <PROJECT_API_KEY>" \
+  -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.2-codex",
-    "input": "Stream hello",
+    "model": "claude-3-5-sonnet-latest",
+    "max_tokens": 256,
+    "messages": [{"role": "user", "content": "Hello from OpenClaw via Straja"}]
+  }'
+```
+
+Streaming example:
+
+```bash
+curl -N http://localhost:8080/v1/messages \
+  -H "x-api-key: <PROJECT_API_KEY>" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-3-5-sonnet-latest",
+    "max_tokens": 256,
+    "messages": [{"role": "user", "content": "Stream hello"}],
     "stream": true
   }'
 ```
 
-### Streaming + post-check results (important)
+## 3) OpenClaw config examples
 
-For streaming, Straja passes the upstream stream through without modifying chunks mid-stream. Post-check results are available after completion via the request status API. The streaming response includes `X-Straja-Request-Id`:
-
-```bash
-curl -s -H "Authorization: Bearer <PROJECT_API_KEY>" \
-  http://localhost:8080/v1/straja/requests/<request_id>
-```
-
-Look at:
-
-- `summary.request_final` (request stage)
-- `summary.response_final` (response stage)
-- `summary.response_note` (for streaming, may indicate `redaction_suggested` or `unsafe_instruction_detected`)
-
-## 3) OpenClaw config (point OpenAI base URL at Straja)
-
-Set OpenClaw’s OpenAI base URL to Straja and use your Straja project key as the API key.
+OpenAI-style:
 
 ```yaml
 provider:
@@ -91,21 +89,26 @@ provider:
   apiKey: project-api-key-from-straja-config
 ```
 
-## What Straja enforces by default
+Claude-style:
 
-- Request (pre-LLM): prompt-injection + jailbreak + PII
-- Can block or redact before the provider is called
-- Response (post-LLM): data exfil / unsafe instructions + PII
-- Never blocks responses
-- May redact non-stream responses
-- For streaming: reports `redaction_suggested` instead of modifying the stream
+```yaml
+provider:
+  type: claude
+  baseUrl: http://localhost:8080/v1
+  apiKey: project-api-key-from-straja-config
+```
 
-## 4) OpenClaw hook integration (Guard API + Toolgate)
+## Streaming post-check status
 
-OpenClaw can call Straja’s Guard API + Toolgate directly from guardrail hooks to enforce:
+For streaming requests, Straja passes stream chunks through without in-flight modification. Post-check outcomes are available after completion via:
 
-- pre-model prompt checks (`/v1/guard/request`)
-- post-model response checks (`/v1/guard/response`)
-- pre-execution tool checks (`/v1/toolgate/check`)
+```bash
+curl -s -H "Authorization: Bearer <PROJECT_API_KEY>" \
+  http://localhost:8080/v1/straja/requests/<request_id>
+```
 
-This mode requires Straja running locally (e.g., `http://localhost:8080`) and does not proxy model traffic.
+Check:
+
+- `summary.request_final`
+- `summary.response_final`
+- `summary.response_note`

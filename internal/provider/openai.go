@@ -43,14 +43,42 @@ func NewOpenAI(baseURL, apiKey string, timeout time.Duration, maxResponseBytes i
 }
 
 type openAIChatRequest struct {
-	Model    string              `json:"model"`
-	Messages []openAIChatMessage `json:"messages"`
-	Stream   bool                `json:"stream,omitempty"`
+	Model      string              `json:"model"`
+	Messages   []openAIChatMessage `json:"messages"`
+	Tools      []openAITool        `json:"tools,omitempty"`
+	ToolChoice any                 `json:"tool_choice,omitempty"`
+	Stream     bool                `json:"stream,omitempty"`
 }
 
 type openAIChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string           `json:"role"`
+	Content    any              `json:"content,omitempty"`
+	Name       string           `json:"name,omitempty"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+}
+
+type openAITool struct {
+	Type     string             `json:"type"`
+	Function openAIToolFunction `json:"function"`
+}
+
+type openAIToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Parameters  any    `json:"parameters,omitempty"`
+	Strict      bool   `json:"strict,omitempty"`
+}
+
+type openAIToolCall struct {
+	ID       string                 `json:"id"`
+	Type     string                 `json:"type"`
+	Function openAIToolCallFunction `json:"function"`
+}
+
+type openAIToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type openAIChatResponse struct {
@@ -83,15 +111,61 @@ type openAIErrorResponse struct {
 func (p *openAIProvider) ChatCompletion(ctx context.Context, req *inference.Request) (*inference.Response, error) {
 	// Map internal request → OpenAI payload
 	oaiReq := openAIChatRequest{
-		Model:    req.Model,
-		Messages: make([]openAIChatMessage, 0, len(req.Messages)),
-		Stream:   false, // we'll add streaming later
+		Model:      req.Model,
+		Messages:   make([]openAIChatMessage, 0, len(req.Messages)),
+		Tools:      make([]openAITool, 0, len(req.Tools)),
+		ToolChoice: req.ToolChoice,
+		Stream:     false, // we'll add streaming later
 	}
 
 	for _, m := range req.Messages {
-		oaiReq.Messages = append(oaiReq.Messages, openAIChatMessage{
-			Role:    m.Role,
-			Content: m.Content,
+		msg := openAIChatMessage{
+			Role:       m.Role,
+			Name:       m.Name,
+			ToolCallID: m.ToolCallID,
+		}
+		if len(m.ToolCalls) > 0 {
+			msg.ToolCalls = make([]openAIToolCall, 0, len(m.ToolCalls))
+			for _, tc := range m.ToolCalls {
+				msg.ToolCalls = append(msg.ToolCalls, openAIToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: openAIToolCallFunction{
+						Name:      tc.Name,
+						Arguments: tc.Arguments,
+					},
+				})
+			}
+		}
+		if m.ContentAny != nil {
+			msg.Content = m.ContentAny
+		} else if m.Content != "" || len(m.ToolCalls) == 0 {
+			msg.Content = m.Content
+		}
+		oaiReq.Messages = append(oaiReq.Messages, msg)
+	}
+
+	for _, t := range req.Tools {
+		toolType, _ := t["type"].(string)
+		f, _ := t["function"].(map[string]any)
+		fn := openAIToolFunction{}
+		if f != nil {
+			if name, ok := f["name"].(string); ok {
+				fn.Name = name
+			}
+			if desc, ok := f["description"].(string); ok {
+				fn.Description = desc
+			}
+			if params, ok := f["parameters"]; ok {
+				fn.Parameters = params
+			}
+			if strict, ok := f["strict"].(bool); ok {
+				fn.Strict = strict
+			}
+		}
+		oaiReq.Tools = append(oaiReq.Tools, openAITool{
+			Type:     toolType,
+			Function: fn,
 		})
 	}
 
@@ -156,16 +230,58 @@ func (p *openAIProvider) ChatCompletion(ctx context.Context, req *inference.Requ
 	}
 
 	first := oaiResp.Choices[0]
+	out := inference.Message{
+		Role:    first.Message.Role,
+		Content: contentToText(first.Message.Content),
+	}
+	if first.Message.Content != nil {
+		out.ContentAny = first.Message.Content
+	}
+	if len(first.Message.ToolCalls) > 0 {
+		out.ToolCalls = make([]inference.ToolCall, 0, len(first.Message.ToolCalls))
+		for _, tc := range first.Message.ToolCalls {
+			out.ToolCalls = append(out.ToolCalls, inference.ToolCall{
+				ID:        tc.ID,
+				Type:      tc.Type,
+				Name:      tc.Function.Name,
+				Arguments: tc.Function.Arguments,
+			})
+		}
+	}
 
 	return &inference.Response{
-		Message: inference.Message{
-			Role:    first.Message.Role,
-			Content: first.Message.Content,
-		},
+		Message: out,
 		Usage: inference.Usage{
 			PromptTokens:     oaiResp.Usage.PromptTokens,
 			CompletionTokens: oaiResp.Usage.CompletionTokens,
 			TotalTokens:      oaiResp.Usage.TotalTokens,
 		},
+		FinishReason: first.FinishReason,
 	}, nil
+}
+
+func contentToText(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		out := ""
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			text, _ := m["text"].(string)
+			if text == "" {
+				continue
+			}
+			if out != "" {
+				out += "\n"
+			}
+			out += text
+		}
+		return out
+	default:
+		return ""
+	}
 }

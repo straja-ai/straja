@@ -36,7 +36,7 @@ The response sets an HttpOnly cookie (for browser use) and returns a JSON body:
 {"status":"ok","project_id":"default","expires_at":"2026-02-01T03:00:00Z"}
 ```
 
-Once the cookie is set, you can call `/v1/responses`, `/v1/toolgate/check`, and `/v1/requests/{id}` without an `Authorization` header. The server resolves the project via the session cookie.
+Once the cookie is set, you can call `/v1/responses`, `/v1/toolgate/check`, and `/v1/straja/requests/{id}` without an `Authorization` header. The server resolves the project via the session cookie.
 
 ## API: list projects
 
@@ -95,7 +95,7 @@ curl -N -X POST http://localhost:8080/v1/responses \
 Status lookup after completion:
 
 ```bash
-curl http://localhost:8080/v1/requests/<request_id>
+curl http://localhost:8080/v1/straja/requests/<request_id>
 ```
 
 ## API: toolgate check

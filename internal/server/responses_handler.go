@@ -263,6 +263,9 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) doResponsesUpstream(ctx context.Context, pcfg config.ProviderConfig, providerName string, incoming http.Header, body []byte) (*http.Response, error) {
+	if strings.EqualFold(strings.TrimSpace(pcfg.Type), "claude") {
+		return nil, fmt.Errorf("provider %q type %q does not support /v1/responses", providerName, pcfg.Type)
+	}
 	baseURL := resolveProviderBaseURL(pcfg)
 	if baseURL == "" {
 		return nil, fmt.Errorf("provider %q base_url is empty", providerName)
@@ -273,6 +276,45 @@ func (s *Server) doResponsesUpstream(ctx context.Context, pcfg config.ProviderCo
 	}
 
 	targetURL := strings.TrimRight(baseURL, "/") + "/responses"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	copyHeaders(req.Header, incoming, map[string]struct{}{
+		"Authorization":     {},
+		"Content-Length":    {},
+		"Content-Type":      {},
+		"Host":              {},
+		"Accept-Encoding":   {},
+		"Connection":        {},
+		"Proxy-Connection":  {},
+		"Transfer-Encoding": {},
+		"Upgrade":           {},
+	})
+
+	client := responsesHTTPClient()
+	return client.Do(req)
+}
+
+func (s *Server) doChatCompletionsUpstream(ctx context.Context, pcfg config.ProviderConfig, providerName string, incoming http.Header, body []byte) (*http.Response, error) {
+	if strings.EqualFold(strings.TrimSpace(pcfg.Type), "claude") {
+		return nil, fmt.Errorf("provider %q type %q does not support /v1/chat/completions", providerName, pcfg.Type)
+	}
+	baseURL := resolveProviderBaseURL(pcfg)
+	if baseURL == "" {
+		return nil, fmt.Errorf("provider %q base_url is empty", providerName)
+	}
+	apiKey := resolveProviderAPIKey(pcfg)
+	if strings.EqualFold(pcfg.Type, "openai") && strings.TrimSpace(apiKey) == "" {
+		return nil, fmt.Errorf("provider %q api key missing", providerName)
+	}
+
+	targetURL := strings.TrimRight(baseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -585,6 +627,8 @@ func resolveProviderBaseURL(pcfg config.ProviderConfig) string {
 	switch strings.ToLower(strings.TrimSpace(pcfg.Type)) {
 	case "openai":
 		return "https://api.openai.com/v1"
+	case "claude":
+		return "https://api.anthropic.com/v1"
 	case "mock":
 		return "http://127.0.0.1:18080"
 	default:
@@ -687,6 +731,32 @@ func applyPostCheckToResponse(resp map[string]any, agg *postCheckAggregator) (in
 		if !ok {
 			continue
 		}
+		itemType, _ := item["type"].(string)
+		itemType = strings.ToLower(strings.TrimSpace(itemType))
+
+		if itemType == "function_call" {
+			if args, ok := item["arguments"].(string); ok {
+				updated, err := agg.Check(args)
+				item["arguments"] = updated
+				processed++
+				if err != nil {
+					return processed, err
+				}
+			}
+		}
+		if itemType == "tool_use" || itemType == "tool_call" {
+			if inputVal, ok := item["input"]; ok {
+				updated, count, err := applyToStructuredStringLeaves(inputVal, func(_ string, text string) (string, error) {
+					return agg.Check(text)
+				}, "assistant")
+				processed += count
+				if err != nil {
+					return processed, err
+				}
+				item["input"] = updated
+			}
+		}
+
 		content, ok := item["content"].([]any)
 		if !ok {
 			continue
@@ -701,6 +771,29 @@ func applyPostCheckToResponse(resp map[string]any, agg *postCheckAggregator) (in
 				t = "output_text"
 			}
 			if !isOutputContentType(t) {
+				tt := strings.ToLower(strings.TrimSpace(t))
+				if tt == "function_call" {
+					if args, ok := seg["arguments"].(string); ok {
+						updated, err := agg.Check(args)
+						seg["arguments"] = updated
+						processed++
+						if err != nil {
+							return processed, err
+						}
+					}
+				}
+				if tt == "tool_use" || tt == "tool_call" {
+					if inputVal, ok := seg["input"]; ok {
+						updated, count, err := applyToStructuredStringLeaves(inputVal, func(_ string, text string) (string, error) {
+							return agg.Check(text)
+						}, "assistant")
+						processed += count
+						if err != nil {
+							return processed, err
+						}
+						seg["input"] = updated
+					}
+				}
 				continue
 			}
 			text, ok := seg["text"].(string)
@@ -818,6 +911,40 @@ func extractTextFromSSEData(event, data string) (string, bool) {
 	if err := json.Unmarshal([]byte(data), &obj); err != nil {
 		return "", false
 	}
+	if choices, ok := obj["choices"].([]any); ok {
+		var builder strings.Builder
+		for _, rawChoice := range choices {
+			choice, ok := rawChoice.(map[string]any)
+			if !ok {
+				continue
+			}
+			delta, ok := choice["delta"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if txt, ok := delta["content"].(string); ok {
+				builder.WriteString(txt)
+			}
+			if toolCalls, ok := delta["tool_calls"].([]any); ok {
+				for _, rawTC := range toolCalls {
+					tc, ok := rawTC.(map[string]any)
+					if !ok {
+						continue
+					}
+					fn, ok := tc["function"].(map[string]any)
+					if !ok {
+						continue
+					}
+					if args, ok := fn["arguments"].(string); ok {
+						builder.WriteString(args)
+					}
+				}
+			}
+		}
+		if builder.Len() > 0 {
+			return builder.String(), true
+		}
+	}
 	if t, ok := obj["type"].(string); ok {
 		switch t {
 		case "response.output_text.delta":
@@ -828,15 +955,38 @@ func extractTextFromSSEData(event, data string) (string, bool) {
 			if txt, ok := obj["text"].(string); ok {
 				return txt, false
 			}
+		case "response.function_call_arguments.delta":
+			if delta, ok := obj["delta"].(string); ok {
+				return delta, true
+			}
+		case "response.function_call_arguments.done":
+			if args, ok := obj["arguments"].(string); ok {
+				return args, false
+			}
 		case "response.completed":
 			if resp, ok := obj["response"].(map[string]any); ok {
 				return extractOutputTextFromResponse(resp), false
+			}
+		case "response.output_item.added":
+			if item, ok := obj["item"].(map[string]any); ok {
+				return extractOutputTextFromResponseItem(item), false
 			}
 		}
 	}
 	if delta, ok := obj["delta"].(map[string]any); ok {
 		if txt, ok := delta["text"].(string); ok {
 			return txt, true
+		}
+		if args, ok := delta["arguments"].(string); ok {
+			return args, true
+		}
+		if partial, ok := delta["partial_json"].(string); ok {
+			return partial, true
+		}
+	}
+	if item, ok := obj["item"].(map[string]any); ok {
+		if txt := extractOutputTextFromResponseItem(item); txt != "" {
+			return txt, false
 		}
 	}
 	if txt, ok := obj["output_text"].(string); ok {
@@ -859,21 +1009,57 @@ func extractOutputTextFromResponse(resp map[string]any) string {
 		if !ok {
 			continue
 		}
-		content, ok := obj["content"].([]any)
+		txt := extractOutputTextFromResponseItem(obj)
+		if txt != "" {
+			builder.WriteString(txt)
+		}
+	}
+	return builder.String()
+}
+
+func extractOutputTextFromResponseItem(obj map[string]any) string {
+	if obj == nil {
+		return ""
+	}
+	var builder strings.Builder
+	t, _ := obj["type"].(string)
+	t = strings.ToLower(strings.TrimSpace(t))
+	if t == "function_call" {
+		if args, ok := obj["arguments"].(string); ok {
+			builder.WriteString(args)
+		}
+	}
+	if t == "tool_use" || t == "tool_call" {
+		if inputVal, ok := obj["input"]; ok {
+			builder.WriteString(extractStringLeaves(inputVal))
+		}
+	}
+
+	content, ok := obj["content"].([]any)
+	if !ok {
+		return builder.String()
+	}
+	for _, seg := range content {
+		segObj, ok := seg.(map[string]any)
 		if !ok {
 			continue
 		}
-		for _, seg := range content {
-			segObj, ok := seg.(map[string]any)
-			if !ok {
-				continue
-			}
-			t, _ := segObj["type"].(string)
-			if !isOutputContentType(t) {
-				continue
-			}
+		st, _ := segObj["type"].(string)
+		st = strings.ToLower(strings.TrimSpace(st))
+		if isOutputContentType(st) {
 			if txt, ok := segObj["text"].(string); ok {
 				builder.WriteString(txt)
+			}
+			continue
+		}
+		if st == "function_call" {
+			if args, ok := segObj["arguments"].(string); ok {
+				builder.WriteString(args)
+			}
+		}
+		if st == "tool_use" || st == "tool_call" {
+			if inputVal, ok := segObj["input"]; ok {
+				builder.WriteString(extractStringLeaves(inputVal))
 			}
 		}
 	}

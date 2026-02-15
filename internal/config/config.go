@@ -90,7 +90,7 @@ type ServerConfig struct {
 }
 
 type ProviderConfig struct {
-	Type                 string   `yaml:"type"` // e.g. "openai"
+	Type                 string   `yaml:"type"` // e.g. "openai" | "claude" | "mock"
 	BaseURL              string   `yaml:"base_url"`
 	APIKeyEnv            string   `yaml:"api_key_env"`            // e.g. "OPENAI_API_KEY"
 	APIKey               string   `yaml:"api_key"`                // optional fallback for local dev; env wins

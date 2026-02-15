@@ -147,7 +147,7 @@ func TestV1RequestsStatusWithConsoleSession(t *testing.T) {
 		t.Fatalf("missing request_id")
 	}
 
-	statusResp, err := client.Get(ts.URL + "/v1/requests/" + requestID)
+	statusResp, err := client.Get(ts.URL + "/v1/straja/requests/" + requestID)
 	if err != nil {
 		t.Fatalf("status request failed: %v", err)
 	}
