@@ -196,7 +196,7 @@ func TestToolgateStatusEndpoint(t *testing.T) {
 		t.Fatalf("missing request_id")
 	}
 
-	statusReq := httptest.NewRequest(http.MethodGet, "/v1/requests/"+requestID, nil)
+	statusReq := httptest.NewRequest(http.MethodGet, "/v1/straja/requests/"+requestID, nil)
 	statusReq.Header.Set("Authorization", "Bearer test-key")
 	statusRR := httptest.NewRecorder()
 	srv.mux.ServeHTTP(statusRR, statusReq)

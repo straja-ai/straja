@@ -3,6 +3,8 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +21,14 @@ type requestEntry struct {
 	projectID  string
 	status     string
 	activation *activation.Event
+	createdAt  time.Time
+	updatedAt  time.Time
 	expiresAt  time.Time
+}
+
+type requestSnapshot struct {
+	requestID string
+	entry     requestEntry
 }
 
 func newRequestStore(ttl time.Duration) *requestStore {
@@ -39,10 +48,13 @@ func (s *requestStore) Start(requestID, projectID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cleanupLocked()
+	now := time.Now()
 	s.data[requestID] = requestEntry{
 		projectID: projectID,
 		status:    "pending",
-		expiresAt: time.Now().Add(s.ttl),
+		createdAt: now,
+		updatedAt: now,
+		expiresAt: now.Add(s.ttl),
 	}
 }
 
@@ -53,15 +65,22 @@ func (s *requestStore) Complete(requestID string, ev *activation.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cleanupLocked()
+	now := time.Now()
 	entry := requestEntry{
 		status:     "completed",
 		activation: ev,
-		expiresAt:  time.Now().Add(s.ttl),
+		updatedAt:  now,
+		expiresAt:  now.Add(s.ttl),
 	}
 	if existing, ok := s.data[requestID]; ok {
 		entry.projectID = existing.projectID
+		entry.createdAt = existing.createdAt
 	} else if ev != nil {
 		entry.projectID = ev.Meta.ProjectID
+		entry.createdAt = now
+	}
+	if entry.createdAt.IsZero() {
+		entry.createdAt = now
 	}
 	s.data[requestID] = entry
 }
@@ -82,6 +101,41 @@ func (s *requestStore) Get(requestID string) (requestEntry, bool) {
 		return requestEntry{}, false
 	}
 	return entry, true
+}
+
+func (s *requestStore) Snapshot(projectID string, limit int) []requestSnapshot {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cleanupLocked()
+
+	out := make([]requestSnapshot, 0, len(s.data))
+	for reqID, entry := range s.data {
+		if strings.TrimSpace(projectID) != "" && strings.TrimSpace(entry.projectID) != strings.TrimSpace(projectID) {
+			continue
+		}
+		out = append(out, requestSnapshot{
+			requestID: reqID,
+			entry:     entry,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		li := out[i].entry.updatedAt
+		lj := out[j].entry.updatedAt
+		if li.IsZero() {
+			li = out[i].entry.createdAt
+		}
+		if lj.IsZero() {
+			lj = out[j].entry.createdAt
+		}
+		return li.After(lj)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func (s *requestStore) cleanupLocked() {

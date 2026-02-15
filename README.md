@@ -1,6 +1,6 @@
 # Straja Gateway
 
-Straja is a **local, OpenAI-compatible AI gateway** that runs inside your infrastructure and sits between your applications and upstream LLM providers.
+Straja is a **local OpenAI- and Claude-compatible AI gateway** that runs inside your infrastructure and sits between your applications and upstream LLM providers.
 
 It is designed to give teams control, visibility, and safety over AI traffic without changing how applications call models.
 
@@ -9,13 +9,13 @@ Straja provides:
 - **Security** – PII and secrets detection, plus prompt-injection and jailbreak heuristics  
 - **Privacy** – Applications never see upstream provider API keys  
 - **Observability** – Structured activation events for every request  
-- **Routing** – Projects mapped to providers (OpenAI today, more later)  
-- **Drop-in DX** – Standard OpenAI SDKs and request formats, with a different base URL and key  
+- **Routing** – Projects mapped to providers (OpenAI and Claude, with room for more)  
+- **Drop-in DX** – Standard OpenAI and Claude SDK request formats, with a different base URL and key  
 
 ## Key concepts (high level)
 
 - **Gateway**  
-  An OpenAI-shaped HTTP surface that routes requests to configured providers using per-project credentials.
+  OpenAI- and Claude-shaped HTTP surfaces that route requests to configured providers using per-project credentials.
 
 - **Policies**  
   Pre- and post-model checks that can allow, block, log, or redact requests and responses.
@@ -30,13 +30,13 @@ Straja provides:
 
 1. Install the binary (download the latest release archive).
 2. Set your Straja trust key.
-3. Export your provider API key (example below uses OpenAI).
+3. Export your provider API key (example below uses OpenAI, Claude is also supported).
 4. Set a console session secret.
 5. Review the included `straja.yaml`.
 6. Run the gateway.
 7. Open the console or send your first request.
 
-OpenAI SDKs work unchanged. No changes to model call logic are required.
+OpenAI and Claude SDKs work unchanged. No changes to model call logic are required.
 
 See the documentation below for exact commands and examples.
 
@@ -53,7 +53,9 @@ See the documentation below for exact commands and examples.
 - [StrajaGuard v1 intel bundle](docs/strajaguard-v1.md)
 - [Toolgate API](docs/toolgate.md)
 - [Guard API](docs/guard-api.md)
+- [OpenAI API integration](docs/integrations/openai.md)
 - [OpenClaw integration](docs/integrations/openclaw.md)
+- [Claude API integration](docs/integrations/claude.md)
 - [Load testing and mock provider](docs/load-testing.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Security considerations](docs/security.md)

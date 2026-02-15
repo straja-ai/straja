@@ -12,11 +12,7 @@ func (s *Server) handleRequestStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefix := "/v1/straja/requests/"
-	if strings.HasPrefix(r.URL.Path, "/v1/requests/") {
-		prefix = "/v1/requests/"
-	}
-	requestID := strings.TrimPrefix(r.URL.Path, prefix)
+	requestID := strings.TrimPrefix(r.URL.Path, "/v1/straja/requests/")
 	requestID = strings.TrimSpace(requestID)
 	if requestID == "" {
 		http.NotFound(w, r)

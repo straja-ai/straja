@@ -74,13 +74,22 @@ func (s *Server) handleConsoleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limit := parseConsoleEventsLimit(r)
 	path, ok := s.consoleActivationPath()
 	if !ok {
-		http.NotFound(w, r)
+		resp := consoleEventsResponse{
+			Items:      s.consoleEventsFromStore(projectID, limit),
+			NextCursor: "",
+		}
+		if shouldIncludeTotals(r) {
+			totals := s.consoleEventsTotalsFromStore(projectID)
+			resp.Totals = &totals
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
 		return
 	}
 
-	limit := parseConsoleEventsLimit(r)
 	rawCursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
 	items, nextCursor, err := readConsoleEvents(path, rawCursor, limit, projectID)
 	if err != nil {
@@ -515,4 +524,83 @@ func consoleDecisionFromEvent(ev activation.Event) string {
 		return respAction
 	}
 	return ""
+}
+
+func (s *Server) consoleEventsFromStore(projectID string, limit int) []consoleEventListItem {
+	if s == nil || s.requestStore == nil {
+		return []consoleEventListItem{}
+	}
+	snaps := s.requestStore.Snapshot(projectID, limit)
+	items := make([]consoleEventListItem, 0, len(snaps))
+	for _, snap := range snaps {
+		items = append(items, consoleItemFromSnapshot(snap))
+	}
+	return items
+}
+
+func (s *Server) consoleEventsTotalsFromStore(projectID string) consoleEventsTotals {
+	if s == nil || s.requestStore == nil {
+		return consoleEventsTotals{}
+	}
+	snaps := s.requestStore.Snapshot(projectID, 0)
+	var totals consoleEventsTotals
+	for _, snap := range snaps {
+		totals.Total++
+		decision := ""
+		if snap.entry.activation != nil {
+			decision = consoleDecisionFromEvent(*snap.entry.activation)
+		} else {
+			decision = normalizeDecision(snap.entry.status)
+		}
+		switch decision {
+		case "allow":
+			totals.Allow++
+		case "redact", "redacted":
+			totals.Redact++
+		case "block", "blocked":
+			totals.Block++
+		case "warn":
+			totals.Warn++
+		default:
+			totals.Unknown++
+		}
+	}
+	return totals
+}
+
+func consoleItemFromSnapshot(snap requestSnapshot) consoleEventListItem {
+	if snap.entry.activation != nil {
+		item := buildConsoleItem(*snap.entry.activation, []byte(snap.requestID))
+		if strings.TrimSpace(item.RequestID) == "" {
+			item.RequestID = snap.requestID
+		}
+		if strings.TrimSpace(item.ID) == "" {
+			item.ID = "req_" + snap.requestID
+		}
+		return item
+	}
+	ts := snap.entry.updatedAt
+	if ts.IsZero() {
+		ts = snap.entry.createdAt
+	}
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	action := normalizeDecision(snap.entry.status)
+	if action == "" {
+		action = "pending"
+	}
+	item := consoleEventListItem{
+		ID:        "req_" + snap.requestID,
+		TS:        ts.UTC().Format(time.RFC3339Nano),
+		RequestID: snap.requestID,
+		ProjectID: strings.TrimSpace(snap.entry.projectID),
+		Provider:  "",
+		Route:     "responses",
+		Summary:   action,
+	}
+	item.RequestFinal = &consoleEventDecision{
+		Action: action,
+	}
+	return item
 }

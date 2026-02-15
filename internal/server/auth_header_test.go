@@ -1,6 +1,14 @@
 package server
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja/internal/provider"
+)
 
 func TestParseBearerToken_Valid(t *testing.T) {
 	token, ok := parseBearerToken("Bearer abc123")
@@ -33,5 +41,29 @@ func TestParseBearerToken_InvalidFormats(t *testing.T) {
 		if token, ok := parseBearerToken(h); ok || token != "" {
 			t.Fatalf("expected failure for header %q, got ok=%v token=%q", h, ok, token)
 		}
+	}
+}
+
+func TestResolveAuthProject_XAPIKeyHeader(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.Server.MaxRequestBodyBytes = 1024
+	cfg.Providers = map[string]config.ProviderConfig{
+		"echo": {Type: "openai", APIKey: "upstream-key", BaseURL: "https://api.openai.com/v1"},
+	}
+	cfg.DefaultProvider = "echo"
+
+	srv := newTestServer(t, cfg)
+	srv.providers["echo"] = provider.NewFake("ok")
+
+	body := `{"model":"gpt-4.1-mini","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", "test-key")
+
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for x-api-key auth, got %d", rr.Code)
 	}
 }

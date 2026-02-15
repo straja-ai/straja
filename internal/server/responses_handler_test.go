@@ -383,6 +383,58 @@ func TestResponsesPostCheckRedact(t *testing.T) {
 	}
 }
 
+func TestResponsesPostCheckRedactFunctionCallArguments(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"type":"function_call","name":"run_shell","arguments":"{\"command\":\"echo sk-test-abcdefghijklmnopqrstuv\"}"}]}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	srv := newResponsesTestServer(t, upstream.URL+"/v1", func(cfg *config.Config) {
+		cfg.Intelligence.Enabled = true
+		cfg.Security.Enabled = false
+		cfg.Policy.PII = "redact"
+		cfg.Policy.PIIEntities = config.PIIEntitiesConfig{
+			Email:      true,
+			Phone:      true,
+			CreditCard: true,
+			IBAN:       true,
+			Tokens:     true,
+		}
+	})
+
+	body := `{"model":"gpt-4.1-mini","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("[REDACTED_TOKEN]")) {
+		t.Fatalf("expected redacted function arguments, got %s", rr.Body.String())
+	}
+	actHeader := rr.Header().Get("X-Straja-Activation")
+	if actHeader == "" {
+		t.Fatalf("missing X-Straja-Activation header")
+	}
+	var act map[string]any
+	if err := json.Unmarshal([]byte(actHeader), &act); err != nil {
+		t.Fatalf("activation header invalid JSON: %v", err)
+	}
+	summary := activationSummary(t, act)
+	if summary["response_final"] != "redact" {
+		t.Fatalf("expected summary.response_final redact, got %v", summary["response_final"])
+	}
+}
+
 func TestResponsesPostCheckDoesNotBlock(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/responses" {
@@ -694,6 +746,90 @@ func TestResponsesStreamingPostCheckRedactSuggested(t *testing.T) {
 	nonStreamAct := fetchNonStreamActivation(t, ts.URL)
 	if !sameKeys(act, nonStreamAct) {
 		t.Fatalf("expected stream/non-stream activations to share schema")
+	}
+}
+
+func TestResponsesStreamingFunctionCallArgumentsRedactionSuggested(t *testing.T) {
+	events := []string{
+		`data: {"type":"response.function_call_arguments.delta","delta":"{\"command\":\"echo sk-test-abcdefghijklmnopqrstuv\"}"}` + "\n\n",
+		"data: [DONE]\n\n",
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		for _, e := range events {
+			_, _ = w.Write([]byte(e))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	srv := newResponsesTestServer(t, upstream.URL+"/v1", func(cfg *config.Config) {
+		cfg.Intelligence.Enabled = true
+		cfg.Security.Enabled = false
+		cfg.Policy.PII = "redact"
+		cfg.Policy.PIIEntities = config.PIIEntitiesConfig{
+			Email:      true,
+			Phone:      true,
+			CreditCard: true,
+			IBAN:       true,
+			Tokens:     true,
+		}
+	})
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+
+	body := `{"model":"gpt-4.1-mini","input":"hello","stream":true}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/responses", bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	reqID := resp.Header.Get("X-Straja-Request-Id")
+	if reqID == "" {
+		t.Fatalf("missing request id")
+	}
+	_, _ = io.ReadAll(resp.Body)
+
+	var act map[string]any
+	for i := 0; i < 20; i++ {
+		statusReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/straja/requests/"+reqID, nil)
+		statusReq.Header.Set("Authorization", "Bearer test-key")
+		statusResp, err := http.DefaultClient.Do(statusReq)
+		if err != nil {
+			t.Fatalf("status request: %v", err)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(statusResp.Body).Decode(&body); err == nil && body["status"] == "completed" {
+			act, _ = body["activation"].(map[string]any)
+			statusResp.Body.Close()
+			break
+		}
+		statusResp.Body.Close()
+		time.Sleep(50 * time.Millisecond)
+	}
+	if act == nil {
+		t.Fatalf("expected activation payload")
+	}
+	summary := activationSummary(t, act)
+	if summary["response_final"] != "warn" {
+		t.Fatalf("expected summary.response_final warn, got %v", summary["response_final"])
+	}
+	if summary["response_note"] != "redaction_suggested" {
+		t.Fatalf("expected summary.response_note redaction_suggested, got %v", summary["response_note"])
 	}
 }
 

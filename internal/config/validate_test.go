@@ -71,6 +71,18 @@ func TestValidateFailures(t *testing.T) {
 			want: "base_url",
 		},
 		{
+			name: "claude missing api key",
+			cfg: &Config{
+				Server:          ServerConfig{Addr: ":8080"},
+				Providers:       map[string]ProviderConfig{"p1": {Type: "claude", BaseURL: "https://api.anthropic.com/v1"}},
+				DefaultProvider: "p1",
+				Projects:        []ProjectConfig{{ID: "proj", Provider: "p1", APIKeys: []string{"k"}}},
+				Security:        defaultSecurityConfig(),
+				Console:         ConsoleConfig{Enabled: false},
+			},
+			want: "api key",
+		},
+		{
 			name: "provider url blocked private",
 			cfg: &Config{
 				Server:          ServerConfig{Addr: ":8080"},

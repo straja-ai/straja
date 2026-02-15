@@ -52,6 +52,8 @@ Straja reads upstream provider keys from environment variables.
 
 ```bash
 export OPENAI_API_KEY="sk-..."
+# or
+export CLAUDE_API_KEY="sk-ant-..."
 ```
 
 If you are not running Straja as a gateway, you do not need a provider API key. You can send checks directly to the Guard API endpoints instead. See `docs/guard-api.md`.
@@ -89,6 +91,19 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 ```
 
 You should receive an OpenAI-compatible JSON response.
+
+For Claude-compatible clients, use the Messages endpoint:
+
+```bash
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: local-dev-key-123" \
+  -d '{
+    "model": "claude-3-5-sonnet-latest",
+    "max_tokens": 128,
+    "messages": [{"role": "user", "content": "Hello from Straja!"}]
+  }'
+```
 
 ## Notes
 

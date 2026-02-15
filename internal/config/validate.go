@@ -100,7 +100,7 @@ func validateProviderConfig(name string, p ProviderConfig) error {
 	if strings.TrimSpace(p.Type) == "" {
 		return fmt.Errorf("provider %q missing type", name)
 	}
-	if strings.EqualFold(p.Type, "openai") {
+	if strings.EqualFold(p.Type, "openai") || strings.EqualFold(p.Type, "claude") {
 		if strings.TrimSpace(p.APIKeyEnv) == "" && strings.TrimSpace(p.APIKey) == "" {
 			return fmt.Errorf("provider %q missing api key (env or api_key)", name)
 		}

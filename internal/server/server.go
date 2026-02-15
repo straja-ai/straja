@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -580,11 +582,11 @@ func New(cfg *config.Config, authz *auth.Auth, configPath string) *Server {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/readyz", s.handleReady)
 	mux.HandleFunc("/v1/chat/completions", s.wrapHandler(s.handleChatCompletions, handlerOptions{limitBody: true, useLimiter: true}))
+	mux.HandleFunc("/v1/messages", s.wrapHandler(s.handleClaudeMessages, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/responses", s.wrapHandler(s.handleResponses, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/guard/request", s.wrapHandler(s.handleGuardRequest, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/guard/response", s.wrapHandler(s.handleGuardResponse, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/straja/requests/", s.wrapHandler(s.handleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
-	mux.HandleFunc("/v1/requests/", s.wrapHandler(s.handleRequestStatus, handlerOptions{limitBody: false, useLimiter: true}))
 	mux.HandleFunc("/v1/toolgate/check", s.wrapHandler(s.handleToolgateCheck, handlerOptions{limitBody: true, useLimiter: true}))
 	mux.HandleFunc("/v1/toolgate/explain", s.wrapHandler(s.handleToolgateExplain, handlerOptions{limitBody: true, useLimiter: true}))
 
@@ -799,6 +801,15 @@ func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, er
 				return nil, fmt.Errorf("provider %q: api key missing (env %s empty)", name, pcfg.APIKeyEnv)
 			}
 			reg[name] = provider.NewOpenAI(pcfg.BaseURL, apiKey, cfg.Server.UpstreamTimeout, cfg.Server.MaxNonStreamResponseBytes)
+		case "claude":
+			apiKey := strings.TrimSpace(os.Getenv(pcfg.APIKeyEnv))
+			if apiKey == "" {
+				apiKey = strings.TrimSpace(pcfg.APIKey)
+			}
+			if apiKey == "" {
+				return nil, fmt.Errorf("provider %q: api key missing (env %s empty)", name, pcfg.APIKeyEnv)
+			}
+			reg[name] = provider.NewClaude(pcfg.BaseURL, apiKey, cfg.Server.UpstreamTimeout, cfg.Server.MaxNonStreamResponseBytes)
 		case "mock":
 			addr := mockHostPortFromBaseURL(pcfg.BaseURL)
 			_, baseURL, err := mockprovider.StartMockProvider(addr)
@@ -944,18 +955,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 type readinessResponse struct {
-	Status              string `json:"status"`
-	Mode                string `json:"mode"`
-	ActiveBundleVersion string `json:"active_bundle_version,omitempty"`
-	GatewayVersion      string `json:"gateway_version,omitempty"`
-	Reason              string `json:"reason,omitempty"`
-	IntelStatus         string `json:"intel_status,omitempty"`
-	StrajaGuardStatus   string `json:"strajaguard_status,omitempty"`
-	IntelLastValidated  string `json:"intel_last_validated_at,omitempty"`
+	Status              string   `json:"status"`
+	Mode                string   `json:"mode"`
+	ActiveBundleVersion string   `json:"active_bundle_version,omitempty"`
+	GatewayVersion      string   `json:"gateway_version,omitempty"`
+	Reason              string   `json:"reason,omitempty"`
+	MissingProviderKeys []string `json:"missing_provider_api_keys,omitempty"`
+	IntelStatus         string   `json:"intel_status,omitempty"`
+	StrajaGuardStatus   string   `json:"strajaguard_status,omitempty"`
+	IntelLastValidated  string   `json:"intel_last_validated_at,omitempty"`
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	resp, ready := s.readiness()
+	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	resp, ready := s.readinessForProject(projectID)
 	w.Header().Set("Content-Type", "application/json")
 	if !ready {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -964,6 +977,10 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) readiness() (readinessResponse, bool) {
+	return s.readinessForProject("")
+}
+
+func (s *Server) readinessForProject(projectID string) (readinessResponse, bool) {
 	mode := "regex_only"
 	specialistsHealthy := specialistsEngineHealthy(s.specialistsEngine)
 	if s.strajaGuardModel != nil || specialistsHealthy {
@@ -1000,6 +1017,19 @@ func (s *Server) readiness() (readinessResponse, bool) {
 		resp.Reason = "no_projects_configured"
 		return resp, false
 	}
+	if projectID != "" {
+		if _, ok := s.projectProviders[projectID]; !ok {
+			resp.Status = "not_ready"
+			resp.Reason = "project_not_found"
+			return resp, false
+		}
+	}
+	if missing := s.missingProjectProviderAPIKeys(projectID); len(missing) > 0 {
+		resp.Status = "not_ready"
+		resp.Reason = "provider_api_key_missing"
+		resp.MissingProviderKeys = missing
+		return resp, false
+	}
 
 	if s.requireML && s.strajaGuardModel == nil && !specialistsHealthy {
 		resp.Status = "not_ready"
@@ -1010,18 +1040,88 @@ func (s *Server) readiness() (readinessResponse, bool) {
 	return resp, true
 }
 
+func (s *Server) missingProjectProviderAPIKeys(projectID string) []string {
+	if s == nil || s.cfg == nil {
+		return nil
+	}
+	required := map[string]struct{}{}
+	if projectID != "" {
+		if providerName, ok := s.projectProviders[projectID]; ok && strings.TrimSpace(providerName) != "" {
+			required[strings.TrimSpace(providerName)] = struct{}{}
+		}
+	} else {
+		for _, providerName := range s.projectProviders {
+			if strings.TrimSpace(providerName) != "" {
+				required[strings.TrimSpace(providerName)] = struct{}{}
+			}
+		}
+	}
+	if len(required) == 0 && strings.TrimSpace(s.defaultProvider) != "" {
+		required[strings.TrimSpace(s.defaultProvider)] = struct{}{}
+	}
+
+	names := make([]string, 0, len(required))
+	for name := range required {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	missing := make([]string, 0)
+	for _, name := range names {
+		pcfg, ok := s.cfg.Providers[name]
+		if !ok {
+			continue
+		}
+		pType := strings.ToLower(strings.TrimSpace(pcfg.Type))
+		if pType != "openai" && pType != "claude" {
+			continue
+		}
+		if strings.TrimSpace(resolveProviderAPIKey(pcfg)) == "" {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
 // --- OpenAI-style request/response types for the HTTP layer ---
 
 type chatCompletionRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
-	Stream   bool          `json:"stream,omitempty"`
-	// Later we'll add: user, tools, etc.
+	Model      string        `json:"model"`
+	Messages   []chatMessage `json:"messages"`
+	Tools      []chatTool    `json:"tools,omitempty"`
+	ToolChoice any           `json:"tool_choice,omitempty"`
+	Stream     bool          `json:"stream,omitempty"`
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string         `json:"role"`
+	Content    any            `json:"content,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+}
+
+type chatTool struct {
+	Type     string           `json:"type"`
+	Function chatToolFunction `json:"function"`
+}
+
+type chatToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Parameters  any    `json:"parameters,omitempty"`
+	Strict      bool   `json:"strict,omitempty"`
+}
+
+type chatToolCall struct {
+	ID       string               `json:"id"`
+	Type     string               `json:"type"`
+	Function chatToolCallFunction `json:"function"`
+}
+
+type chatToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type chatCompletionResponse struct {
@@ -1195,6 +1295,65 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	})
 	policyPreSpan.End()
 
+	if reqBody.Stream {
+		mode := activation.ModeStream
+		provCfg, ok := s.cfg.Providers[providerName]
+		if !ok {
+			redact.Logf("no provider config %q for project %q (streaming chat)", providerName, project.ID)
+			decision = "error_provider"
+			statusCode = http.StatusInternalServerError
+			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, mode)
+			writeOpenAIError(w, http.StatusInternalServerError, "Straja misconfiguration: unknown provider for project", "configuration_error")
+			return
+		}
+
+		body, err := buildChatCompletionsUpstreamBody(infReq, true)
+		if err != nil {
+			decision = "blocked_request"
+			statusCode = http.StatusBadRequest
+			writeOpenAIError(w, http.StatusBadRequest, "invalid request payload", "invalid_request_error")
+			return
+		}
+
+		providerStart := time.Now()
+		upstreamResp, err := s.doChatCompletionsUpstream(ctx, provCfg, providerName, r.Header, body)
+		if infReq.Timings != nil {
+			infReq.Timings.Provider = time.Since(providerStart)
+		}
+		if err != nil {
+			redact.Logf("provider %q stream error: %v", providerName, err)
+			decision = "error_provider"
+			statusCode = http.StatusBadGateway
+			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, mode)
+			writeOpenAIError(w, http.StatusBadGateway, "Upstream provider error", "provider_error")
+			return
+		}
+		defer upstreamResp.Body.Close()
+
+		if upstreamResp.StatusCode >= 400 {
+			decision = "error_provider"
+			statusCode = upstreamResp.StatusCode
+			copyHeaders(w.Header(), upstreamResp.Header, nil)
+			s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionErrorProvider, mode)
+			w.WriteHeader(upstreamResp.StatusCode)
+			_, _ = io.Copy(w, upstreamResp.Body)
+			return
+		}
+
+		setSSEHeaders(w.Header())
+		w.WriteHeader(upstreamResp.StatusCode)
+		capture := newSSECapture(s.cfg.Server.MaxNonStreamResponseBytes)
+		if err := copyUpstreamBodyWithCapture(w, upstreamResp.Body, capture); err != nil && !errors.Is(err, context.Canceled) {
+			redact.Logf("chat completions: streaming copy failed: %v", err)
+		}
+		_, outputText := runPostCheckForStream(ctx, s, infReq, capture)
+		_ = s.applyResponseGuard(infReq, s.evaluateResponseGuard(outputText), true)
+		decision = "allow"
+		statusCode = upstreamResp.StatusCode
+		s.emitActivation(ctx, w, infReq, nil, providerName, activation.DecisionAllow, mode)
+		return
+	}
+
 	// 3) Provider error
 	providerStart := time.Now()
 	provSelectCtx, provSelectSpan := s.startSpan(ctx, "straja.provider.select", trace.SpanKindInternal, map[string]interface{}{
@@ -1256,7 +1415,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	})
 	policyPostSpan.End()
 
-	_ = s.applyResponseGuard(infReq, s.evaluateResponseGuard(infResp.Message.Content), false)
+	_ = s.applyResponseGuard(infReq, s.evaluateResponseGuard(chatCompletionOutputText(infResp.Message)), false)
 
 	// 5) Success
 	s.emitActivation(ctx, w, infReq, infResp, providerName, activation.DecisionAllow, activation.ModeNonStream)
@@ -1275,17 +1434,65 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 func normalizeToInferenceRequest(projectID string, req *chatCompletionRequest) *inference.Request {
 	msgs := make([]inference.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
+		var toolCalls []inference.ToolCall
+		if len(m.ToolCalls) > 0 {
+			toolCalls = make([]inference.ToolCall, 0, len(m.ToolCalls))
+		}
+		toolArgsText := make([]string, 0, len(m.ToolCalls))
+		for _, tc := range m.ToolCalls {
+			toolCalls = append(toolCalls, inference.ToolCall{
+				ID:        tc.ID,
+				Type:      tc.Type,
+				Name:      tc.Function.Name,
+				Arguments: tc.Function.Arguments,
+			})
+			if strings.TrimSpace(tc.Function.Arguments) != "" {
+				toolArgsText = append(toolArgsText, tc.Function.Arguments)
+			}
+		}
+		content := chatContentToText(m.Content)
+		if len(toolArgsText) > 0 {
+			if content != "" {
+				content += "\n"
+			}
+			content += strings.Join(toolArgsText, "\n")
+		}
+		contentAny := m.Content
+		if _, ok := m.Content.(string); ok {
+			contentAny = nil
+		}
 		msgs = append(msgs, inference.Message{
-			Role:    m.Role,
-			Content: m.Content,
+			Role:       m.Role,
+			Content:    content,
+			ContentAny: contentAny,
+			ToolCalls:  toolCalls,
+			ToolCallID: m.ToolCallID,
+			Name:       m.Name,
 		})
+	}
+	var tools []inference.ToolDef
+	if len(req.Tools) > 0 {
+		tools = make([]inference.ToolDef, 0, len(req.Tools))
+		for _, t := range req.Tools {
+			tools = append(tools, inference.ToolDef{
+				"type": t.Type,
+				"function": map[string]any{
+					"name":        t.Function.Name,
+					"description": t.Function.Description,
+					"parameters":  t.Function.Parameters,
+					"strict":      t.Function.Strict,
+				},
+			})
+		}
 	}
 
 	return &inference.Request{
-		ProjectID: projectID,
-		Model:     req.Model,
-		UserID:    "", // later: could be taken from request body or headers
-		Messages:  msgs,
+		ProjectID:  projectID,
+		Model:      req.Model,
+		UserID:     "", // later: could be taken from request body or headers
+		Messages:   msgs,
+		Tools:      tools,
+		ToolChoice: req.ToolChoice,
 	}
 }
 
@@ -1302,6 +1509,9 @@ func (s *Server) validateChatRequest(req *inference.Request, providerName string
 		total := 0
 		for _, m := range req.Messages {
 			total += len(m.Content)
+			for _, tc := range m.ToolCalls {
+				total += len(tc.Arguments)
+			}
 			if total > maxChars {
 				return errors.New("Request too large")
 			}
@@ -1341,6 +1551,26 @@ func containsString(list []string, value string) bool {
 
 // buildChatCompletionResponse converts an internal inference.Response into OpenAI-style JSON.
 func buildChatCompletionResponse(req *inference.Request, resp *inference.Response) chatCompletionResponse {
+	content := any(resp.Message.Content)
+	if resp.Message.ContentAny != nil {
+		content = resp.Message.ContentAny
+	}
+	toolCalls := make([]chatToolCall, 0, len(resp.Message.ToolCalls))
+	for _, tc := range resp.Message.ToolCalls {
+		toolCalls = append(toolCalls, chatToolCall{
+			ID:   tc.ID,
+			Type: tc.Type,
+			Function: chatToolCallFunction{
+				Name:      tc.Name,
+				Arguments: tc.Arguments,
+			},
+		})
+	}
+	finishReason := resp.FinishReason
+	if strings.TrimSpace(finishReason) == "" {
+		finishReason = "stop"
+	}
+
 	return chatCompletionResponse{
 		ID:      "chatcmpl-straja-skeleton", // later: generate nicer IDs if you want
 		Object:  "chat.completion",
@@ -1350,10 +1580,11 @@ func buildChatCompletionResponse(req *inference.Request, resp *inference.Respons
 			{
 				Index: 0,
 				Message: chatMessage{
-					Role:    resp.Message.Role,
-					Content: resp.Message.Content,
+					Role:      resp.Message.Role,
+					Content:   content,
+					ToolCalls: toolCalls,
 				},
-				FinishReason: "stop",
+				FinishReason: finishReason,
 				// Logprobs left as nil → serializes as null or omitted depending on client
 			},
 		},
@@ -1364,6 +1595,100 @@ func buildChatCompletionResponse(req *inference.Request, resp *inference.Respons
 		},
 		// SystemFingerprint: nil for now
 	}
+}
+
+func chatContentToText(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if txt, ok := obj["text"].(string); ok && strings.TrimSpace(txt) != "" {
+				parts = append(parts, txt)
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return ""
+	}
+}
+
+func chatCompletionOutputText(msg inference.Message) string {
+	parts := []string{}
+	if strings.TrimSpace(msg.Content) != "" {
+		parts = append(parts, msg.Content)
+	}
+	for _, tc := range msg.ToolCalls {
+		if strings.TrimSpace(tc.Arguments) != "" {
+			parts = append(parts, tc.Arguments)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func buildChatCompletionsUpstreamBody(req *inference.Request, stream bool) ([]byte, error) {
+	chatReq := chatCompletionRequest{
+		Model:      req.Model,
+		Messages:   make([]chatMessage, 0, len(req.Messages)),
+		Tools:      make([]chatTool, 0, len(req.Tools)),
+		ToolChoice: req.ToolChoice,
+		Stream:     stream,
+	}
+	for _, m := range req.Messages {
+		msg := chatMessage{
+			Role:       m.Role,
+			Name:       m.Name,
+			ToolCallID: m.ToolCallID,
+		}
+		if len(m.ToolCalls) > 0 {
+			msg.ToolCalls = make([]chatToolCall, 0, len(m.ToolCalls))
+			for _, tc := range m.ToolCalls {
+				msg.ToolCalls = append(msg.ToolCalls, chatToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: chatToolCallFunction{
+						Name:      tc.Name,
+						Arguments: tc.Arguments,
+					},
+				})
+			}
+		}
+		if m.ContentAny != nil {
+			msg.Content = m.ContentAny
+		} else if m.Content != "" || len(m.ToolCalls) == 0 {
+			msg.Content = m.Content
+		}
+		chatReq.Messages = append(chatReq.Messages, msg)
+	}
+	for _, t := range req.Tools {
+		toolType, _ := t["type"].(string)
+		f, _ := t["function"].(map[string]any)
+		fn := chatToolFunction{}
+		if f != nil {
+			if name, ok := f["name"].(string); ok {
+				fn.Name = name
+			}
+			if desc, ok := f["description"].(string); ok {
+				fn.Description = desc
+			}
+			if params, ok := f["parameters"]; ok {
+				fn.Parameters = params
+			}
+			if strict, ok := f["strict"].(bool); ok {
+				fn.Strict = strict
+			}
+		}
+		chatReq.Tools = append(chatReq.Tools, chatTool{
+			Type:     toolType,
+			Function: fn,
+		})
+	}
+	return json.Marshal(chatReq)
 }
 
 func logTimingDebug(projectID, providerName, decision string, t *inference.Timings) {
@@ -1410,6 +1735,11 @@ func (s *Server) resolveAuthProject(r *http.Request) (auth.Project, string, bool
 	if ok && apiKey != "" {
 		if project, ok := s.auth.Lookup(apiKey); ok {
 			return project, "api_key", true
+		}
+	}
+	if headerKey := strings.TrimSpace(r.Header.Get("x-api-key")); headerKey != "" {
+		if project, ok := s.auth.Lookup(headerKey); ok {
+			return project, "x_api_key", true
 		}
 	}
 

@@ -54,16 +54,16 @@ Source: `internal/config/config.go` (ProviderConfig) and `internal/server/server
 
 Each provider entry defines an upstream.
 
-- `type` (string, required). Supported values: `"openai"`, `"mock"`.
-- `base_url` (string, optional; for OpenAI defaults to `https://api.openai.com/v1` in provider code)
-- `api_key_env` (string, required for `openai` unless `api_key` is set; name of env var containing upstream key)
+- `type` (string, required). Supported values: `"openai"`, `"claude"`, `"mock"`.
+- `base_url` (string, optional; defaults to `https://api.openai.com/v1` for OpenAI and `https://api.anthropic.com/v1` for Claude)
+- `api_key_env` (string, required for `openai` and `claude` unless `api_key` is set; name of env var containing upstream key)
 - `api_key` (string, optional fallback when env var is empty)
 - `allowed_models` (string list, optional allowlist)
 - `allow_private_networks` (bool, default `false`; when `false`, private/localhost base URLs are rejected)
 
 Notes:
 
-- Validation enforces `type` and (for `openai`) presence of `api_key_env` or `api_key`, plus a valid `base_url` scheme. See `internal/config/validate.go`.
+- Validation enforces `type` and (for `openai` / `claude`) presence of `api_key_env` or `api_key`, plus a valid `base_url` scheme. See `internal/config/validate.go`.
 - If `allow_private_networks` is `false`, private/loopback hosts are blocked to reduce SSRF risk.
 - `mock` providers start a local mock upstream (see `internal/mockprovider/mockprovider.go`).
 
