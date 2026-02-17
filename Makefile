@@ -2,9 +2,11 @@
 
 # Binary name
 BIN_NAME := straja
+STRAJAD_BIN_NAME := strajad
 
 # Main package (CLI entrypoint)
 CMD_PKG := ./cmd/straja
+STRAJAD_CMD_PKG := ./cmd/strajad
 
 # Output dir
 BIN_DIR := bin
@@ -39,7 +41,7 @@ EVAL_VERBOSE ?= false
 EVAL_OUTPUT ?= /tmp/straja_eval_detectors.jsonl
 EVAL_METRICS ?= /tmp/straja_eval_detectors.metrics.log
 
-.PHONY: all build run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run activation-receiver eval eval_detectors eval_detectors_500
+.PHONY: all build strajad-build run strajad-run test lint fmt tidy clean loadtest loadtest-ml loadtest-regex loadtest-mock loadtest-mock-delay bench-strajaguard docker-build docker-run activation-receiver eval eval_detectors eval_detectors_500
 
 all: build
 
@@ -48,6 +50,12 @@ build:
 	@echo ">> Building $(BIN_NAME)..."
 	@mkdir -p $(BIN_DIR)
 	@go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BIN_NAME) $(CMD_PKG)
+
+## Build the strajad binary
+strajad-build:
+	@echo ">> Building $(STRAJAD_BIN_NAME)..."
+	@mkdir -p $(BIN_DIR)
+	@go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(STRAJAD_BIN_NAME) $(STRAJAD_CMD_PKG)
 
 ## Run Straja with local config + .env variables (if .env exists)
 run:
@@ -61,6 +69,20 @@ run:
 		echo "   -> No .env file found, running with current environment"; \
 	fi; \
 	go run -ldflags "$(LDFLAGS)" $(CMD_PKG) --config=straja.yaml
+
+## Run strajad with local-only defaults + .env variables (if .env exists).
+## Requires STRAJAD_AUTH_TOKEN to be set.
+strajad-run:
+	@echo ">> Running $(STRAJAD_BIN_NAME)..."
+	@if [ -f .env ]; then \
+		echo "   -> Loading .env"; \
+		set -a; \
+		. ./.env; \
+		set +a; \
+	else \
+		echo "   -> No .env file found, running with current environment"; \
+	fi; \
+	go run -ldflags "$(LDFLAGS)" $(STRAJAD_CMD_PKG)
 
 ## Dev helper: local activation webhook receiver
 activation-receiver:

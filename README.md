@@ -12,6 +12,14 @@ Straja provides:
 - **Routing** – Projects mapped to providers (OpenAI and Claude, with room for more)  
 - **Drop-in DX** – Standard OpenAI and Claude SDK request formats, with a different base URL and key  
 
+## Vault daemon (Phases 1-5)
+
+This repo now also includes an early Vault daemon (`strajad`) for local MCP-based tooling with deterministic limits, auditing, encrypted local state, lock/unlock controls, retrieval indexing, a plan-only `vault.request` path (deterministic + optional broker), local trust UI (`/vault`), bounded connector tools (`mail.*`, `drive.*`, `github.*`, `web.*`), encrypted connector credential management (`vault.connectors`), approval-queue controls (`vault.approvals`), and Google OAuth-based Drive browser/import support in the UI.
+
+- Binary entrypoint: `cmd/strajad/main.go`
+- Core module: `internal/strajad/*`
+- Reference doc: [Vault Phases 1-5](docs/vault-phase1.md)
+
 ## Key concepts (high level)
 
 - **Gateway**  

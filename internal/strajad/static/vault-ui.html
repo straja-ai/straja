@@ -1,0 +1,1814 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Straja Vault Console</title>
+    <style>
+      :root {
+        --bg: #f2f5f1;
+        --card: #fdfcf7;
+        --ink: #17231f;
+        --muted: #4e625b;
+        --brand: #0f6b54;
+        --brand-soft: #d9f0e8;
+        --warn: #9a5e09;
+        --border: #c6d3cc;
+        --shadow: 0 20px 50px rgba(23, 35, 31, 0.14);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 20% 10%, #e4efe6 0%, transparent 35%),
+          radial-gradient(circle at 80% 0%, #def0f9 0%, transparent 35%),
+          var(--bg);
+      }
+      a {
+        color: var(--brand);
+      }
+      .skip-link {
+        position: absolute;
+        left: -9999px;
+        top: 0;
+      }
+      .skip-link:focus {
+        left: 1rem;
+        top: 1rem;
+        padding: 0.4rem 0.7rem;
+        background: #fff;
+        border: 1px solid var(--border);
+        z-index: 1000;
+      }
+      header {
+        padding: 1.2rem 1.2rem 0.8rem;
+      }
+      .banner {
+        border: 1px solid var(--border);
+        background: linear-gradient(115deg, #ebf8f1 0%, #edf6fb 100%);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        padding: 1.1rem 1.2rem;
+      }
+      .banner h1 {
+        margin: 0 0 0.2rem;
+        font-size: 1.45rem;
+      }
+      .banner p {
+        margin: 0;
+        color: var(--muted);
+      }
+      main {
+        padding: 0.8rem 1.2rem 1.5rem;
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 0.9rem;
+      }
+      section {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 0.9rem;
+      }
+      .section-title {
+        margin: 0 0 0.55rem;
+        font-size: 1.03rem;
+      }
+      .status {
+        grid-column: span 12;
+      }
+      .broker {
+        grid-column: span 12;
+      }
+      .status-grid {
+        display: grid;
+        gap: 0.6rem;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      .pill {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 0.55rem 0.6rem;
+        background: #fff;
+      }
+      .pill .k {
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      .pill .v {
+        margin-top: 0.2rem;
+        font-size: 1.02rem;
+        font-weight: 600;
+      }
+      .controls {
+        grid-column: span 5;
+      }
+      .collections {
+        grid-column: span 7;
+      }
+      .connectors {
+        grid-column: span 6;
+      }
+      .approvals {
+        grid-column: span 6;
+      }
+      .drive {
+        grid-column: span 12;
+      }
+      .upload {
+        grid-column: span 12;
+      }
+      .query {
+        grid-column: span 12;
+      }
+      .items {
+        grid-column: span 6;
+      }
+      .audit {
+        grid-column: span 6;
+      }
+      .guide {
+        grid-column: span 12;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.45rem;
+        margin-bottom: 0.6rem;
+      }
+      input,
+      select,
+      button,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.5rem 0.6rem;
+        font: inherit;
+      }
+      button {
+        background: var(--brand);
+        color: #fff;
+        border: none;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #27443a;
+      }
+      button.ghost {
+        background: #fff;
+        color: var(--ink);
+        border: 1px solid var(--border);
+      }
+      .actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+      .warn {
+        color: var(--warn);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+        padding: 0.42rem 0.3rem;
+        font-size: 0.88rem;
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .list {
+        max-height: 300px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+      }
+      .list-item {
+        border-bottom: 1px solid var(--border);
+        padding: 0.55rem 0.6rem;
+      }
+      .list-item:last-child {
+        border-bottom: none;
+      }
+      .trace-timing {
+        margin-top: 0.35rem;
+      }
+      .trace-bar-track {
+        height: 7px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: #f5f8f6;
+        overflow: hidden;
+      }
+      .trace-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #0f6b54 0%, #58a88f 100%);
+      }
+      .trace-timing-label {
+        margin-top: 0.15rem;
+      }
+      .live {
+        margin-top: 0.55rem;
+        color: var(--muted);
+        min-height: 1.2rem;
+      }
+      .dropzone {
+        border: 2px dashed var(--border);
+        border-radius: 12px;
+        background: #fff;
+        padding: 1rem;
+        text-align: center;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .dropzone.dragging {
+        border-color: var(--brand);
+        background: var(--brand-soft);
+        color: var(--ink);
+      }
+      pre {
+        margin: 0;
+        padding: 0.7rem;
+        overflow: auto;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #fff;
+      }
+      @media (max-width: 840px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+        .status,
+        .broker,
+        .controls,
+        .collections,
+        .connectors,
+        .approvals,
+        .drive,
+        .upload,
+        .query,
+        .items,
+        .audit,
+        .guide {
+          grid-column: span 1;
+        }
+        .status-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .actions {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header>
+      <div class="banner">
+        <h1>Straja Vault Control Surface</h1>
+        <p>
+          Zero access by default. Unlock only what agents need, inspect access
+          history, and keep policy boundaries explicit.
+        </p>
+      </div>
+    </header>
+    <main id="main">
+      <section class="status" aria-label="Vault state">
+        <h2 class="section-title">State and Budgets</h2>
+        <div class="status-grid" id="status-grid"></div>
+        <div id="state-live" class="live" aria-live="polite"></div>
+      </section>
+
+      <section class="broker" aria-label="Local broker model">
+        <h2 class="section-title">Local LLM Model</h2>
+        <p class="muted">
+          Check whether the configured local broker model exists, and download it if missing.
+        </p>
+        <div class="actions" style="margin-bottom: 0.6rem">
+          <button id="broker-check-btn" class="ghost" type="button">Check Model</button>
+          <button id="broker-install-btn" class="secondary" type="button">Download Model</button>
+        </div>
+        <div id="broker-model-status" class="list"></div>
+      </section>
+
+      <section class="controls" aria-label="Unlock controls">
+        <h2 class="section-title" id="session-controls-title">Unlock Session</h2>
+        <div class="row">
+          <label for="token">API token</label>
+          <input id="token" type="password" autocomplete="off" />
+        </div>
+        <div class="row">
+          <label for="passphrase">Passphrase</label>
+          <input id="passphrase" type="password" autocomplete="off" />
+        </div>
+        <div class="row">
+          <label for="presence">Presence token (optional)</label>
+          <input id="presence" type="password" autocomplete="off" />
+        </div>
+        <div class="actions">
+          <button id="unlock-btn" type="button">Unlock</button>
+          <button id="lock-btn" class="secondary" type="button" style="display: none">
+            Lock
+          </button>
+          <button id="reindex-btn" class="ghost" type="button">Reindex Vault</button>
+          <button id="refresh-btn" class="ghost" type="button">Refresh</button>
+        </div>
+        <p class="muted">
+          Token should be the same value used in
+          <code>STRAJAD_AUTH_TOKEN</code>.
+        </p>
+      </section>
+
+      <section class="collections" aria-label="Collections and policies">
+        <h2 class="section-title">Collections and Policy Tier</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Tier</th>
+              <th>Description</th>
+              <th>Accessible</th>
+              <th>Save</th>
+            </tr>
+          </thead>
+          <tbody id="collections-body"></tbody>
+        </table>
+      </section>
+
+      <section class="connectors" aria-label="Connector credentials">
+        <h2 class="section-title">Connector Credentials</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Configured</th>
+              <th>Updated</th>
+              <th>Token</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="connectors-body"></tbody>
+        </table>
+      </section>
+
+      <section class="approvals" aria-label="Approval queue">
+        <h2 class="section-title">Approval Queue</h2>
+        <button id="approvals-btn" class="ghost" type="button">
+          Reload Approvals
+        </button>
+        <div id="approvals-list" class="list" style="margin-top: 0.6rem"></div>
+      </section>
+
+      <section class="drive" aria-label="Drive import">
+        <h2 class="section-title">Google Drive Import</h2>
+        <p class="muted">
+          Sign in with Google, browse folders, select files/folders, then
+          import into Vault with policy and budget enforcement.
+        </p>
+        <div class="actions" style="margin-bottom: 0.6rem">
+          <button id="drive-login-btn" class="ghost" type="button">
+            Login with Google
+          </button>
+          <button id="drive-root-btn" class="ghost" type="button">
+            Root
+          </button>
+          <button id="drive-back-btn" class="ghost" type="button">
+            Back
+          </button>
+          <button id="drive-refresh-btn" class="ghost" type="button">
+            Refresh Files
+          </button>
+          <button id="drive-import-btn" class="secondary" type="button">
+            Import Selected
+          </button>
+        </div>
+        <div class="muted" id="drive-folder-label">Current folder: root</div>
+        <div id="drive-list" class="list" style="margin-top: 0.6rem"></div>
+      </section>
+
+      <section class="upload" aria-label="File ingest">
+        <h2 class="section-title">Ingest Files (MCP)</h2>
+        <p class="muted">
+          Drag and drop <code>.txt</code> or <code>.pdf</code> files. This
+          calls the MCP tool <code>vault.ingest</code>.
+        </p>
+        <div class="row">
+          <label for="upload-collection">Collection</label>
+          <input id="upload-collection" value="work" />
+        </div>
+        <div class="row">
+          <label for="upload-title">Title override (optional)</label>
+          <input id="upload-title" placeholder="Defaults to filename" />
+        </div>
+        <div
+          id="dropzone"
+          class="dropzone"
+          role="button"
+          tabindex="0"
+          aria-label="Drop files or click to upload"
+        >
+          Drag and drop .txt or .pdf here, or click to choose files
+        </div>
+        <input
+          id="file-input"
+          type="file"
+          accept=".txt,.pdf,text/plain,application/pdf"
+          multiple
+          style="display: none"
+        />
+        <div id="upload-list" class="list" style="margin-top: 0.6rem"></div>
+      </section>
+
+      <section class="query" aria-label="Vault query console">
+        <h2 class="section-title">Vault Query Console (E2E)</h2>
+        <p class="muted">
+          Run a prompt against Vault and inspect the full chain: MCP tool calls,
+          local LLM request/response, and final output.
+        </p>
+        <div class="row">
+          <label for="query-task">Prompt</label>
+          <textarea
+            id="query-task"
+            rows="4"
+            placeholder="Example: summarize the latest roadmap changes in work"
+          ></textarea>
+        </div>
+        <div class="row">
+          <label for="query-collection">Collection (optional)</label>
+          <input id="query-collection" placeholder="work, personal, tax..." />
+        </div>
+        <div class="actions">
+          <button id="query-run-btn" class="secondary" type="button">Run Query</button>
+          <button id="query-clear-btn" class="ghost" type="button">Clear</button>
+        </div>
+        <div style="margin-top: 0.7rem">
+          <div class="muted">Final response</div>
+          <pre id="query-final">Run a query to see the response.</pre>
+        </div>
+        <div style="margin-top: 0.7rem">
+          <div class="muted">Execution trace</div>
+          <div id="query-trace" class="list"></div>
+        </div>
+        <div style="margin-top: 0.7rem">
+          <details>
+            <summary class="muted">Raw query payload</summary>
+            <pre id="query-raw">No payload yet.</pre>
+          </details>
+        </div>
+      </section>
+
+      <section class="items" aria-label="Collection items">
+        <h2 class="section-title">Collection Items</h2>
+        <div class="row">
+          <label for="collection-filter">Collection filter</label>
+          <input id="collection-filter" placeholder="work, personal, tax..." />
+        </div>
+        <div class="actions">
+          <button id="items-btn" class="ghost" type="button">Load Items</button>
+          <button id="items-delete-selected-btn" class="ghost" type="button">Delete Selected</button>
+          <button id="items-delete-all-btn" class="ghost" type="button">Delete All Loaded</button>
+        </div>
+        <div id="items-list" class="list" style="margin-top: 0.6rem"></div>
+      </section>
+
+      <section class="audit" aria-label="Audit timeline">
+        <h2 class="section-title">Audit Timeline</h2>
+        <button id="audit-btn" class="ghost" type="button">
+          Reload Timeline
+        </button>
+        <div id="audit-list" class="list" style="margin-top: 0.6rem"></div>
+      </section>
+
+      <section class="guide" aria-label="Integration guide">
+        <h2 class="section-title">OpenClaw Integration Quickstart</h2>
+        <p class="muted">
+          Keep OpenClaw as orchestrator. Use Vault MCP tool calls as the
+          policy-enforced data boundary.
+        </p>
+        <pre><code>export STRAJAD_AUTH_TOKEN="replace-me"
+export STRAJAD_GOOGLE_OAUTH_CLIENT_ID="google-client-id"
+export STRAJAD_GOOGLE_OAUTH_CLIENT_SECRET="google-client-secret"
+export STRAJAD_GOOGLE_OAUTH_REDIRECT_URL="http://127.0.0.1:8787/vault/api/drive/oauth/callback"
+export STRAJAD_MAX_INGEST_BYTES="8388608"
+export STRAJAD_BROKER_ENABLED=true
+export STRAJAD_BROKER_MODEL="phi4-mini:3.8b"
+./bin/strajad --broker-install-model --broker-model phi4-mini:3.8b
+./bin/strajad</code></pre>
+      </section>
+    </main>
+
+    <script>
+      const statusGrid = document.getElementById("status-grid");
+      const stateLive = document.getElementById("state-live");
+      const collectionsBody = document.getElementById("collections-body");
+      const connectorsBody = document.getElementById("connectors-body");
+      const approvalsList = document.getElementById("approvals-list");
+      const driveList = document.getElementById("drive-list");
+      const driveFolderLabel = document.getElementById("drive-folder-label");
+      const brokerModelStatus = document.getElementById("broker-model-status");
+      const dropzone = document.getElementById("dropzone");
+      const fileInput = document.getElementById("file-input");
+      const uploadList = document.getElementById("upload-list");
+      const queryTrace = document.getElementById("query-trace");
+      const queryFinal = document.getElementById("query-final");
+      const queryRaw = document.getElementById("query-raw");
+      const itemsList = document.getElementById("items-list");
+      const auditList = document.getElementById("audit-list");
+      const tokenInput = document.getElementById("token");
+      const unlockBtn = document.getElementById("unlock-btn");
+      const lockBtn = document.getElementById("lock-btn");
+      const passphraseInput = document.getElementById("passphrase");
+      const presenceInput = document.getElementById("presence");
+      const controlsTitle = document.getElementById("session-controls-title");
+      let mcpSeq = 1;
+      let driveCurrentFolder = "root";
+      let driveFolderStack = [];
+      let driveItems = [];
+      let loadedItems = [];
+
+      function bootstrapToken() {
+        const urlToken = new URLSearchParams(window.location.search).get("token");
+        const saved = localStorage.getItem("strajad_token");
+        const token = urlToken || saved || "";
+        tokenInput.value = token;
+        return token;
+      }
+
+      function readToken() {
+        const token = tokenInput.value.trim();
+        if (token) {
+          localStorage.setItem("strajad_token", token);
+        }
+        return token;
+      }
+
+      function daemonUnreachableError(err) {
+        const host = window.location.host || "127.0.0.1:8787";
+        const message =
+          "Connection to strajad at " +
+          host +
+          " was interrupted or timed out. Check daemon logs and retry.";
+        const wrapped = new Error(message);
+        wrapped.payload = { detail: (err && err.message) || "network_error" };
+        return wrapped;
+      }
+
+      async function api(path, options = {}) {
+        const token = readToken();
+        const headers = Object.assign(
+          { "Content-Type": "application/json" },
+          options.headers || {}
+        );
+        if (token) {
+          headers.Authorization = "Bearer " + token;
+        }
+        let response;
+        try {
+          response = await fetch(path, {
+            method: options.method || "GET",
+            headers,
+            body: options.body ? JSON.stringify(options.body) : undefined,
+          });
+        } catch (err) {
+          throw daemonUnreachableError(err);
+        }
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const err = new Error(data.error || response.statusText);
+          err.payload = data;
+          throw err;
+        }
+        return data;
+      }
+
+      async function mcpToolCall(name, args) {
+        const token = readToken();
+        const headers = { "Content-Type": "application/json" };
+        if (token) {
+          headers.Authorization = "Bearer " + token;
+        }
+        const payload = {
+          jsonrpc: "2.0",
+          id: "vault-ui-" + String(mcpSeq++),
+          method: "tools/call",
+          params: {
+            name,
+            arguments: args || {},
+          },
+        };
+        let response;
+        try {
+          response = await fetch("/mcp", {
+            method: "POST",
+            headers,
+            body: JSON.stringify(payload),
+          });
+        } catch (err) {
+          throw daemonUnreachableError(err);
+        }
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || response.statusText);
+        }
+        if (data.error) {
+          const msg =
+            (data.error && (data.error.message || data.error.code)) ||
+            "rpc_error";
+          throw new Error(String(msg));
+        }
+        if (!data.result) {
+          throw new Error("empty_mcp_result");
+        }
+        return data.result.data || data.result;
+      }
+
+      function setLive(message, isWarn = false) {
+        stateLive.textContent = message;
+        stateLive.className = "live" + (isWarn ? " warn" : "");
+      }
+
+      function updateSessionControls(state) {
+        const unlocked = !!(state && state.unlocked);
+        unlockBtn.style.display = unlocked ? "none" : "";
+        lockBtn.style.display = unlocked ? "" : "none";
+        passphraseInput.disabled = unlocked;
+        presenceInput.disabled = unlocked;
+        if (controlsTitle) {
+          controlsTitle.textContent = unlocked
+            ? "Vault Session (Unlocked)"
+            : "Unlock Session";
+        }
+      }
+
+      function renderState(state) {
+        const cards = [
+          ["Unlocked", state.unlocked ? "yes" : "no"],
+          ["Zero access by default", state.zero_access_by_default ? "yes" : "no"],
+          ["Presence access", state.presence_access ? "yes" : "no"],
+          ["Collections", String(state.collection_count || 0)],
+        ];
+        statusGrid.innerHTML = cards
+          .map(
+            ([k, v]) =>
+              `<div class="pill"><div class="k">${k}</div><div class="v">${v}</div></div>`
+          )
+          .join("");
+        updateSessionControls(state);
+      }
+
+      function renderCollections(data) {
+        if (data.locked) {
+          collectionsBody.innerHTML =
+            '<tr><td colspan="5" class="muted">Vault is locked.</td></tr>';
+          return;
+        }
+        const rows = data.collections || [];
+        if (!rows.length) {
+          collectionsBody.innerHTML =
+            '<tr><td colspan="5" class="muted">No collections.</td></tr>';
+          return;
+        }
+        collectionsBody.innerHTML = rows
+          .map((col) => {
+            const select = `
+              <select data-name="${col.name}" data-field="tier">
+                <option value="always_on" ${
+                  col.tier === "always_on" ? "selected" : ""
+                }>always_on</option>
+                <option value="presence_required" ${
+                  col.tier === "presence_required" ? "selected" : ""
+                }>presence_required</option>
+              </select>`;
+            const desc = `<textarea data-name="${col.name}" data-field="description" rows="2">${col.description || ""}</textarea>`;
+            const save = `<button type="button" data-action="save" data-name="${col.name}" class="ghost">Save</button>`;
+            return `<tr>
+              <td>${col.name}</td>
+              <td>${select}</td>
+              <td>${desc}</td>
+              <td>${col.accessible ? "yes" : "no"}</td>
+              <td>${save}</td>
+            </tr>`;
+          })
+          .join("");
+      }
+
+      function renderItems(data) {
+        if (data.locked) {
+          loadedItems = [];
+          itemsList.innerHTML = '<div class="list-item muted">Vault is locked.</div>';
+          return;
+        }
+        const items = Array.isArray(data.items) ? data.items : [];
+        loadedItems = items;
+        if (!items.length) {
+          itemsList.innerHTML = '<div class="list-item muted">No items.</div>';
+          return;
+        }
+        itemsList.innerHTML = items
+          .map(
+            (item) => `<div class="list-item">
+              <div style="display:flex; gap:0.5rem; align-items:flex-start;">
+                <input type="checkbox" data-item-id="${item.id}" />
+                <div style="flex:1;">
+                  <div><strong>${item.title}</strong> <span class="muted">(${item.collection})</span></div>
+                  <div class="muted">${item.preview || ""}</div>
+                  <div class="muted">${item.id} | ${item.bytes} bytes</div>
+                </div>
+                <button type="button" class="ghost" data-action="delete-item" data-item-id="${item.id}">Delete</button>
+              </div>
+            </div>`
+          )
+          .join("");
+      }
+
+      function selectedItemIDs() {
+        const checked = Array.from(
+          itemsList.querySelectorAll('input[type="checkbox"][data-item-id]:checked')
+        );
+        const ids = [];
+        const seen = new Set();
+        checked.forEach((input) => {
+          const id = (input.dataset.itemId || "").trim();
+          if (!id || seen.has(id)) {
+            return;
+          }
+          seen.add(id);
+          ids.push(id);
+        });
+        return ids;
+      }
+
+      function renderConnectors(data) {
+        if (data.locked) {
+          connectorsBody.innerHTML =
+            '<tr><td colspan="5" class="muted">Vault is locked.</td></tr>';
+          return;
+        }
+        const connectors = data.connectors || [];
+        if (!connectors.length) {
+          connectorsBody.innerHTML =
+            '<tr><td colspan="5" class="muted">No connectors.</td></tr>';
+          return;
+        }
+        connectorsBody.innerHTML = connectors
+          .map((connector) => {
+            const provider = connector.provider;
+            const updated = connector.updated_at || "";
+            return `<tr>
+              <td>${provider}</td>
+              <td>${connector.configured ? "yes" : "no"}</td>
+              <td>${updated || "-"}</td>
+              <td><input type="password" data-provider="${provider}" data-field="token" autocomplete="off" placeholder="Paste ${provider} token"/></td>
+              <td>
+                <div class="actions">
+                  <button type="button" data-action="save-token" data-provider="${provider}" class="ghost">Save</button>
+                  <button type="button" data-action="clear-token" data-provider="${provider}" class="ghost">Clear</button>
+                </div>
+              </td>
+            </tr>`;
+          })
+          .join("");
+      }
+
+      function renderApprovals(data) {
+        if (data.locked) {
+          approvalsList.innerHTML =
+            '<div class="list-item muted">Vault is locked.</div>';
+          return;
+        }
+        const approvals = data.approvals || [];
+        if (!approvals.length) {
+          approvalsList.innerHTML =
+            '<div class="list-item muted">No approval requests.</div>';
+          return;
+        }
+        approvalsList.innerHTML = approvals
+          .map((approval) => {
+            const pending = approval.status === "pending";
+            const controls = pending
+              ? `<div class="row" style="margin-top: 0.4rem">
+                  <textarea rows="2" data-id="${approval.id}" data-field="reason" placeholder="Optional reason"></textarea>
+                </div>
+                <div class="actions">
+                  <button type="button" data-action="approve" data-id="${approval.id}" class="ghost">Approve</button>
+                  <button type="button" data-action="reject" data-id="${approval.id}" class="ghost">Reject</button>
+                </div>`
+              : `<div class="muted">Resolved: ${approval.status}${approval.reason ? " | " + approval.reason : ""}</div>`;
+            return `<div class="list-item">
+              <div><strong>${approval.action || "approval"}</strong> <span class="muted">${approval.id || ""}</span></div>
+              <div class="muted">${approval.summary || ""}</div>
+              <div class="muted">Collection: ${approval.collection || "-"} | Draft: ${approval.resource_id || "-"}</div>
+              ${controls}
+            </div>`;
+          })
+          .join("");
+      }
+
+      function renderDriveMessage(message) {
+        driveList.innerHTML = `<div class="list-item muted">${message}</div>`;
+      }
+
+      function renderDriveFiles(data) {
+        if (data.locked) {
+          renderDriveMessage("Vault is locked.");
+          return;
+        }
+        driveItems = data.items || [];
+        driveFolderLabel.textContent =
+          "Current folder: " + (data.folder_id || driveCurrentFolder || "root");
+        if (!driveItems.length) {
+          driveList.innerHTML =
+            '<div class="list-item muted">No files in this folder.</div>';
+          return;
+        }
+        driveList.innerHTML = driveItems
+          .map((item) => {
+            const kind = item.is_folder ? "folder" : "file";
+            const name = item.name || "(untitled)";
+            const size =
+              item.size && Number(item.size) > 0
+                ? `${item.size} bytes`
+                : item.is_folder
+                  ? "folder"
+                  : "-";
+            const openButton = item.is_folder
+              ? `<button type="button" class="ghost" data-action="open-folder" data-id="${item.id}">Open</button>`
+              : "";
+            return `<div class="list-item">
+              <div style="display:flex; gap:0.5rem; align-items:flex-start;">
+                <input type="checkbox" data-kind="${kind}" data-id="${item.id}" />
+                <div style="flex:1;">
+                  <div><strong>${name}</strong> <span class="muted">(${kind})</span></div>
+                  <div class="muted">${item.id} | ${size}</div>
+                </div>
+                <div>${openButton}</div>
+              </div>
+            </div>`;
+          })
+          .join("");
+      }
+
+      function selectedDriveTargets() {
+        const checked = Array.from(
+          driveList.querySelectorAll('input[type="checkbox"][data-id]:checked')
+        );
+        const fileIds = [];
+        const folderIds = [];
+        checked.forEach((input) => {
+          const id = input.dataset.id || "";
+          const kind = input.dataset.kind || "";
+          if (!id) return;
+          if (kind === "folder") {
+            folderIds.push(id);
+          } else {
+            fileIds.push(id);
+          }
+        });
+        return { fileIds, folderIds };
+      }
+
+      function renderBrokerModelStatus(data) {
+        if (!data) {
+          brokerModelStatus.innerHTML =
+            '<div class="list-item muted">Broker model status unavailable.</div>';
+          return;
+        }
+        const present = !!data.model_present;
+        const enabled = !!data.broker_enabled;
+        const provider = data.broker_provider || "ollama";
+        const model = data.broker_model || "-";
+        const endpoint = data.broker_endpoint || "-";
+        const checkedAt = data.checked_at || "-";
+        const error = data.error ? `<div class="warn">Error: ${escapeHTML(data.error)}</div>` : "";
+        const errorDetail = data.error_detail
+          ? `<div class="muted">Detail: ${escapeHTML(data.error_detail)}</div>`
+          : "";
+        const hint = data.hint
+          ? `<div class="muted">Hint: ${escapeHTML(data.hint)}</div>`
+          : "";
+        const stateLine = present
+          ? '<div><strong>Model present:</strong> yes</div>'
+          : '<div><strong>Model present:</strong> no</div>';
+        brokerModelStatus.innerHTML = `<div class="list-item">
+          <div><strong>Enabled:</strong> ${enabled ? "yes" : "no"}</div>
+          <div><strong>Provider:</strong> ${escapeHTML(provider)}</div>
+          <div><strong>Model:</strong> ${escapeHTML(model)}</div>
+          <div><strong>Endpoint:</strong> ${escapeHTML(endpoint)}</div>
+          ${stateLine}
+          <div class="muted">Checked: ${escapeHTML(checkedAt)}</div>
+          ${error}
+          ${errorDetail}
+          ${hint}
+        </div>`;
+      }
+
+      function renderUploadResults(results) {
+        if (!results || !results.length) {
+          uploadList.innerHTML =
+            '<div class="list-item muted">No uploads in this session.</div>';
+          return;
+        }
+        uploadList.innerHTML = results
+          .map((result) => {
+            if (result.status === "ok") {
+              return `<div class="list-item">
+                <div><strong>uploaded</strong> <span class="muted">${result.name}</span></div>
+                <div class="muted">id=${result.id} | collection=${result.collection} | extracted_chars=${result.extractedChars}</div>
+              </div>`;
+            }
+            return `<div class="list-item">
+              <div><strong>failed</strong> <span class="muted">${result.name}</span></div>
+              <div class="muted">${result.error || "unknown error"}</div>
+            </div>`;
+          })
+          .join("");
+      }
+
+      function detectIngestContentType(file) {
+        const name = (file.name || "").toLowerCase();
+        if (name.endsWith(".txt")) {
+          return "text/plain";
+        }
+        if (name.endsWith(".pdf")) {
+          return "application/pdf";
+        }
+        const type = (file.type || "").toLowerCase();
+        if (type === "text/plain") {
+          return "text/plain";
+        }
+        if (type === "application/pdf") {
+          return "application/pdf";
+        }
+        return "";
+      }
+
+      function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (typeof reader.result !== "string") {
+              reject(new Error("failed_to_read_file"));
+              return;
+            }
+            const idx = reader.result.indexOf(",");
+            if (idx < 0) {
+              reject(new Error("invalid_file_data"));
+              return;
+            }
+            resolve(reader.result.slice(idx + 1));
+          };
+          reader.onerror = () => reject(new Error("failed_to_read_file"));
+          reader.readAsDataURL(file);
+        });
+      }
+
+      async function ingestFiles(fileLike) {
+        const files = Array.from(fileLike || []);
+        if (!files.length) {
+          return;
+        }
+        const results = [];
+        renderUploadResults(results);
+
+        const collection = (
+          document.getElementById("upload-collection").value || ""
+        ).trim();
+        const titleOverride = (
+          document.getElementById("upload-title").value || ""
+        ).trim();
+
+        for (const file of files) {
+          try {
+            const contentType = detectIngestContentType(file);
+            if (!contentType) {
+              throw new Error("only .txt and .pdf are supported");
+            }
+            const contentBase64 = await fileToBase64(file);
+            const title = titleOverride || file.name;
+            const response = await mcpToolCall("vault.ingest", {
+              collection: collection || "work",
+              title,
+              content_type: contentType,
+              content_base64: contentBase64,
+            });
+            results.push({
+              status: "ok",
+              name: file.name,
+              id: response.id || "",
+              collection: response.collection || "",
+              extractedChars: response.extracted_chars || 0,
+            });
+          } catch (err) {
+            results.push({
+              status: "error",
+              name: file.name,
+              error: err && err.message ? err.message : "upload_failed",
+            });
+          }
+          renderUploadResults(results);
+        }
+
+        const failed = results.filter((r) => r.status !== "ok").length;
+        if (failed > 0) {
+          setLive(
+            `Ingest completed with ${failed} failure(s) out of ${results.length}.`,
+            true
+          );
+        } else {
+          setLive(`Ingested ${results.length} file(s) through vault.ingest.`);
+        }
+        await refreshItems();
+        await refreshAudit();
+      }
+
+      function escapeHTML(value) {
+        return String(value || "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function prettyJSON(value) {
+        try {
+          return escapeHTML(JSON.stringify(value, null, 2));
+        } catch (_err) {
+          return escapeHTML(String(value || ""));
+        }
+      }
+
+      function renderQueryRaw(value) {
+        if (!queryRaw) {
+          return;
+        }
+        if (value === undefined) {
+          queryRaw.textContent = "No payload yet.";
+          return;
+        }
+        try {
+          queryRaw.textContent = JSON.stringify(value, null, 2);
+        } catch (_err) {
+          queryRaw.textContent = String(value || "");
+        }
+      }
+
+      function renderQueryTrace(trace) {
+        const steps = Array.isArray(trace) ? trace : [];
+        if (!steps.length) {
+          queryTrace.innerHTML =
+            '<div class="list-item muted">No trace yet. Run a query.</div>';
+          return;
+        }
+        const durations = steps
+          .map((step) =>
+            typeof step.duration_ms === "number" && step.duration_ms >= 0
+              ? step.duration_ms
+              : 0
+          )
+          .filter((ms) => ms > 0);
+        const maxDuration = durations.length ? Math.max(...durations) : 0;
+        const totalDuration = durations.length
+          ? durations.reduce((sum, current) => sum + current, 0)
+          : 0;
+        queryTrace.innerHTML = steps
+          .map((step, index) => {
+            const title = `${index + 1}. ${step.stage || "step"}${
+              step.name ? " | " + step.name : ""
+            }`;
+            const duration =
+              typeof step.duration_ms === "number" && step.duration_ms >= 0
+                ? ` | ${step.duration_ms}ms`
+                : "";
+            const message = step.message
+              ? `<div class="muted">${escapeHTML(step.message)}</div>`
+              : "";
+            const error = step.error
+              ? `<div class="warn">${escapeHTML(step.error)}</div>`
+              : "";
+            const args =
+              step.arguments !== undefined
+                ? `<details><summary>Arguments</summary><pre>${prettyJSON(
+                    step.arguments
+                  )}</pre></details>`
+                : "";
+            const result =
+              step.result !== undefined
+                ? `<details><summary>Result</summary><pre>${prettyJSON(
+                    step.result
+                  )}</pre></details>`
+                : "";
+            const hasDuration =
+              typeof step.duration_ms === "number" && step.duration_ms >= 0;
+            const timing = hasDuration
+              ? `<div class="trace-timing">
+                  <div class="trace-bar-track">
+                    <div class="trace-bar-fill" style="width: ${
+                      maxDuration > 0
+                        ? Math.max(
+                            6,
+                            Math.min(100, Math.round((step.duration_ms / maxDuration) * 100))
+                          )
+                        : 0
+                    }%"></div>
+                  </div>
+                  <div class="muted trace-timing-label">${step.duration_ms}ms</div>
+                </div>`
+              : "";
+            return `<div class="list-item">
+              <div><strong>${escapeHTML(title)}</strong><span class="muted">${escapeHTML(
+              duration
+            )}</span></div>
+              ${message}
+              ${error}
+              ${timing}
+              ${args}
+              ${result}
+            </div>`;
+          })
+          .join("");
+        if (totalDuration > 0) {
+          queryTrace.innerHTML =
+            `<div class="list-item muted">Total measured tool time: ${totalDuration}ms</div>` +
+            queryTrace.innerHTML;
+        }
+      }
+
+      function renderQueryFinal(text) {
+        queryFinal.textContent = text || "No response generated.";
+      }
+
+      async function runVaultQuery() {
+        const task = (document.getElementById("query-task").value || "").trim();
+        const collection = (
+          document.getElementById("query-collection").value || ""
+        ).trim();
+        if (!task) {
+          setLive("Prompt is required to run a Vault query.", true);
+          return;
+        }
+        renderQueryFinal("Running query...");
+        renderQueryRaw({ status: "running", task, collection });
+        renderQueryTrace([]);
+        try {
+          const data = await api("/vault/api/query", {
+            method: "POST",
+            body: {
+              task,
+              collection,
+            },
+          });
+          renderQueryRaw(data);
+          renderQueryTrace(data.trace || []);
+          renderQueryFinal(data.final_response || "No response generated.");
+          if (data.llm_used) {
+            setLive("Query completed with local LLM synthesis.");
+          } else {
+            setLive("Query completed with deterministic synthesis.");
+          }
+          await refreshAudit();
+        } catch (err) {
+          const payload = err && err.payload ? err.payload : {};
+          renderQueryRaw({
+            error: err && err.message ? err.message : "unknown_error",
+            payload,
+          });
+          if (payload && payload.trace) {
+            renderQueryTrace(payload.trace);
+          }
+          if (payload && payload.final_response) {
+            renderQueryFinal(payload.final_response);
+          } else {
+            renderQueryFinal("Query failed.");
+          }
+          setLive("Query failed: " + (err && err.message ? err.message : "unknown_error"), true);
+        }
+      }
+
+      function renderAudit(data) {
+        const records = data.records || [];
+        if (!records.length) {
+          auditList.innerHTML = '<div class="list-item muted">No records.</div>';
+          return;
+        }
+        auditList.innerHTML = records
+          .map(
+            (record) => `<div class="list-item">
+              <div><strong>${record.decision || "?"}</strong> <span class="muted">${record.tool || record.rpc_method || ""}</span></div>
+              <div class="muted">${record.reason || ""}</div>
+              <div class="muted">${record.time || ""}</div>
+            </div>`
+          )
+          .join("");
+      }
+
+      async function refreshState() {
+        try {
+          const state = await api("/vault/api/state");
+          renderState(state);
+          setLive("State refreshed.");
+          return state;
+        } catch (err) {
+          setLive("State refresh failed: " + err.message, true);
+          throw err;
+        }
+      }
+
+      async function refreshCollections() {
+        try {
+          const data = await api("/vault/api/collections");
+          renderCollections(data);
+        } catch (err) {
+          setLive("Collection load failed: " + err.message, true);
+        }
+      }
+
+      async function refreshConnectors() {
+        try {
+          const data = await api("/vault/api/connectors");
+          renderConnectors(data);
+        } catch (err) {
+          setLive("Connector load failed: " + err.message, true);
+        }
+      }
+
+      async function refreshBrokerModelStatus() {
+        try {
+          const data = await api("/vault/api/broker/model");
+          renderBrokerModelStatus(data);
+        } catch (err) {
+          const payload = err && err.payload ? err.payload : null;
+          if (payload) {
+            renderBrokerModelStatus(payload);
+          } else {
+            renderBrokerModelStatus({
+              error: err && err.message ? err.message : "broker_status_failed",
+            });
+          }
+          setLive("Broker model status check failed: " + (err && err.message ? err.message : "unknown_error"), true);
+        }
+      }
+
+      async function installBrokerModel() {
+        try {
+          setLive("Downloading local broker model. This can take a while...");
+          const data = await api("/vault/api/broker/model/install", {
+            method: "POST",
+            body: {},
+          });
+          renderBrokerModelStatus(data);
+          if (data.model_present) {
+            setLive("Local model downloaded and ready.");
+          } else {
+            setLive("Model install completed but readiness check is pending.", true);
+          }
+        } catch (err) {
+          const payload = err && err.payload ? err.payload : null;
+          if (payload) {
+            renderBrokerModelStatus(payload);
+          }
+          const base = "Model download failed: " + (err && err.message ? err.message : "unknown_error");
+          const hint = payload && payload.hint ? " | " + payload.hint : "";
+          setLive(base + hint, true);
+        }
+      }
+
+      async function refreshDriveFiles() {
+        try {
+          const data = await api(
+            "/vault/api/drive/files?folder_id=" +
+              encodeURIComponent(driveCurrentFolder || "root")
+          );
+          renderDriveFiles(data);
+        } catch (err) {
+          const code = String(err && err.message ? err.message : "");
+          if (code === "google_oauth_not_configured") {
+            renderDriveMessage(
+              "Drive OAuth is not configured on daemon. Set STRAJAD_GOOGLE_OAUTH_CLIENT_ID and STRAJAD_GOOGLE_OAUTH_CLIENT_SECRET, then restart."
+            );
+            setLive("Drive login needs server OAuth configuration.", true);
+            return;
+          }
+          if (code === "drive_not_connected") {
+            renderDriveMessage("Drive is not connected yet. Click Login with Google.");
+            return;
+          }
+          if (code === "vault_locked") {
+            renderDriveMessage("Vault is locked.");
+            return;
+          }
+          renderDriveMessage("Drive file load failed: " + code);
+          setLive("Drive file load failed: " + code, true);
+        }
+      }
+
+      async function startDriveOAuth() {
+        try {
+          const data = await api("/vault/api/drive/oauth/start");
+          if (!data.auth_url) {
+            throw new Error("missing auth_url");
+          }
+          window.location.href = data.auth_url;
+        } catch (err) {
+          const code = String(err && err.message ? err.message : "");
+          if (code === "google_oauth_not_configured") {
+            renderDriveMessage(
+              "Drive OAuth is not configured on daemon. Add STRAJAD_GOOGLE_OAUTH_CLIENT_ID and STRAJAD_GOOGLE_OAUTH_CLIENT_SECRET before starting strajad."
+            );
+          }
+          setLive("Drive login start failed: " + code, true);
+        }
+      }
+
+      async function importSelectedDriveItems() {
+        const targets = selectedDriveTargets();
+        if (!targets.fileIds.length && !targets.folderIds.length) {
+          setLive("Select one or more Drive files/folders first.", true);
+          return;
+        }
+        const collection = (
+          document.getElementById("upload-collection").value || "work"
+        ).trim();
+        try {
+          const data = await api("/vault/api/drive/import", {
+            method: "POST",
+            body: {
+              collection: collection || "work",
+              file_ids: targets.fileIds,
+              folder_ids: targets.folderIds,
+            },
+          });
+          const imported = data.imported || [];
+          const failed = data.failed || [];
+          const records = [];
+          imported.forEach((row) =>
+            records.push({
+              status: "ok",
+              name: row.name || row.source_id || "drive-item",
+              id: row.id || "",
+              collection: row.collection || collection || "",
+              extractedChars: row.extracted_chars || 0,
+            })
+          );
+          failed.forEach((row) =>
+            records.push({
+              status: "error",
+              name: row.name || row.source_id || "drive-item",
+              error: row.error || "import_failed",
+            })
+          );
+          renderUploadResults(records);
+          if (failed.length > 0) {
+            setLive(
+              `Drive import completed: ${imported.length} imported, ${failed.length} failed.`,
+              true
+            );
+          } else {
+            setLive(`Drive import completed: ${imported.length} imported.`);
+          }
+          await refreshItems();
+          await refreshAudit();
+        } catch (err) {
+          setLive("Drive import failed: " + err.message, true);
+        }
+      }
+
+      async function refreshApprovals() {
+        try {
+          const data = await api("/vault/api/approvals?status=pending&limit=50");
+          renderApprovals(data);
+        } catch (err) {
+          setLive("Approval load failed: " + err.message, true);
+        }
+      }
+
+      async function refreshItems() {
+        try {
+          const collection = document.getElementById("collection-filter").value.trim();
+          const path = collection
+            ? "/vault/api/items?collection=" + encodeURIComponent(collection)
+            : "/vault/api/items";
+          const data = await api(path);
+          renderItems(data);
+        } catch (err) {
+          setLive("Item load failed: " + err.message, true);
+        }
+      }
+
+      async function deleteItem(id) {
+        id = (id || "").trim();
+        if (!id) {
+          setLive("Item id is required to delete.", true);
+          return;
+        }
+        try {
+          await api("/vault/api/items", {
+            method: "POST",
+            body: {
+              action: "delete",
+              id,
+            },
+          });
+          setLive("Deleted item: " + id);
+          await refreshItems();
+          await refreshCollections();
+          await refreshAudit();
+        } catch (err) {
+          setLive("Delete failed: " + err.message, true);
+        }
+      }
+
+      async function deleteSelectedItems() {
+        const ids = selectedItemIDs();
+        if (!ids.length) {
+          setLive("Select one or more items first.", true);
+          return;
+        }
+        if (!window.confirm(`Delete ${ids.length} selected item(s)?`)) {
+          return;
+        }
+        try {
+          const data = await api("/vault/api/items", {
+            method: "POST",
+            body: {
+              action: "delete_batch",
+              ids,
+            },
+          });
+          const deleted = Number(data.deleted || 0);
+          setLive(`Deleted ${deleted} selected item(s).`);
+          await refreshItems();
+          await refreshCollections();
+          await refreshAudit();
+        } catch (err) {
+          setLive("Batch delete failed: " + err.message, true);
+        }
+      }
+
+      async function deleteAllLoadedItems() {
+        if (!loadedItems.length) {
+          setLive("No loaded items to delete.", true);
+          return;
+        }
+        const filter = document.getElementById("collection-filter").value.trim();
+        const scope = filter ? `collection "${filter}"` : "all loaded collections";
+        if (!window.confirm(`Delete all loaded items in ${scope}?`)) {
+          return;
+        }
+        try {
+          const data = await api("/vault/api/items", {
+            method: "POST",
+            body: {
+              action: "delete_all",
+              collection: filter,
+            },
+          });
+          const deleted = Number(data.deleted || 0);
+          setLive(`Deleted ${deleted} item(s).`);
+          await refreshItems();
+          await refreshCollections();
+          await refreshAudit();
+        } catch (err) {
+          setLive("Delete all failed: " + err.message, true);
+        }
+      }
+
+      async function refreshAudit() {
+        try {
+          const data = await api("/vault/api/audit?limit=50");
+          renderAudit(data);
+        } catch (err) {
+          setLive("Audit load failed: " + err.message, true);
+        }
+      }
+
+      async function reindexVault() {
+        try {
+          setLive("Reindexing Vault objects with current retrieval stack...");
+          const data = await api("/vault/api/reindex", {
+            method: "POST",
+            body: { reason: "manual_ui_reindex" },
+          });
+          const count = Number(data.reindexed_objects || 0);
+          setLive(`Reindex completed for ${count} object(s).`);
+          await refreshState();
+          await refreshCollections();
+          await refreshItems();
+          await refreshAudit();
+        } catch (err) {
+          setLive("Reindex failed: " + err.message, true);
+        }
+      }
+
+      document.getElementById("unlock-btn").addEventListener("click", async () => {
+        try {
+          const passphrase = document.getElementById("passphrase").value;
+          const presenceToken = document.getElementById("presence").value;
+          await api("/vault/api/unlock", {
+            method: "POST",
+            body: { passphrase, presence_token: presenceToken },
+          });
+          setLive("Vault unlocked.");
+          await refreshState();
+          await refreshBrokerModelStatus();
+          await refreshCollections();
+          await refreshConnectors();
+          await refreshDriveFiles();
+          await refreshApprovals();
+          await refreshItems();
+          await refreshAudit();
+        } catch (err) {
+          setLive("Unlock failed: " + err.message, true);
+        }
+      });
+
+      document.getElementById("lock-btn").addEventListener("click", async () => {
+        try {
+          await api("/vault/api/lock", { method: "POST", body: {} });
+          setLive("Vault locked.");
+          await refreshState();
+          await refreshBrokerModelStatus();
+          await refreshCollections();
+          await refreshConnectors();
+          await refreshDriveFiles();
+          await refreshApprovals();
+          await refreshItems();
+          await refreshAudit();
+        } catch (err) {
+          setLive("Lock failed: " + err.message, true);
+        }
+      });
+
+      document.getElementById("refresh-btn").addEventListener("click", async () => {
+        await refreshState();
+        await refreshBrokerModelStatus();
+        await refreshCollections();
+        await refreshConnectors();
+        await refreshDriveFiles();
+        await refreshApprovals();
+        await refreshItems();
+        await refreshAudit();
+      });
+      document.getElementById("reindex-btn").addEventListener("click", reindexVault);
+
+      document.getElementById("items-btn").addEventListener("click", refreshItems);
+      document
+        .getElementById("items-delete-selected-btn")
+        .addEventListener("click", deleteSelectedItems);
+      document
+        .getElementById("items-delete-all-btn")
+        .addEventListener("click", deleteAllLoadedItems);
+      document.getElementById("audit-btn").addEventListener("click", refreshAudit);
+      document.getElementById("approvals-btn").addEventListener("click", refreshApprovals);
+      document
+        .getElementById("drive-login-btn")
+        .addEventListener("click", startDriveOAuth);
+      document
+        .getElementById("drive-refresh-btn")
+        .addEventListener("click", refreshDriveFiles);
+      document.getElementById("drive-root-btn").addEventListener("click", async () => {
+        driveCurrentFolder = "root";
+        driveFolderStack = [];
+        await refreshDriveFiles();
+      });
+      document.getElementById("drive-back-btn").addEventListener("click", async () => {
+        if (!driveFolderStack.length) {
+          driveCurrentFolder = "root";
+        } else {
+          driveCurrentFolder = driveFolderStack.pop();
+        }
+        await refreshDriveFiles();
+      });
+      document
+        .getElementById("drive-import-btn")
+        .addEventListener("click", importSelectedDriveItems);
+      document
+        .getElementById("broker-check-btn")
+        .addEventListener("click", refreshBrokerModelStatus);
+      document
+        .getElementById("broker-install-btn")
+        .addEventListener("click", installBrokerModel);
+      document.getElementById("query-run-btn").addEventListener("click", runVaultQuery);
+      document.getElementById("query-clear-btn").addEventListener("click", () => {
+        document.getElementById("query-task").value = "";
+        document.getElementById("query-collection").value = "";
+        renderQueryTrace([]);
+        renderQueryFinal("Run a query to see the response.");
+        renderQueryRaw(undefined);
+        setLive("Query console cleared.");
+      });
+
+      collectionsBody.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || target.dataset.action !== "save") {
+          return;
+        }
+        const name = target.dataset.name;
+        const tierInput = collectionsBody.querySelector(
+          `[data-name="${name}"][data-field="tier"]`
+        );
+        const descInput = collectionsBody.querySelector(
+          `[data-name="${name}"][data-field="description"]`
+        );
+        try {
+          await api("/vault/api/collections/update", {
+            method: "POST",
+            body: {
+              name,
+              tier: tierInput.value,
+              description: descInput.value,
+            },
+          });
+          setLive("Collection updated: " + name);
+          await refreshCollections();
+          await refreshState();
+        } catch (err) {
+          setLive("Collection update failed: " + err.message, true);
+        }
+      });
+
+      connectorsBody.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+          return;
+        }
+        const action = target.dataset.action;
+        const provider = target.dataset.provider;
+        if (!action || !provider) {
+          return;
+        }
+        try {
+          if (action === "save-token") {
+            const tokenField = connectorsBody.querySelector(
+              `[data-provider="${provider}"][data-field="token"]`
+            );
+            const token = tokenField ? tokenField.value : "";
+            await api("/vault/api/connectors", {
+              method: "POST",
+              body: {
+                action: "set_token",
+                provider,
+                token,
+              },
+            });
+            setLive("Connector token updated: " + provider);
+          } else if (action === "clear-token") {
+            await api("/vault/api/connectors", {
+              method: "POST",
+              body: {
+                action: "clear_token",
+                provider,
+              },
+            });
+            setLive("Connector token cleared: " + provider);
+          } else {
+            return;
+          }
+          await refreshConnectors();
+        } catch (err) {
+          setLive("Connector update failed: " + err.message, true);
+        }
+      });
+
+      approvalsList.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+          return;
+        }
+        const action = target.dataset.action;
+        const id = target.dataset.id;
+        if (!action || !id || (action !== "approve" && action !== "reject")) {
+          return;
+        }
+        const reasonField = approvalsList.querySelector(
+          `[data-id="${id}"][data-field="reason"]`
+        );
+        const reason = reasonField ? reasonField.value : "";
+        try {
+          await api("/vault/api/approvals", {
+            method: "POST",
+            body: { action, id, reason },
+          });
+          setLive(`Approval ${action}d: ${id}`);
+          await refreshApprovals();
+          await refreshAudit();
+        } catch (err) {
+          setLive("Approval update failed: " + err.message, true);
+        }
+      });
+
+      driveList.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+          return;
+        }
+        if (target.dataset.action !== "open-folder") {
+          return;
+        }
+        const folderID = target.dataset.id || "";
+        if (!folderID) {
+          return;
+        }
+        driveFolderStack.push(driveCurrentFolder || "root");
+        driveCurrentFolder = folderID;
+        await refreshDriveFiles();
+      });
+
+      itemsList.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+          return;
+        }
+        if (target.dataset.action !== "delete-item") {
+          return;
+        }
+        const id = (target.dataset.itemId || "").trim();
+        if (!id) {
+          return;
+        }
+        if (!window.confirm(`Delete item ${id}?`)) {
+          return;
+        }
+        await deleteItem(id);
+      });
+
+      fileInput.addEventListener("change", async (event) => {
+        try {
+          await ingestFiles(event.target.files);
+        } finally {
+          fileInput.value = "";
+        }
+      });
+
+      dropzone.addEventListener("click", () => {
+        fileInput.click();
+      });
+
+      dropzone.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          fileInput.click();
+        }
+      });
+
+      ["dragenter", "dragover"].forEach((type) => {
+        dropzone.addEventListener(type, (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          dropzone.classList.add("dragging");
+        });
+      });
+
+      ["dragleave", "drop"].forEach((type) => {
+        dropzone.addEventListener(type, (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          dropzone.classList.remove("dragging");
+        });
+      });
+
+      dropzone.addEventListener("drop", async (event) => {
+        const files = event.dataTransfer ? event.dataTransfer.files : null;
+        await ingestFiles(files);
+      });
+
+      bootstrapToken();
+      updateSessionControls({ unlocked: false });
+      renderUploadResults([]);
+      renderQueryTrace([]);
+      renderQueryFinal("Run a query to see the response.");
+      renderQueryRaw(undefined);
+      renderDriveMessage("Drive status loading...");
+      renderBrokerModelStatus({ checked_at: "-", broker_model: "-", broker_endpoint: "-", broker_provider: "ollama", broker_enabled: false, model_present: false });
+      const oauthStatus = new URLSearchParams(window.location.search).get("oauth");
+      if (oauthStatus === "drive_ok") {
+        setLive("Google Drive connected.");
+      } else if (oauthStatus === "drive_failed") {
+        setLive("Google Drive login failed.", true);
+      }
+      refreshState()
+        .then(refreshBrokerModelStatus)
+        .then(refreshCollections)
+        .then(refreshConnectors)
+        .then(refreshDriveFiles)
+        .then(refreshApprovals)
+        .then(refreshItems)
+        .then(refreshAudit);
+    </script>
+  </body>
+</html>

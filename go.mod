@@ -3,6 +3,7 @@ module github.com/straja-ai/straja
 go 1.25.4
 
 require (
+	github.com/oligo/hnswgo v0.1.1
 	github.com/yalue/onnxruntime_go v1.23.0
 	go.opentelemetry.io/otel v1.39.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.24.0
@@ -14,6 +15,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+replace github.com/oligo/hnswgo => ./third_party/hnswgo
+
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -22,6 +25,7 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.19.0 // indirect
+	github.com/oligo/hnswgo v0.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.24.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.24.0 // indirect

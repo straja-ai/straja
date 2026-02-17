@@ -6,6 +6,8 @@
 curl -fsSL https://straja.ai/install.sh | bash
 ```
 
+This installer is for **Straja Gateway** only.
+
 Install a specific version:
 
 ```bash
@@ -17,6 +19,33 @@ Install into a custom directory:
 ```bash
 curl -fsSL https://straja.ai/install.sh | bash -s -- --dir /opt/straja
 ```
+
+## Vault installer (separate from gateway)
+
+For Straja Vault (`strajad` + local LLM dependency flow), use:
+
+```bash
+curl -fsSL https://straja.ai/vault-install.sh | bash
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://straja.ai/vault-install.sh | bash -s -- --version v0.1.0
+```
+
+Install into a custom directory:
+
+```bash
+curl -fsSL https://straja.ai/vault-install.sh | bash -s -- --dir /opt/straja
+```
+
+Common Vault installer flags:
+
+- `--skip-model-pull` (skip broker model download)
+- `--skip-ollama-install` (do not attempt Ollama install)
+- `--broker-model <name>` (default: `phi4-mini:3.8b`)
+- `--install-service` (register/start strajad as user service)
 
 Set required environment variables before running:
 
@@ -80,6 +109,18 @@ Common dev commands are in `Makefile`:
 - `make lint`
 - `make fmt`
 - `make tidy`
+
+### Vault broker model (download during install/setup)
+
+The Vault installer handles local LLM dependency setup and model pull by default.
+If you need the manual path:
+
+```bash
+./bin/strajad --broker-install-model --broker-model phi4-mini:3.8b
+export STRAJAD_BROKER_ENABLED=true
+export STRAJAD_BROKER_MODEL=phi4-mini:3.8b
+./bin/strajad
+```
 
 ## Docker
 

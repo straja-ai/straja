@@ -18,6 +18,7 @@ This documentation set is generated from the current repository. Every option an
 - [Activation events and sinks](activation.md)
 - [Telegram activation sink](activation-telegram.md)
 - [StrajaGuard v1 intel bundle](strajaguard-v1.md)
+- [Vault Phases 1-5 (strajad)](vault-phase1.md)
 - [Troubleshooting](troubleshooting.md)
 - [Security considerations](security.md)
 - [Releasing](releasing.md)
@@ -27,6 +28,7 @@ This documentation set is generated from the current repository. Every option an
 - Configuration structs, defaults, and env parsing: `internal/config/config.go`
 - Validation rules: `internal/config/validate.go`
 - HTTP server & routes: `internal/server/server.go`
+- Vault daemon & MCP routes: `internal/strajad/*`
 - Activation events & sinks: `internal/activation/*`
 - StrajaGuard bundles & runtime: `internal/strajaguard/*`
 - Docker image: `Dockerfile`
