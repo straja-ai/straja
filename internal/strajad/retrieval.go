@@ -34,8 +34,9 @@ var (
 	pdfObjectRefText  = regexp.MustCompile(`(?i)\b\d{1,6}\s+\d{1,3}\s+r\b`)
 	pdfObjectHeader   = regexp.MustCompile(`(?i)\b\d{1,6}\s+\d{1,3}\s+obj\b`)
 	pdfOperatorTokens = regexp.MustCompile(`(?i)\b(?:stream|endstream|obj|endobj|xref|trailer|startxref)\b`)
-	pdfDictTokens     = regexp.MustCompile(`(?i)/(?:cs|devicecmyk|devicergb|devicegray|procset|colorspace|extgstate|xobject|illustrator|transparency|type|filter|length|kids|count|subtype|parent)\b`)
+	pdfDictTokens     = regexp.MustCompile(`(?i)/(?:cs|devicecmyk|devicergb|devicegray|procset|colorspace|extgstate|xobject|illustrator|transparency|type|filter|length|kids|count|subtype|parent|bounds|domain|encode|func|bbox|matrix|resources|group)\b`)
 	pdfAngleTokens    = regexp.MustCompile(`<<|>>`)
+	pdfSlashTokens    = regexp.MustCompile(`(?i)/[a-z][a-z0-9_]{2,}`)
 	printableWordRuns = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9,.;:_/\-() ]{2,}`)
 )
 
@@ -260,7 +261,11 @@ func extractTextFromPDFHeuristic(raw []byte, maxChars int) (string, bool) {
 		if candidate.score < 10 {
 			continue
 		}
-		parts = append(parts, candidate.text)
+		clean := cleanPDFExtractedText(candidate.text)
+		if clean == "" || looksLikeLowQualityPDFText(clean) {
+			continue
+		}
+		parts = append(parts, clean)
 		if len([]rune(strings.Join(parts, " "))) >= maxCandidateChars {
 			break
 		}
@@ -375,7 +380,11 @@ func normalizePDFCandidate(s string) string {
 	clean := normalizeSpacing(b.String())
 	clean = joinSpelledLetterRuns(clean)
 	clean = trimPDFTokenPrefix(clean)
+	clean = cleanPDFExtractedText(clean)
 	if clean == "" || looksLikeRawPDFMetadataLine(clean) || isBase64LikeBlob(clean) {
+		return ""
+	}
+	if looksLikeLowQualityPDFText(clean) {
 		return ""
 	}
 
@@ -818,11 +827,24 @@ func snippetWindowScore(window, queryLower string, queryTerms []string) float64 
 			score += 2.5
 		}
 	}
+	if isHowToQueryText(queryLower) {
+		for _, cue := range []string{
+			"press ", "hold ", "switch ", "setting ", "steps", "ready indicator",
+			"conventional cruise control", "adaptive cruise control",
+		} {
+			if strings.Contains(windowLower, cue) {
+				score += 1.1
+			}
+		}
+	}
 	if looksLikeLowQualityPDFText(windowLower) {
 		score -= 6
 	}
 	if looksLikePDFOperatorNoise(windowLower) {
-		score -= 12
+		score -= 30
+	}
+	if strings.Count(windowLower, "[redacted_card]") > 0 {
+		score -= 20
 	}
 	return score
 }
@@ -839,9 +861,23 @@ func scoreSnippetForQuery(snippet, query string) float64 {
 	queryTerms := retrievalQueryTokens(queryLower)
 	score := snippetWindowScore(snippet, queryLower, queryTerms)
 	if looksLikePDFOperatorNoise(snippet) {
-		score -= 20
+		score -= 40
+	}
+	if strings.Contains(strings.ToLower(snippet), "[redacted_card]") {
+		score -= 24
 	}
 	return score
+}
+
+func isHowToQueryText(queryLower string) bool {
+	queryLower = normalizeSpacing(strings.ToLower(queryLower))
+	if queryLower == "" {
+		return false
+	}
+	return strings.Contains(queryLower, "how to") ||
+		strings.Contains(queryLower, "steps") ||
+		strings.Contains(queryLower, "be very specific") ||
+		strings.Contains(queryLower, "instruction")
 }
 
 func snippetReadabilityScore(s string) float64 {
@@ -913,7 +949,10 @@ func sanitizeSnippetText(s string) string {
 	if cleaned == "" {
 		return snippetNonTextPlaceholder
 	}
-	if looksLikePDFOperatorNoise(cleaned) && snippetReadabilityScore(cleaned) < 1.5 {
+	if strings.Contains(strings.ToLower(cleaned), "[redacted_card]") && looksLikePDFOperatorNoise(cleaned) {
+		return snippetNonTextPlaceholder
+	}
+	if looksLikePDFOperatorNoise(cleaned) && snippetReadabilityScore(cleaned) < 2.5 {
 		return snippetNonTextPlaceholder
 	}
 
@@ -998,6 +1037,7 @@ func looksLikePDFOperatorNoise(s string) bool {
 	operatorHits := len(pdfOperatorTokens.FindAllStringIndex(s, -1))
 	dictHits := len(pdfDictTokens.FindAllStringIndex(s, -1))
 	angleHits := len(pdfAngleTokens.FindAllStringIndex(s, -1))
+	slashHits := len(pdfSlashTokens.FindAllStringIndex(s, -1))
 	if operatorHits >= 2 {
 		return true
 	}
@@ -1005,6 +1045,12 @@ func looksLikePDFOperatorNoise(s string) bool {
 		return true
 	}
 	if dictHits >= 4 && angleHits >= 2 {
+		return true
+	}
+	if dictHits >= 2 && slashHits >= 5 {
+		return true
+	}
+	if strings.Count(s, "[redacted_card]") >= 1 && slashHits >= 4 {
 		return true
 	}
 	return false

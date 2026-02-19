@@ -96,7 +96,7 @@ func DefaultConfig() Config {
 		BrokerProvider:           "ollama",
 		BrokerEndpoint:           "http://127.0.0.1:11434",
 		BrokerModel:              "phi4-mini:3.8b",
-		BrokerTimeout:            4 * time.Second,
+		BrokerTimeout:            3 * time.Minute,
 		EmbeddingEnabled:         true,
 		EmbeddingProvider:        "ollama",
 		EmbeddingEndpoint:        "http://127.0.0.1:11434",

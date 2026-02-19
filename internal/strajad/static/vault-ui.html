@@ -452,6 +452,13 @@
           <label for="query-collection">Collection (optional)</label>
           <input id="query-collection" placeholder="work, personal, tax..." />
         </div>
+        <div class="row">
+          <label for="query-raw-llm">Raw LLM mode</label>
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <input id="query-raw-llm" type="checkbox" />
+            <span class="muted">Use retrieved full document text directly in LLM context (skip snippet extraction).</span>
+          </div>
+        </div>
         <div class="actions">
           <button id="query-run-btn" class="secondary" type="button">Run Query</button>
           <button id="query-clear-btn" class="ghost" type="button">Clear</button>
@@ -1158,12 +1165,13 @@ export STRAJAD_BROKER_MODEL="phi4-mini:3.8b"
         const collection = (
           document.getElementById("query-collection").value || ""
         ).trim();
+        const rawLLM = !!document.getElementById("query-raw-llm").checked;
         if (!task) {
           setLive("Prompt is required to run a Vault query.", true);
           return;
         }
         renderQueryFinal("Running query...");
-        renderQueryRaw({ status: "running", task, collection });
+        renderQueryRaw({ status: "running", task, collection, raw_llm: rawLLM });
         renderQueryTrace([]);
         try {
           const data = await api("/vault/api/query", {
@@ -1171,13 +1179,18 @@ export STRAJAD_BROKER_MODEL="phi4-mini:3.8b"
             body: {
               task,
               collection,
+              raw_llm: rawLLM,
             },
           });
           renderQueryRaw(data);
           renderQueryTrace(data.trace || []);
           renderQueryFinal(data.final_response || "No response generated.");
-          if (data.llm_used) {
+          if (data.llm_used && data.raw_llm) {
+            setLive("Query completed with Raw LLM full-document synthesis.");
+          } else if (data.llm_used) {
             setLive("Query completed with local LLM synthesis.");
+          } else if (data.raw_llm) {
+            setLive("Raw LLM mode completed with deterministic fallback.");
           } else {
             setLive("Query completed with deterministic synthesis.");
           }
@@ -1607,6 +1620,7 @@ export STRAJAD_BROKER_MODEL="phi4-mini:3.8b"
       document.getElementById("query-clear-btn").addEventListener("click", () => {
         document.getElementById("query-task").value = "";
         document.getElementById("query-collection").value = "";
+        document.getElementById("query-raw-llm").checked = false;
         renderQueryTrace([]);
         renderQueryFinal("Run a query to see the response.");
         renderQueryRaw(undefined);

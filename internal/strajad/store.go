@@ -153,6 +153,15 @@ type snippetHit struct {
 	Redacted   bool   `json:"redacted,omitempty"`
 }
 
+type rawDocumentHit struct {
+	ID         string `json:"id"`
+	Collection string `json:"collection"`
+	Title      string `json:"title"`
+	Content    string `json:"content"`
+	Bytes      int    `json:"bytes"`
+	Truncated  bool   `json:"truncated,omitempty"`
+}
+
 type collectionHit struct {
 	Name        string `json:"name"`
 	Tier        string `json:"tier"`
@@ -1026,12 +1035,123 @@ func (s *vaultStore) ReadSnippets(ids []string, query string, maxBytes, maxChars
 	return out, wasTruncated, notFound, nil
 }
 
+func (s *vaultStore) ReadDocuments(ids []string, maxDocuments, maxTotalBytes, maxCharsPerDocument int) (hits []rawDocumentHit, truncated bool, missing []string, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if err := s.ensureUnlockedLocked(); err != nil {
+		return nil, false, nil, err
+	}
+	if hasDuplicateIDs(ids) {
+		return nil, false, nil, errEgressOverlapDetected
+	}
+	if maxDocuments <= 0 {
+		maxDocuments = 1
+	}
+	if maxTotalBytes <= 0 {
+		return nil, false, nil, nil
+	}
+	if maxCharsPerDocument <= 0 {
+		maxCharsPerDocument = maxTotalBytes
+	}
+
+	out := make([]rawDocumentHit, 0, minInt(len(ids), maxDocuments))
+	notFound := make([]string, 0, len(ids))
+	remainingBytes := maxTotalBytes
+	seenObjectIDs := make(map[string]struct{}, len(ids))
+	wasTruncated := false
+
+	for _, id := range ids {
+		if len(out) >= maxDocuments {
+			wasTruncated = true
+			break
+		}
+		if remainingBytes <= 0 {
+			wasTruncated = true
+			break
+		}
+
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+
+		objectID := id
+		if chunk, ok := s.semanticChunks[id]; ok {
+			objectID = chunk.ObjectID
+		}
+		objectID = strings.TrimSpace(objectID)
+		if objectID == "" {
+			notFound = append(notFound, id)
+			continue
+		}
+		if _, exists := seenObjectIDs[objectID]; exists {
+			continue
+		}
+
+		obj, ok := s.state.Objects[objectID]
+		if !ok {
+			notFound = append(notFound, id)
+			continue
+		}
+		if _, err := s.requireCollectionAccessLocked(obj.Collection); err != nil {
+			return nil, false, nil, err
+		}
+
+		content := strings.TrimSpace(obj.Content)
+		if content == "" {
+			continue
+		}
+
+		docTruncated := false
+		if len([]rune(content)) > maxCharsPerDocument {
+			content = string([]rune(content)[:maxCharsPerDocument])
+			docTruncated = true
+		}
+		content, byteCut := bytePrefix(content, remainingBytes)
+		if byteCut {
+			docTruncated = true
+		}
+		size := len([]byte(content))
+		if size == 0 {
+			wasTruncated = true
+			break
+		}
+
+		out = append(out, rawDocumentHit{
+			ID:         obj.ID,
+			Collection: obj.Collection,
+			Title:      obj.Title,
+			Content:    content,
+			Bytes:      size,
+			Truncated:  docTruncated,
+		})
+		seenObjectIDs[obj.ID] = struct{}{}
+		remainingBytes -= size
+		if docTruncated {
+			wasTruncated = true
+		}
+	}
+
+	return out, wasTruncated, notFound, nil
+}
+
 func isReadableSnippet(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return false
 	}
-	return s != snippetNonTextPlaceholder
+	if s == snippetNonTextPlaceholder {
+		return false
+	}
+	lower := strings.ToLower(s)
+	if strings.Count(lower, "[redacted_card]") >= 2 {
+		return false
+	}
+	if looksLikePDFOperatorNoise(lower) {
+		return false
+	}
+	return true
 }
 
 func (s *vaultStore) Write(id, collection, title, content string) (obj vaultObject, created bool, err error) {

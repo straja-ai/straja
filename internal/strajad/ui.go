@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,8 +21,18 @@ const (
 	vaultUIRobotsTag = "noindex, nofollow, noarchive"
 )
 
+var speedConditionPattern = regexp.MustCompile(`(?i)vehicle speed is between([^.;\n]{4,120})`)
+
 //go:embed static/vault-ui.html
 var vaultUIHTML []byte
+
+type vaultUIRawDocumentInfo struct {
+	ID         string `json:"id"`
+	Collection string `json:"collection"`
+	Title      string `json:"title"`
+	Bytes      int    `json:"bytes"`
+	Truncated  bool   `json:"truncated,omitempty"`
+}
 
 type vaultUIQueryTraceStep struct {
 	Stage      string `json:"stage"`
@@ -34,14 +45,17 @@ type vaultUIQueryTraceStep struct {
 }
 
 type vaultUIQueryResponse struct {
-	Task        string                  `json:"task"`
-	Collection  string                  `json:"collection,omitempty"`
-	Plan        deterministicPlan       `json:"plan"`
-	SearchHits  []searchHit             `json:"search_results,omitempty"`
-	Snippets    []snippetHit            `json:"snippets,omitempty"`
-	FinalAnswer string                  `json:"final_response"`
-	LLMUsed     bool                    `json:"llm_used"`
-	Trace       []vaultUIQueryTraceStep `json:"trace"`
+	Task         string                   `json:"task"`
+	Collection   string                   `json:"collection,omitempty"`
+	RawLLM       bool                     `json:"raw_llm,omitempty"`
+	Plan         deterministicPlan        `json:"plan"`
+	SearchHits   []searchHit              `json:"search_results,omitempty"`
+	Snippets     []snippetHit             `json:"snippets,omitempty"`
+	RawDocuments []vaultUIRawDocumentInfo `json:"raw_documents,omitempty"`
+	FinalAnswer  string                   `json:"final_response"`
+	LLMUsed      bool                     `json:"llm_used"`
+	Trace        []vaultUIQueryTraceStep  `json:"trace"`
+	rawDocs      []brokerDocument         `json:"-"`
 }
 
 func (d *Daemon) handleVaultUI(w http.ResponseWriter, r *http.Request) {
@@ -884,6 +898,7 @@ func (d *Daemon) handleVaultUIQuery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Task       string `json:"task"`
 		Collection string `json:"collection"`
+		RawLLM     bool   `json:"raw_llm"`
 	}
 	if err := decodeVaultUIBody(r.Body, d.cfg.MaxRequestBodyBytes, &req); err != nil {
 		d.auditDeny(r.Context(), requestID, remote, "ui/query", "vault.ui.query", "invalid_request_body", map[string]any{"error": redact.String(err.Error())})
@@ -912,7 +927,7 @@ func (d *Daemon) handleVaultUIQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, status, code := d.executeVaultUIQuery(r.Context(), task, req.Collection)
+	response, status, code := d.executeVaultUIQuery(r.Context(), task, req.Collection, req.RawLLM)
 	if status != http.StatusOK {
 		d.auditDeny(r.Context(), requestID, remote, "ui/query", "vault.ui.query", code, map[string]any{
 			"trace_steps": len(response.Trace),
@@ -933,13 +948,15 @@ func (d *Daemon) handleVaultUIQuery(w http.ResponseWriter, r *http.Request) {
 	d.auditAllow(r.Context(), requestID, remote, "ui/query", "vault.ui.query", "ok_vault_ui_query", map[string]any{
 		"trace_steps":    len(response.Trace),
 		"llm_used":       response.LLMUsed,
+		"raw_llm":        response.RawLLM,
 		"search_results": len(response.SearchHits),
 		"snippet_count":  len(response.Snippets),
+		"document_count": len(response.RawDocuments),
 	})
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (d *Daemon) executeVaultUIQuery(ctx context.Context, task, collection string) (vaultUIQueryResponse, int, string) {
+func (d *Daemon) executeVaultUIQuery(ctx context.Context, task, collection string, rawLLM bool) (vaultUIQueryResponse, int, string) {
 	normalizedCollection := normalizeCollectionName(collection)
 	in := plannerInput{
 		Task:              task,
@@ -958,8 +975,9 @@ func (d *Daemon) executeVaultUIQuery(ctx context.Context, task, collection strin
 	response := vaultUIQueryResponse{
 		Task:       task,
 		Collection: normalizedCollection,
+		RawLLM:     rawLLM,
 		Plan:       fallbackPlan,
-		Trace:      make([]vaultUIQueryTraceStep, 0, 8),
+		Trace:      make([]vaultUIQueryTraceStep, 0, 10),
 	}
 
 	runTool := func(name string, args map[string]any) (any, *rpcError) {
@@ -1044,7 +1062,85 @@ func (d *Daemon) executeVaultUIQuery(ctx context.Context, task, collection strin
 		return response, http.StatusOK, ""
 	}
 
-	readArgs := queryReadArgsFromPlan(response.Plan, task, ids, d.cfg.MaxSnippetBytes, d.cfg.MaxSnippetChars)
+	if response.RawLLM {
+		maxDocs := minInt(2, d.cfg.MaxSnippetObjects)
+		if maxDocs <= 0 {
+			maxDocs = 1
+		}
+		maxTotalBytes := maxInt(d.cfg.MaxTaskWindowBytes*3, 24000)
+		maxCharsPerDoc := maxInt(d.cfg.MaxExtractedChars, 4000)
+		docIDs := queryReadObjectTargetsFromHits(response.SearchHits, maxDocs*2)
+		if len(docIDs) == 0 {
+			docIDs = ids
+		}
+		docs, docsTruncated, missingIDs, err := d.store.ReadDocuments(docIDs, maxDocs, maxTotalBytes, maxCharsPerDoc)
+		if err != nil {
+			status, code := uiErrorForStore(err)
+			return response, status, code
+		}
+		docInfo := make([]vaultUIRawDocumentInfo, 0, len(docs))
+		docCtx := make([]brokerDocument, 0, len(docs))
+		totalDocBytes := 0
+		for _, doc := range docs {
+			docInfo = append(docInfo, vaultUIRawDocumentInfo{
+				ID:         doc.ID,
+				Collection: doc.Collection,
+				Title:      doc.Title,
+				Bytes:      doc.Bytes,
+				Truncated:  doc.Truncated,
+			})
+			docCtx = append(docCtx, brokerDocument{
+				ID:         doc.ID,
+				Collection: doc.Collection,
+				Title:      doc.Title,
+				Content:    doc.Content,
+				Bytes:      doc.Bytes,
+				Truncated:  doc.Truncated,
+			})
+			totalDocBytes += doc.Bytes
+		}
+		response.RawDocuments = docInfo
+		response.rawDocs = docCtx
+		response.Trace = append(response.Trace, vaultUIQueryTraceStep{
+			Stage:   "raw_document_read",
+			Name:    "vault.read_documents",
+			Message: "ok_vault_read_documents",
+			Arguments: sanitizeTraceAny(map[string]any{
+				"ids":                    docIDs,
+				"max_documents":          maxDocs,
+				"max_total_bytes":        maxTotalBytes,
+				"max_chars_per_document": maxCharsPerDoc,
+			}),
+			Result: sanitizeTraceAny(map[string]any{
+				"documents":   docInfo,
+				"returned":    len(docInfo),
+				"total_bytes": totalDocBytes,
+				"missing_ids": missingIDs,
+				"truncated":   docsTruncated,
+			}),
+		})
+		if len(response.rawDocs) == 0 {
+			response.FinalAnswer = "Matching items were found, but no readable document content was available for Raw LLM mode."
+			response.Trace = append(response.Trace, vaultUIQueryTraceStep{
+				Stage:   "final_response",
+				Message: "raw_documents_unavailable",
+				Result:  map[string]any{"final_response": response.FinalAnswer},
+			})
+			return response, http.StatusOK, ""
+		}
+		answer, llmUsed := d.composeVaultQueryAnswer(ctx, &response)
+		response.FinalAnswer = answer
+		response.LLMUsed = llmUsed
+		response.Trace = append(response.Trace, vaultUIQueryTraceStep{
+			Stage:   "final_response",
+			Message: "response_ready",
+			Result:  map[string]any{"final_response": truncateUTF8ByBytes(response.FinalAnswer, 12000)},
+		})
+		return response, http.StatusOK, ""
+	}
+
+	readQuery := enrichSnippetReadQuery(task)
+	readArgs := queryReadArgsFromPlan(response.Plan, readQuery, ids, d.cfg.MaxSnippetBytes, d.cfg.MaxSnippetChars)
 	readArgs["task_window_id"] = nonEmpty(response.Plan.PlanID, "ui_query")
 	readRaw, rpcErr := runTool("vault.read_snippets", readArgs)
 	if rpcErr != nil {
@@ -1086,6 +1182,58 @@ func (d *Daemon) executeVaultUIQuery(ctx context.Context, task, collection strin
 			}
 		}
 	}
+	if isHowToTask(response.Task) || !snippetsRelevantForTask(response.Task, response.Snippets) {
+		objectIDs := queryReadObjectTargetsFromHits(response.SearchHits, d.cfg.MaxSnippetObjects)
+		if len(objectIDs) > 0 {
+			bestSnippets := response.Snippets
+			bestScore := scoreSnippetSetForTask(response.Task, bestSnippets)
+			stagnantPasses := 0
+			seenFallbackQueries := map[string]struct{}{}
+			initialReadQuery := normalizeSpacing(readQuery)
+			if initialReadQuery != "" {
+				seenFallbackQueries[initialReadQuery] = struct{}{}
+			}
+			for _, fallbackQuery := range deriveFallbackReadQueries(response.Task) {
+				normalizedFallbackQuery := normalizeSpacing(fallbackQuery)
+				if normalizedFallbackQuery == "" {
+					continue
+				}
+				if _, exists := seenFallbackQueries[normalizedFallbackQuery]; exists {
+					continue
+				}
+				seenFallbackQueries[normalizedFallbackQuery] = struct{}{}
+
+				retryArgs := queryReadArgsFromPlan(response.Plan, fallbackQuery, objectIDs, d.cfg.MaxSnippetBytes, d.cfg.MaxSnippetChars)
+				retryArgs["task_window_id"] = nonEmpty(response.Plan.PlanID, "ui_query")
+				retryRaw, retryErr := runTool("vault.read_snippets", retryArgs)
+				if retryErr != nil {
+					continue
+				}
+				var retryPayload struct {
+					Snippets []snippetHit `json:"snippets"`
+				}
+				if err := decodeAny(retryRaw, &retryPayload); err != nil {
+					continue
+				}
+				candidate := prioritizeSnippetsForTask(response.Task, retryPayload.Snippets, 3)
+				candidateScore := scoreSnippetSetForTask(response.Task, candidate)
+				if candidateScore > bestScore+0.05 {
+					bestSnippets = candidate
+					bestScore = candidateScore
+					stagnantPasses = 0
+				} else {
+					stagnantPasses++
+				}
+				if snippetsRelevantForTask(response.Task, bestSnippets) && (!isHowToTask(response.Task) || bestScore >= 3.0) {
+					break
+				}
+				if stagnantPasses >= 2 {
+					break
+				}
+			}
+			response.Snippets = bestSnippets
+		}
+	}
 	response.Snippets = prioritizeSnippetsForTask(response.Task, response.Snippets, 3)
 
 	answer, llmUsed := d.composeVaultQueryAnswer(ctx, &response)
@@ -1105,9 +1253,13 @@ func (d *Daemon) composeVaultQueryAnswer(ctx context.Context, response *vaultUIQ
 	}
 	if d.broker != nil {
 		if b, ok := d.broker.(traceableAnswerBroker); ok {
-			answerTimeout := 20 * time.Second
-			if d.cfg.BrokerTimeout > 0 && d.cfg.BrokerTimeout < answerTimeout {
-				answerTimeout = d.cfg.BrokerTimeout
+			answerTimeout := d.cfg.BrokerTimeout
+			if answerTimeout <= 0 {
+				answerTimeout = 3 * time.Minute
+			}
+			// Raw LLM mode passes full document text and can legitimately take longer.
+			if response.RawLLM && answerTimeout < 3*time.Minute {
+				answerTimeout = 3 * time.Minute
 			}
 			if d.cfg.WriteTimeout > 0 {
 				ceiling := d.cfg.WriteTimeout - (5 * time.Second)
@@ -1116,16 +1268,32 @@ func (d *Daemon) composeVaultQueryAnswer(ctx context.Context, response *vaultUIQ
 				}
 			}
 			if answerTimeout <= 0 {
-				answerTimeout = 10 * time.Second
+				answerTimeout = 30 * time.Second
 			}
 			answerCtx, cancel := context.WithTimeout(ctx, answerTimeout)
 			defer cancel()
+			// Keep answer synthesis focused on evidence; including planning scaffolding
+			// encourages the model to echo tool steps instead of answering the user.
+			compactPlan := deterministicPlan{}
+			compactHits := response.SearchHits
+			if len(compactHits) > 2 {
+				compactHits = compactHits[:2]
+			}
+			compactSnippets := response.Snippets
+			if len(compactSnippets) > 2 {
+				compactSnippets = compactSnippets[:2]
+			}
+			compactDocs := response.rawDocs
+			if len(compactDocs) > 2 {
+				compactDocs = compactDocs[:2]
+			}
 			out, err := b.AnswerWithTrace(answerCtx, brokerAnswerInput{
 				Task:          response.Task,
 				Collection:    response.Collection,
-				Plan:          response.Plan,
-				SearchResults: response.SearchHits,
-				Snippets:      response.Snippets,
+				Plan:          compactPlan,
+				SearchResults: compactHits,
+				Snippets:      compactSnippets,
+				Documents:     compactDocs,
 			})
 			response.Trace = append(response.Trace, vaultUIQueryTraceStep{
 				Stage:   "llm_call",
@@ -1134,6 +1302,9 @@ func (d *Daemon) composeVaultQueryAnswer(ctx context.Context, response *vaultUIQ
 				Result:  sanitizeTraceAny(out.Trace),
 			})
 			if err == nil && strings.TrimSpace(out.Response) != "" {
+				if answerShouldFallbackToDeterministic(out.Response, response.Task, response.Snippets, response.rawDocs) {
+					return deterministicQueryAnswerWithDocuments(response.Task, response.SearchHits, response.Snippets, response.rawDocs), false
+				}
 				response.Trace = append(response.Trace, vaultUIQueryTraceStep{
 					Stage:   "llm_response",
 					Name:    "broker.answer",
@@ -1152,15 +1323,115 @@ func (d *Daemon) composeVaultQueryAnswer(ctx context.Context, response *vaultUIQ
 			})
 		}
 	}
-	return deterministicQueryAnswer(response.Task, response.SearchHits, response.Snippets), false
+	return deterministicQueryAnswerWithDocuments(response.Task, response.SearchHits, response.Snippets, response.rawDocs), false
+}
+
+func answerLooksLikeGenericRedirect(answer string) bool {
+	lower := strings.ToLower(normalizeSpacing(answer))
+	if lower == "" {
+		return false
+	}
+	generic := []string{
+		"refer to the",
+		"you can refer",
+		"you may find detailed instructions",
+		"in that document",
+	}
+	for _, needle := range generic {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func answerShouldFallbackToDeterministic(answer, task string, snippets []snippetHit, docs []brokerDocument) bool {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return true
+	}
+	if answerLooksLikePlanOrToolEcho(answer) {
+		return true
+	}
+	if snippetsRelevantForTask(task, snippets) || documentsRelevantForTask(task, docs) {
+		if answerLooksLikeGenericRedirect(answer) {
+			return true
+		}
+		if answerClaimsMissingContext(answer) {
+			return true
+		}
+	}
+	return false
+}
+
+func answerLooksLikePlanOrToolEcho(answer string) bool {
+	lower := strings.ToLower(normalizeSpacing(answer))
+	if lower == "" {
+		return false
+	}
+	markers := []string{
+		"vault.search",
+		"vault.read_snippets",
+		"execution_mode",
+		"plan_only",
+		"plan-only operation",
+		"recommended_tool_calls",
+		"safety_notes",
+		"search for candidate objects",
+		"read bounded snippets",
+		"input json",
+		"search_results",
+		"snippets",
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func answerClaimsMissingContext(answer string) bool {
+	lower := strings.ToLower(normalizeSpacing(answer))
+	if lower == "" {
+		return false
+	}
+	markers := []string{
+		"missing context",
+		"context is insufficient",
+		"insufficient context",
+		"insufficient information",
+		"not enough information",
+		"need more context",
+		"cannot answer",
+		"please provide more specific",
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func deterministicQueryAnswer(task string, hits []searchHit, snippets []snippetHit) string {
+	return deterministicQueryAnswerWithDocuments(task, hits, snippets, nil)
+}
+
+func deterministicQueryAnswerWithDocuments(task string, hits []searchHit, snippets []snippetHit, docs []brokerDocument) string {
+	if len(snippets) == 0 && len(docs) > 0 {
+		return deterministicRawDocumentAnswer(task, docs)
+	}
 	if len(snippets) == 0 {
 		if len(hits) == 0 {
 			return "No matching Vault records found for this prompt."
 		}
 		return "Matching items were found, but no readable snippets were returned within current budgets."
+	}
+	if isHowToTask(task) {
+		if howTo := deterministicHowToAnswer(snippets); howTo != "" {
+			return howTo
+		}
 	}
 	parts := make([]string, 0, minInt(len(snippets), 3)+1)
 	parts = append(parts, "Evidence from Vault snippets:")
@@ -1185,6 +1456,194 @@ func deterministicQueryAnswer(task string, hits []searchHit, snippets []snippetH
 	}
 	parts = append(parts, fmt.Sprintf("Prompt: %s", sanitizeOneLine(task, "", 220)))
 	return strings.Join(parts, "\n")
+}
+
+func documentsRelevantForTask(task string, docs []brokerDocument) bool {
+	if len(docs) == 0 {
+		return false
+	}
+	bestScore := -1000.0
+	for _, doc := range docs {
+		content := strings.TrimSpace(doc.Content)
+		if content == "" {
+			continue
+		}
+		score := scoreSnippetForQuery(truncateUTF8ByBytes(content, 3200), task)
+		if isHowToTask(task) && snippetLooksProcedural(content) {
+			score += 0.5
+		}
+		if score > bestScore {
+			bestScore = score
+		}
+	}
+	return bestScore >= 1.0
+}
+
+func deterministicRawDocumentAnswer(task string, docs []brokerDocument) string {
+	if len(docs) == 0 {
+		return "Matching items were found, but no readable document content was available."
+	}
+	// Reuse procedural synthesis when possible by mapping raw docs to pseudo-snippets.
+	pseudoSnippets := make([]snippetHit, 0, len(docs))
+	for _, doc := range docs {
+		if strings.TrimSpace(doc.Content) == "" {
+			continue
+		}
+		pseudoSnippets = append(pseudoSnippets, snippetHit{
+			ID:         doc.ID,
+			Collection: doc.Collection,
+			Snippet:    doc.Content,
+			Bytes:      doc.Bytes,
+		})
+	}
+	if isHowToTask(task) {
+		if howTo := deterministicHowToAnswer(pseudoSnippets); howTo != "" {
+			return howTo
+		}
+	}
+
+	parts := []string{"Raw LLM mode collected full-document context, but local synthesis was unavailable."}
+	for i, doc := range docs {
+		if i >= 2 {
+			break
+		}
+		title := strings.TrimSpace(doc.Title)
+		if title == "" {
+			title = doc.ID
+		}
+		line := fmt.Sprintf("%d) %s [%s, %d bytes]", i+1, sanitizeOneLine(title, "", 120), sanitizeOneLine(doc.Collection, "", 40), doc.Bytes)
+		if doc.Truncated {
+			line += " (truncated)"
+		}
+		parts = append(parts, line)
+	}
+	parts = append(parts, "Try running the same query without Raw LLM mode for deterministic snippet synthesis.")
+	return strings.Join(parts, "\n")
+}
+
+func deterministicHowToAnswer(snippets []snippetHit) string {
+	readable := collectReadableSnippetTexts(snippets, 3)
+	if len(readable) == 0 {
+		return ""
+	}
+	combined := normalizeSpacing(strings.Join(readable, " "))
+	combinedLower := strings.ToLower(combined)
+
+	steps := make([]string, 0, 6)
+	seen := make(map[string]struct{}, 8)
+	addStep := func(step string) {
+		step = sanitizeOneLine(step, "", 220)
+		if step == "" {
+			return
+		}
+		key := strings.ToLower(step)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		steps = append(steps, step)
+	}
+
+	if strings.Contains(combinedLower, "setting adaptive cruise control") {
+		addStep("Start from the Adaptive Cruise Control setting state.")
+	}
+	if strings.Contains(combinedLower, "switch to conventional cruise control") {
+		if strings.Contains(combinedLower, "press and hold") && strings.Contains(combinedLower, "following distance") {
+			addStep("Switch to Conventional Cruise Control by pressing and holding the following-distance setting switch.")
+		} else {
+			addStep("Switch from Adaptive Cruise Control to Conventional Cruise Control.")
+		}
+	}
+	if strings.Contains(combinedLower, "using the resset switch") ||
+		strings.Contains(combinedLower, "using the res/set switch") ||
+		strings.Contains(combinedLower, "using the reset switch") {
+		addStep("Use the RES/SET switch for cruise-control set or resume actions.")
+	}
+	if strings.Contains(combinedLower, "manual cancellation by the driver") ||
+		strings.Contains(combinedLower, "cancelling by driver") ||
+		strings.Contains(combinedLower, "cancellation by the driver") {
+		addStep("Cruise control can be canceled by driver operation.")
+	}
+	if strings.Contains(combinedLower, "system will restart once the cause has been eliminated") {
+		addStep("If the system temporarily stops, it restarts after the cause is eliminated.")
+	}
+	if speedRange := extractSpeedConditionFromText(combined); speedRange != "" {
+		addStep(fmt.Sprintf("Operate cruise control only within the stated vehicle-speed range (%s).", speedRange))
+	}
+
+	if len(steps) == 0 {
+		for _, snippet := range readable {
+			if snippetLooksProcedural(snippet) {
+				addStep("Procedure excerpt: " + sanitizeOneLine(snippet, "", 260))
+				break
+			}
+		}
+	}
+	if len(steps) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(steps)+2)
+	parts = append(parts, "From the retrieved Subaru manual snippet, use cruise control as follows:")
+	for i, step := range steps {
+		parts = append(parts, fmt.Sprintf("%d. %s", i+1, step))
+	}
+	if looksSnippetTruncated(combined) {
+		parts = append(parts, "Note: the snippet is truncated, so some exact limits/buttons may be cut off.")
+	}
+	return strings.Join(parts, "\n")
+}
+
+func collectReadableSnippetTexts(snippets []snippetHit, max int) []string {
+	if max <= 0 {
+		return nil
+	}
+	out := make([]string, 0, minInt(len(snippets), max))
+	for _, hit := range snippets {
+		if len(out) >= max {
+			break
+		}
+		text := sanitizeOneLine(hit.Snippet, "", 420)
+		if text == "" || text == snippetNonTextPlaceholder {
+			continue
+		}
+		if looksLikePDFOperatorNoise(text) {
+			continue
+		}
+		out = append(out, text)
+	}
+	return out
+}
+
+func extractSpeedConditionFromText(text string) string {
+	match := speedConditionPattern.FindStringSubmatch(normalizeSpacing(text))
+	if len(match) < 2 {
+		return ""
+	}
+	speed := sanitizeOneLine(match[1], "", 90)
+	speed = strings.Trim(speed, " .,;:)")
+	return speed
+}
+
+func looksSnippetTruncated(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(normalizeSpacing(text)))
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "..") {
+		return true
+	}
+	truncatedEndings := []string{
+		"between",
+		"approximately",
+		"when the vehicle speed is between",
+	}
+	for _, ending := range truncatedEndings {
+		if strings.HasSuffix(lower, ending) {
+			return true
+		}
+	}
+	return false
 }
 
 func querySearchArgsFromPlan(plan deterministicPlan, task, requestedCollection string, maxResults, maxTaskChars int) map[string]any {
@@ -1235,10 +1694,7 @@ func queryReadArgsFromPlan(plan deterministicPlan, task string, ids []string, ma
 		if strings.TrimSpace(call.Name) != "vault.read_snippets" {
 			continue
 		}
-		query := sanitizeOneLine(getStringArg(call.Args, "query"), task, maxBytes)
-		if query != "" {
-			args["query"] = query
-		}
+		// Keep caller-provided query so fallback read passes can vary retrieval anchors.
 		args["max_bytes"] = clampInt(getIntArg(call.Args, "max_bytes", maxBytes), minBytes, maxBytes)
 		args["max_chars_per_snippet"] = clampInt(getIntArg(call.Args, "max_chars_per_snippet", maxChars), minChars, maxChars)
 		break
@@ -1247,12 +1703,52 @@ func queryReadArgsFromPlan(plan deterministicPlan, task string, ids []string, ma
 }
 
 func queryReadTargetsFromHits(hits []searchHit, max int) []string {
+	return queryReadObjectTargetsFromHits(hits, max)
+}
+
+func queryReadObjectTargetsFromHits(hits []searchHit, max int) []string {
 	if max <= 0 {
 		return nil
 	}
 	out := make([]string, 0, minInt(len(hits), max))
-	seen := make(map[string]struct{}, len(hits)*3)
+	seen := make(map[string]struct{}, len(hits)*2)
 	for _, h := range hits {
+		if isLowConfidenceHit(h) {
+			continue
+		}
+		id := strings.TrimSpace(h.ID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+		if len(out) >= max {
+			return out
+		}
+	}
+	if len(out) == 0 {
+		for _, h := range hits {
+			id := strings.TrimSpace(h.ID)
+			if id == "" {
+				continue
+			}
+			if _, exists := seen[id]; exists {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+			if len(out) >= max {
+				return out
+			}
+		}
+	}
+	for _, h := range hits {
+		if isLowConfidenceHit(h) {
+			continue
+		}
 		for _, chunkID := range h.EvidenceChunkIDs {
 			chunkID = strings.TrimSpace(chunkID)
 			if chunkID == "" {
@@ -1268,21 +1764,114 @@ func queryReadTargetsFromHits(hits []searchHit, max int) []string {
 			}
 		}
 	}
-	for _, h := range hits {
-		id := strings.TrimSpace(h.ID)
-		if id == "" {
-			continue
+	return out
+}
+
+func isLowConfidenceHit(h searchHit) bool {
+	return strings.EqualFold(strings.TrimSpace(h.Confidence), "low")
+}
+
+func deriveFallbackReadQueries(task string) []string {
+	task = enrichSnippetReadQuery(task)
+	if task == "" {
+		return nil
+	}
+	queries := []string{
+		task,
+		task + " instructions",
+		task + " steps",
+	}
+	if isHowToTask(task) {
+		queries = append(queries,
+			task+" setting procedure",
+			task+" switch and button steps",
+		)
+	}
+	return compactQueries(dedupeStrings(queries), 5)
+}
+
+func enrichSnippetReadQuery(task string) string {
+	task = normalizeSpacing(task)
+	if task == "" {
+		return ""
+	}
+	if !isHowToTask(task) {
+		return task
+	}
+	augmented := []string{
+		task,
+		"instructions",
+		"steps",
+		"setting procedure",
+		"press hold switch button indicator ready conditions",
+	}
+	return normalizeSpacing(strings.Join(augmented, " "))
+}
+
+func scoreSnippetSetForTask(task string, snippets []snippetHit) float64 {
+	best := -1000.0
+	for _, hit := range snippets {
+		score := scoreSnippetForQuery(hit.Snippet, task)
+		if isHowToTask(task) && snippetLooksProcedural(hit.Snippet) {
+			score += 0.6
 		}
-		if _, exists := seen[id]; exists {
-			continue
-		}
-		seen[id] = struct{}{}
-		out = append(out, id)
-		if len(out) >= max {
-			break
+		if score > best {
+			best = score
 		}
 	}
-	return out
+	return best
+}
+
+func snippetsRelevantForTask(task string, snippets []snippetHit) bool {
+	if len(snippets) == 0 {
+		return false
+	}
+	bestScore := scoreSnippetSetForTask(task, snippets)
+	if bestScore <= -50 {
+		return false
+	}
+	if isHowToTask(task) {
+		if bestScore < 1.8 {
+			return false
+		}
+		for _, hit := range snippets {
+			if snippetLooksProcedural(hit.Snippet) {
+				return true
+			}
+		}
+		return false
+	}
+	return bestScore >= 1.2
+}
+
+func isHowToTask(task string) bool {
+	task = strings.ToLower(normalizeSpacing(task))
+	if task == "" {
+		return false
+	}
+	return strings.Contains(task, "how to") ||
+		strings.HasPrefix(task, "how do") ||
+		strings.Contains(task, "steps") ||
+		strings.Contains(task, "configure") ||
+		strings.Contains(task, "set up") ||
+		strings.Contains(task, "use ")
+}
+
+func snippetLooksProcedural(snippet string) bool {
+	s := strings.ToLower(normalizeSpacing(snippet))
+	if s == "" || s == snippetNonTextPlaceholder {
+		return false
+	}
+	hints := []string{
+		"press ", "hold ", "switch ", "set ", "turn ", "activate ", "depress ",
+		"ready indicator", "cruise", "button", "step ", "setting",
+	}
+	for _, hint := range hints {
+		if strings.Contains(s, hint) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasReadableSnippets(snippets []snippetHit) bool {

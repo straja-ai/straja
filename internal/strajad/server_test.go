@@ -2457,7 +2457,7 @@ func TestReadSnippets_ChunkHandleCanUpgradeToBetterChunkInSameObject(t *testing.
 	}
 }
 
-func TestQueryReadTargetsFromHits_PrefersEvidenceChunks(t *testing.T) {
+func TestQueryReadTargetsFromHits_PrefersObjectTargets(t *testing.T) {
 	hits := []searchHit{
 		{
 			ID:               "obj_1",
@@ -2472,8 +2472,8 @@ func TestQueryReadTargetsFromHits_PrefersEvidenceChunks(t *testing.T) {
 	if len(targets) != 3 {
 		t.Fatalf("expected 3 targets, got %d (%v)", len(targets), targets)
 	}
-	if targets[0] != "obj_1::chunk_001" || targets[1] != "obj_1::chunk_002" || targets[2] != "obj_2::chunk_001" {
-		t.Fatalf("expected chunk-evidence-first ordering, got %v", targets)
+	if targets[0] != "obj_1" || targets[1] != "obj_2" || targets[2] != "obj_1::chunk_001" {
+		t.Fatalf("expected object-first ordering with chunk fallback, got %v", targets)
 	}
 
 	noEvidence := queryReadTargetsFromHits([]searchHit{
@@ -2482,6 +2482,25 @@ func TestQueryReadTargetsFromHits_PrefersEvidenceChunks(t *testing.T) {
 	}, 2)
 	if len(noEvidence) != 2 || noEvidence[0] != "obj_a" || noEvidence[1] != "obj_b" {
 		t.Fatalf("expected object id fallback ordering, got %v", noEvidence)
+	}
+}
+
+func TestQueryReadArgsFromPlan_KeepsCallerQuery(t *testing.T) {
+	plan := deterministicPlan{
+		RecommendedToolCalls: []recommendedCall{
+			{
+				Name: "vault.read_snippets",
+				Args: map[string]any{
+					"query":                 "old query from plan",
+					"max_bytes":             1024,
+					"max_chars_per_snippet": 280,
+				},
+			},
+		},
+	}
+	args := queryReadArgsFromPlan(plan, "new fallback query", []string{"note_1"}, 4096, 512)
+	if got, _ := args["query"].(string); got != "new fallback query" {
+		t.Fatalf("expected caller query to be preserved, got %q", got)
 	}
 }
 
@@ -3912,6 +3931,232 @@ func TestVaultUIQueryIncludesLLMTraceWhenBrokerSupportsIt(t *testing.T) {
 	}
 }
 
+func TestVaultUIQuery_RawLLMUsesDocumentsWithoutSnippetTool(t *testing.T) {
+	d := newTestDaemon(t)
+	mustUnlock(t, d, "ui-query-raw-llm-pass", "")
+	stub := &stubTraceablePlannerBroker{
+		mode: brokerModeOllamaV1,
+		draft: brokerPlanDraft{
+			Plan: []string{
+				"Search before answering.",
+			},
+		},
+		answerOut: brokerAnswerOutput{
+			Response: "Use cruise control by switching to Conventional Cruise Control and using the RES/SET switch.",
+			Trace: map[string]any{
+				"provider": "ollama",
+				"model":    "phi4-mini:3.8b",
+			},
+		},
+	}
+	d.broker = stub
+
+	writeReq := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ui-query-raw-llm-write",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "vault.write",
+			"arguments": map[string]any{
+				"collection": "work",
+				"title":      "Subaru eyesight manual.pdf",
+				"content": strings.Join([]string{
+					"How to use Conventional Cruise Control.",
+					"Switch to Conventional Cruise Control.",
+					"Press and hold the following distance setting switch.",
+					"Using the RESSET switch.",
+				}, " "),
+			},
+		},
+	}
+	rr := performMCP(t, d, writeReq, "127.0.0.1:3456", "test-token")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("vault.write failed status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	query := performUI(t, d, http.MethodPost, "/vault/api/query", map[string]any{
+		"task":    "how to use cruise control?",
+		"raw_llm": true,
+	}, "127.0.0.1:3456", "test-token")
+	if query.Code != http.StatusOK {
+		t.Fatalf("expected query success, got %d body=%s", query.Code, query.Body.String())
+	}
+	payload := mustPayload(t, query.Body.Bytes())
+	if raw, _ := payload["raw_llm"].(bool); !raw {
+		t.Fatalf("expected raw_llm=true in response payload")
+	}
+	if used, _ := payload["llm_used"].(bool); !used {
+		t.Fatalf("expected llm_used=true in raw llm mode")
+	}
+
+	trace, ok := payload["trace"].([]any)
+	if !ok || len(trace) == 0 {
+		t.Fatalf("expected trace entries")
+	}
+	foundRawRead := false
+	foundSnippetRead := false
+	for _, raw := range trace {
+		step := mustAnyObject(t, raw)
+		if stage, _ := step["stage"].(string); stage == "raw_document_read" {
+			foundRawRead = true
+		}
+		if name, _ := step["name"].(string); name == "vault.read_snippets" {
+			foundSnippetRead = true
+		}
+	}
+	if !foundRawRead {
+		t.Fatalf("expected raw_document_read trace stage")
+	}
+	if foundSnippetRead {
+		t.Fatalf("did not expect vault.read_snippets call in raw llm mode")
+	}
+
+	if len(stub.lastAnswerInput.Documents) == 0 {
+		t.Fatalf("expected raw llm mode to pass documents into broker input")
+	}
+	if len(stub.lastAnswerInput.Snippets) != 0 {
+		t.Fatalf("expected raw llm mode to avoid snippet input")
+	}
+	if !strings.Contains(strings.ToLower(stub.lastAnswerInput.Documents[0].Content), "conventional cruise control") {
+		t.Fatalf("expected document content in broker input, got %q", stub.lastAnswerInput.Documents[0].Content)
+	}
+}
+
+func TestVaultUIQuery_GenericRedirectAnswerFallsBackToDeterministic(t *testing.T) {
+	d := newTestDaemon(t)
+	mustUnlock(t, d, "ui-query-generic-pass", "")
+	d.broker = &stubTraceablePlannerBroker{
+		mode: brokerModeOllamaV1,
+		draft: brokerPlanDraft{
+			Plan: []string{
+				"Search and read snippets before answering.",
+			},
+		},
+		answerOut: brokerAnswerOutput{
+			Response: "You can refer to the Subaru manual for detailed instructions in that document.",
+			Trace: map[string]any{
+				"provider": "ollama",
+				"model":    "phi4-mini:3.8b",
+			},
+		},
+	}
+
+	writeReq := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ui-query-generic-write",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "vault.write",
+			"arguments": map[string]any{
+				"collection": "work",
+				"title":      "Subaru eyesight manual.pdf",
+				"content": strings.Join([]string{
+					"How to use Conventional Cruise Control.",
+					"Switch to Conventional Cruise Control.",
+					"Press and hold the following distance setting switch for 2 seconds.",
+					"Ensure READY indicator is displayed before setting speed.",
+				}, " "),
+			},
+		},
+	}
+	rr := performMCP(t, d, writeReq, "127.0.0.1:3456", "test-token")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("vault.write failed status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	query := performUI(t, d, http.MethodPost, "/vault/api/query", map[string]any{
+		"task": "how to use cruise control? be very specific",
+	}, "127.0.0.1:3456", "test-token")
+	if query.Code != http.StatusOK {
+		t.Fatalf("expected query success, got %d body=%s", query.Code, query.Body.String())
+	}
+	payload := mustPayload(t, query.Body.Bytes())
+	if used, _ := payload["llm_used"].(bool); used {
+		t.Fatalf("expected llm_used=false when generic redirect answer is rejected")
+	}
+	final, _ := payload["final_response"].(string)
+	if strings.Contains(strings.ToLower(final), "refer to") {
+		t.Fatalf("expected fallback answer to avoid generic redirect phrasing, got %q", final)
+	}
+}
+
+func TestAnswerLooksLikePlanOrToolEcho(t *testing.T) {
+	if !answerLooksLikePlanOrToolEcho("1. Search for candidate objects using `vault.search` and then call `vault.read_snippets`.") {
+		t.Fatalf("expected plan/tool echo to be detected")
+	}
+	if answerLooksLikePlanOrToolEcho("Press and hold the following-distance setting switch to change cruise mode.") {
+		t.Fatalf("expected direct procedural answer to be accepted")
+	}
+}
+
+func TestVaultUIQuery_PlanEchoAnswerFallsBackToDeterministicSteps(t *testing.T) {
+	d := newTestDaemon(t)
+	mustUnlock(t, d, "ui-query-plan-echo-pass", "")
+	d.broker = &stubTraceablePlannerBroker{
+		mode: brokerModeOllamaV1,
+		draft: brokerPlanDraft{
+			Plan: []string{
+				"Search and read snippets before answering.",
+			},
+		},
+		answerOut: brokerAnswerOutput{
+			Response: strings.Join([]string{
+				"1. Search for candidate objects using `vault.search`.",
+				"2. Read bounded snippets with `vault.read_snippets`.",
+				"3. Follow additional instructions from snippets.",
+			}, "\n"),
+			Trace: map[string]any{
+				"provider": "ollama",
+				"model":    "phi4-mini:3.8b",
+			},
+		},
+	}
+
+	writeReq := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ui-query-plan-echo-write",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "vault.write",
+			"arguments": map[string]any{
+				"collection": "work",
+				"title":      "Subaru eyesight manual.pdf",
+				"content": strings.Join([]string{
+					"Setting Adaptive Cruise Control.",
+					"Switch to Conventional Cruise Control.",
+					"Press and hold the following distance setting switch.",
+					"Using the RESSET switch.",
+					"The system will restart once the cause has been eliminated.",
+					"When the vehicle speed is between approximately 25 MPH and 90 MPH.",
+				}, " "),
+			},
+		},
+	}
+	rr := performMCP(t, d, writeReq, "127.0.0.1:3456", "test-token")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("vault.write failed status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	query := performUI(t, d, http.MethodPost, "/vault/api/query", map[string]any{
+		"task": "how to use cruise control?",
+	}, "127.0.0.1:3456", "test-token")
+	if query.Code != http.StatusOK {
+		t.Fatalf("expected query success, got %d body=%s", query.Code, query.Body.String())
+	}
+	payload := mustPayload(t, query.Body.Bytes())
+	if used, _ := payload["llm_used"].(bool); used {
+		t.Fatalf("expected llm_used=false when broker answer echoes tool plan")
+	}
+	final, _ := payload["final_response"].(string)
+	lower := strings.ToLower(final)
+	if strings.Contains(lower, "vault.search") || strings.Contains(lower, "vault.read_snippets") {
+		t.Fatalf("expected final response to hide tool-plan text, got %q", final)
+	}
+	if !strings.Contains(lower, "switch to conventional cruise control") {
+		t.Fatalf("expected procedural fallback answer, got %q", final)
+	}
+}
+
 func TestVaultUIDriveOAuthStartRequiresGoogleConfig(t *testing.T) {
 	d := newTestDaemon(t)
 	mustUnlock(t, d, "drive-oauth-config-pass", "")
@@ -4738,6 +4983,8 @@ type stubTraceablePlannerBroker struct {
 	planErr   error
 	answerOut brokerAnswerOutput
 	answerErr error
+
+	lastAnswerInput brokerAnswerInput
 }
 
 func (s *stubTraceablePlannerBroker) EnsureModel(ctx context.Context) error {
@@ -4759,6 +5006,7 @@ func (s *stubTraceablePlannerBroker) Mode() string {
 }
 
 func (s *stubTraceablePlannerBroker) AnswerWithTrace(ctx context.Context, in brokerAnswerInput) (brokerAnswerOutput, error) {
+	s.lastAnswerInput = in
 	if s.answerErr != nil {
 		return brokerAnswerOutput{}, s.answerErr
 	}

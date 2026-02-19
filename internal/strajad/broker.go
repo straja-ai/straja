@@ -56,6 +56,16 @@ type brokerAnswerInput struct {
 	Plan          deterministicPlan `json:"plan"`
 	SearchResults []searchHit       `json:"search_results,omitempty"`
 	Snippets      []snippetHit      `json:"snippets,omitempty"`
+	Documents     []brokerDocument  `json:"documents,omitempty"`
+}
+
+type brokerDocument struct {
+	ID         string `json:"id"`
+	Collection string `json:"collection,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Content    string `json:"content"`
+	Bytes      int    `json:"bytes,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
 }
 
 type brokerAnswerOutput struct {
@@ -498,6 +508,7 @@ func (b *ollamaBroker) AnswerWithTrace(ctx context.Context, in brokerAnswerInput
 		"plan":           in.Plan,
 		"search_results": in.SearchResults,
 		"snippets":       in.Snippets,
+		"documents":      in.Documents,
 	}
 	inputJSON, err := json.Marshal(inputPayload)
 	if err != nil {
@@ -506,14 +517,19 @@ func (b *ollamaBroker) AnswerWithTrace(ctx context.Context, in brokerAnswerInput
 
 	systemPrompt := strings.Join([]string{
 		"You are Straja Vault's local answer synthesizer.",
-		"Use only provided search results and snippets.",
+		"Use only provided search results, snippets, and documents.",
 		"Do not claim access to data not included in input.",
 		"Keep the answer concise, direct, and grounded.",
 		"Write the answer for the end-user question directly.",
-		"Never mention JSON, search result IDs, snippets, or internal tracing.",
+		"Never mention JSON, search result IDs, snippets, document IDs, or internal tracing.",
+		"Never answer with 'refer to the manual/document' when usable snippet content exists.",
+		"For 'how to' questions, return concrete steps/actions from the snippets.",
+		"If snippets include action cues (press/hold/switch/set/ready indicator), output numbered steps directly.",
+		"Do not tell the user to consult or refer to a manual when snippets already contain procedure details.",
+		"If full documents are provided, treat them as primary context and answer directly from document content.",
 		"Do not reinterpret domain terms when snippets clearly indicate product context (e.g., Subaru EyeSight).",
-		"If there is at least one relevant snippet, answer from it and do not add a 'missing context' section.",
-		"Only state missing context when all snippets are irrelevant or unreadable.",
+		"If there is at least one relevant snippet or document, answer from it and do not add a 'missing context' section.",
+		"Only state missing context when all snippets and documents are irrelevant or unreadable.",
 	}, "\n")
 	fullPrompt := systemPrompt + "\n\nInput JSON:\n" + string(inputJSON)
 
@@ -572,6 +588,7 @@ func (b *ollamaBroker) AnswerWithTrace(ctx context.Context, in brokerAnswerInput
 		return brokerAnswerOutput{Trace: trace}, fmt.Errorf("decode broker response: %w", err)
 	}
 	responseText := strings.TrimSpace(payload.Response)
+	responseText = sanitizeBrokerAnswerResponse(responseText)
 	trace["response"] = map[string]any{
 		"response": truncateUTF8ByBytes(responseText, 12000),
 		"error":    sanitizeOneLine(payload.Error, "", 512),
@@ -588,6 +605,37 @@ func (b *ollamaBroker) AnswerWithTrace(ctx context.Context, in brokerAnswerInput
 		Response: responseText,
 		Trace:    trace,
 	}, nil
+}
+
+func sanitizeBrokerAnswerResponse(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	lower := strings.ToLower(s)
+	cutMarkers := []string{
+		"\ninput json:",
+		"\ninput:",
+		"\njson:",
+		"\n```json",
+		"\n{\"collection\"",
+		"\n{\"task\"",
+	}
+	cutAt := -1
+	for _, marker := range cutMarkers {
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			if cutAt < 0 || idx < cutAt {
+				cutAt = idx
+			}
+		}
+	}
+	if cutAt >= 0 {
+		s = strings.TrimSpace(s[:cutAt])
+	}
+	if strings.HasPrefix(strings.ToLower(s), "input json:") {
+		return ""
+	}
+	return strings.TrimSpace(s)
 }
 
 func decodeBrokerPlanDraft(raw string) (brokerPlanDraft, error) {
