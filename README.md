@@ -280,4 +280,4 @@ Apache License, Version 2.0.
 
 ## Contact
 
-For questions or early access: **hello@straja.ai**
+For questions: **hello@straja.ai**
