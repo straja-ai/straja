@@ -15,8 +15,8 @@ import (
 
 	_ "embed"
 
-	"github.com/straja-ai/straja/internal/redact"
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 	ort "github.com/yalue/onnxruntime_go"
 	"gopkg.in/yaml.v3"
 )

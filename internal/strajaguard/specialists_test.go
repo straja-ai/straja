@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 )
 
 func TestEntitiesFromTokenLabels_EmailSpan(t *testing.T) {

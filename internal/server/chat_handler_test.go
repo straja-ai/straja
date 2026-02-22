@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/auth"
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/provider"
+	"github.com/straja-ai/straja-gateway/internal/auth"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/provider"
 )
 
 func TestChatCompletion_SimplePath(t *testing.T) {

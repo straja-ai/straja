@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/redact"
 )
 
 const (

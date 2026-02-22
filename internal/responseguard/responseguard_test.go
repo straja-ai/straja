@@ -3,7 +3,7 @@ package responseguard
 import (
 	"testing"
 
-	"github.com/straja-ai/straja/internal/toolgate"
+	"github.com/straja-ai/straja-gateway/internal/toolgate"
 )
 
 func TestEvaluateResponseAllow(t *testing.T) {

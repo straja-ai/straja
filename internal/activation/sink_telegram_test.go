@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 func TestTelegramSinkSendsOnBlock(t *testing.T) {

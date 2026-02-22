@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/inference"
 )
 
 func TestNormalizeToInferenceRequest(t *testing.T) {

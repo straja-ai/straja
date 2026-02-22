@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/intel"
-	"github.com/straja-ai/straja/internal/policy"
-	"github.com/straja-ai/straja/internal/trust"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/intel"
+	"github.com/straja-ai/straja-gateway/internal/policy"
+	"github.com/straja-ai/straja-gateway/internal/trust"
 	"go.opentelemetry.io/otel/trace"
 )
 

@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 // EvaluateAllCategories merges detection signals into policy hits across all categories.

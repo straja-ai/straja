@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/redact"
 	ort "github.com/yalue/onnxruntime_go"
 	"gopkg.in/yaml.v3"
 )

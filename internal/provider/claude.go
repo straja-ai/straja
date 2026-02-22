@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/inference"
 )
 
 const defaultClaudeVersion = "2023-06-01"

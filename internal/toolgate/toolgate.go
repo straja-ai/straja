@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/redact"
 )
 
 type ToolType string

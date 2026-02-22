@@ -17,7 +17,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/straja-ai/straja/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/redact"
 )
 
 // Config controls telemetry setup.

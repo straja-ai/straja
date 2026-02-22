@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/inference"
 )
 
 func TestOpenAIProviderChatCompletion_ToolCalls(t *testing.T) {

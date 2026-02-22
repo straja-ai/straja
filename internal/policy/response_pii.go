@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/safety"
-	"github.com/straja-ai/straja/internal/strajaguard"
+	"github.com/straja-ai/straja-gateway/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/strajaguard"
 )
 
 // ResponsePIIResult captures response-side PII evaluation results.

@@ -3,7 +3,7 @@ package toolgate
 import (
 	"testing"
 
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 func TestNormalizationCatchesBypass(t *testing.T) {

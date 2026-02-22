@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/straja-ai/straja/internal/activation"
+	"github.com/straja-ai/straja-gateway/internal/activation"
 )
 
 type requestStore struct {

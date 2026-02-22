@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 // RegexBundle is your first "bundle": all detection logic based on regex & keywords.

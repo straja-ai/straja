@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/consoleauth"
+	"github.com/straja-ai/straja-gateway/internal/consoleauth"
 )
 
 type consoleSessionRequest struct {

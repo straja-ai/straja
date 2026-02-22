@@ -12,7 +12,7 @@ BIN_DIR := bin
 # Go options
 GO_FILES := $(shell find . -name '*.go' -not -path "./vendor/*")
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -X 'github.com/straja-ai/straja/internal/server.version=$(VERSION)'
+LDFLAGS := -X 'github.com/straja-ai/straja-gateway/internal/server.version=$(VERSION)'
 K6_SCRIPT := tools/loadtest/chat_completion.js
 STRAJA_BASE_URL ?= http://localhost:8080
 MOCK_GATEWAY_LOG := /tmp/straja_mock_gateway.log

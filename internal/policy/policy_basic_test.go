@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/inference"
-	"github.com/straja-ai/straja/internal/intel"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/intel"
 	"go.opentelemetry.io/otel/trace"
 )
 

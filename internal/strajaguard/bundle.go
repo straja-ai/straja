@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/redact"
 )
 
 // TODO: replace with the real base64-encoded Ed25519 public key used to sign manifests.

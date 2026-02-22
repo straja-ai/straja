@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/straja-ai/straja/internal/policy"
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/policy"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 )
 
 type responsePIIResult struct {

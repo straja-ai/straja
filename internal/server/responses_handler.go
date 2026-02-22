@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/activation"
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/inference"
-	"github.com/straja-ai/straja/internal/redact"
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/activation"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 	"go.opentelemetry.io/otel/trace"
 )
 

@@ -1,4 +1,4 @@
-module github.com/straja-ai/straja
+module github.com/straja-ai/straja-gateway
 
 go 1.25.4
 

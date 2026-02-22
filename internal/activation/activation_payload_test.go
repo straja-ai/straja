@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/inference"
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 )
 
 func TestActivationPayload_IncludesDetectorDetails_Additive(t *testing.T) {

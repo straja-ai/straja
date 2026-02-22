@@ -4,10 +4,10 @@ import (
 	"flag"
 	"os"
 
-	"github.com/straja-ai/straja/internal/auth"
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/redact"
-	"github.com/straja-ai/straja/internal/server"
+	"github.com/straja-ai/straja-gateway/internal/auth"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/server"
 )
 
 func main() {

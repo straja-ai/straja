@@ -3,7 +3,7 @@ package inference
 import (
 	"time"
 
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 )
 
 // Message is a normalized representation of a chat message.

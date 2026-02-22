@@ -3,10 +3,10 @@ package server
 import (
 	"strings"
 
-	"github.com/straja-ai/straja/internal/inference"
-	"github.com/straja-ai/straja/internal/responseguard"
-	"github.com/straja-ai/straja/internal/safety"
-	"github.com/straja-ai/straja/internal/toolgate"
+	"github.com/straja-ai/straja-gateway/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/responseguard"
+	"github.com/straja-ai/straja-gateway/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/toolgate"
 )
 
 func (s *Server) evaluateResponseGuard(text string) responseguard.Result {

@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/inference"
 )
 
 type FakeProvider struct {

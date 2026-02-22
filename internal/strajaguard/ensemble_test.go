@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 )
 
 type fakeDetector struct {

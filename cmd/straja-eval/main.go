@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/strajaguard"
+	"github.com/straja-ai/straja-gateway/internal/strajaguard"
 )
 
 type prompt struct {

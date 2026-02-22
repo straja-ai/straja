@@ -3,9 +3,9 @@ package policy
 import (
 	"strings"
 
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/inference"
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 )
 
 // synthesizeMissingDetectionsFromScores fills request.StrajaGuardDetections with a minimal,

@@ -4,9 +4,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/straja-ai/straja/internal/redact"
-	"github.com/straja-ai/straja/internal/safety"
-	"github.com/straja-ai/straja/internal/toolgate"
+	"github.com/straja-ai/straja-gateway/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/toolgate"
 )
 
 type Hit struct {

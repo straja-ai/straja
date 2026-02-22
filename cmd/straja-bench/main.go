@@ -9,8 +9,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/strajaguard"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/strajaguard"
 )
 
 func main() {

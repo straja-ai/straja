@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/straja-ai/straja/internal/auth"
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/auth"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 func newResponsesTestServer(t *testing.T, upstreamBaseURL string, mutate func(*config.Config)) *Server {

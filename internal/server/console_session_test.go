@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/auth"
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/auth"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 func newConsoleSessionServer(t *testing.T) *Server {

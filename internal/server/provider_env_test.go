@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 func TestBuildProviderRegistry_EnvAndConfigFallback(t *testing.T) {

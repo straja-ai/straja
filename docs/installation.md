@@ -57,7 +57,7 @@ Windows (PowerShell, amd64):
 
 ```powershell
 $asset = "straja_windows_amd64.zip"
-Invoke-WebRequest -Uri "https://github.com/straja-ai/straja/releases/latest/download/$asset" -OutFile $asset
+Invoke-WebRequest -Uri "https://github.com/straja-ai/straja-gateway/releases/latest/download/$asset" -OutFile $asset
 Expand-Archive -Path $asset -DestinationPath .
 .\straja\straja.exe
 

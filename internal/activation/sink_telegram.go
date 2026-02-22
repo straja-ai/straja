@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 const (

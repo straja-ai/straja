@@ -3,7 +3,7 @@ package responseguard
 import (
 	"strings"
 
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 type Config struct {

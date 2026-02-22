@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 type fakeRunner struct {

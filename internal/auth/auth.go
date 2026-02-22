@@ -3,7 +3,7 @@ package auth
 import (
 	"fmt"
 
-	"github.com/straja-ai/straja/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/config"
 )
 
 // Project is the runtime representation of a project with its provider binding.

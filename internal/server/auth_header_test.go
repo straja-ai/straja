@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/provider"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/provider"
 )
 
 func TestParseBearerToken_Valid(t *testing.T) {

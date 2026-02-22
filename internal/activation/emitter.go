@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/straja-ai/straja/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/redact"
 )
 
 // Sink consumes activation events (file, webhook, etc.).

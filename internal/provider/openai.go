@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/straja-ai/straja/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/inference"
 )
 
 // openAIProvider implements Provider for the OpenAI Chat Completions API.

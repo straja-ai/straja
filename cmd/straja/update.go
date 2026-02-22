@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/server"
-	"github.com/straja-ai/straja/internal/updater"
+	"github.com/straja-ai/straja-gateway/internal/server"
+	"github.com/straja-ai/straja-gateway/internal/updater"
 )
 
 func runUpdateCommand(args []string) int {

@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/straja/lib
 
-          LDFLAGS="-s -w -X github.com/straja-ai/straja/internal/server.version=${VERSION}"
+          LDFLAGS="-s -w -X github.com/straja-ai/straja-gateway/internal/server.version=${VERSION}"
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
             go build -trimpath -ldflags "$LDFLAGS" -o dist/straja/straja ./cmd/straja
 
@@ -116,7 +116,7 @@ jobs:
               ;;
           esac
 
-          LDFLAGS="-s -w -X github.com/straja-ai/straja/internal/server.version=${VERSION}"
+          LDFLAGS="-s -w -X github.com/straja-ai/straja-gateway/internal/server.version=${VERSION}"
           CGO_ENABLED=1 GOOS=darwin GOARCH=${goarch} \
             go build -trimpath -ldflags "$LDFLAGS" -o dist/straja/straja ./cmd/straja
 
@@ -184,7 +184,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path dist\straja | Out-Null
 
-          $Ldflags = "-s -w -X github.com/straja-ai/straja/internal/server.version=$Env:VERSION"
+          $Ldflags = "-s -w -X github.com/straja-ai/straja-gateway/internal/server.version=$Env:VERSION"
           $Env:CGO_ENABLED = "1"
           $Env:GOOS = "windows"
           $Env:GOARCH = "amd64"

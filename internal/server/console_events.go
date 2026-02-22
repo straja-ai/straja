@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/activation"
-	"github.com/straja-ai/straja/internal/consoleauth"
+	"github.com/straja-ai/straja-gateway/internal/activation"
+	"github.com/straja-ai/straja-gateway/internal/consoleauth"
 )
 
 const (

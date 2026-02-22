@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/straja-ai/straja/internal/config"
-	"github.com/straja-ai/straja/internal/inference"
-	"github.com/straja-ai/straja/internal/intel"
-	"github.com/straja-ai/straja/internal/safety"
-	"github.com/straja-ai/straja/internal/strajaguard"
+	"github.com/straja-ai/straja-gateway/internal/config"
+	"github.com/straja-ai/straja-gateway/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/intel"
+	"github.com/straja-ai/straja-gateway/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/strajaguard"
 	"go.opentelemetry.io/otel/trace"
 )
 

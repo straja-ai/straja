@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/activation"
-	guardapi "github.com/straja-ai/straja/internal/api/guard"
-	"github.com/straja-ai/straja/internal/auth"
-	"github.com/straja-ai/straja/internal/inference"
-	"github.com/straja-ai/straja/internal/redact"
-	"github.com/straja-ai/straja/internal/responseguard"
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/activation"
+	guardapi "github.com/straja-ai/straja-gateway/internal/api/guard"
+	"github.com/straja-ai/straja-gateway/internal/auth"
+	"github.com/straja-ai/straja-gateway/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/responseguard"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 	"go.opentelemetry.io/otel/trace"
 )
 

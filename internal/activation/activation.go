@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/straja-ai/straja/internal/inference"
-	"github.com/straja-ai/straja/internal/redact"
-	"github.com/straja-ai/straja/internal/safety"
+	"github.com/straja-ai/straja-gateway/internal/inference"
+	"github.com/straja-ai/straja-gateway/internal/redact"
+	"github.com/straja-ai/straja-gateway/internal/safety"
 )
 
 // Decision is the outcome of a request from Straja's perspective.
