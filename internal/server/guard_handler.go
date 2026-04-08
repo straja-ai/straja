@@ -70,6 +70,10 @@ func (s *Server) handleGuardRequest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	modelName := strings.TrimSpace(reqBody.Metadata.Source)
+	if modelName == "" {
+		modelName = "guard_api"
+	}
 
 	requestID := strings.TrimSpace(reqBody.RequestID)
 	if requestID == "" {
@@ -84,7 +88,7 @@ func (s *Server) handleGuardRequest(w http.ResponseWriter, r *http.Request) {
 	infReq := &inference.Request{
 		RequestID: requestID,
 		ProjectID: projectID,
-		Model:     "guard_api",
+		Model:     modelName,
 		Messages:  messages,
 		Timings:   &inference.Timings{},
 	}
@@ -185,6 +189,10 @@ func (s *Server) handleGuardResponse(w http.ResponseWriter, r *http.Request) {
 	if projectID == "" {
 		projectID = s.defaultProjectID()
 	}
+	modelName := strings.TrimSpace(reqBody.Metadata.Source)
+	if modelName == "" {
+		modelName = "guard_api"
+	}
 	if s.requestStore != nil {
 		s.requestStore.Start(requestID, projectID)
 	}
@@ -192,7 +200,7 @@ func (s *Server) handleGuardResponse(w http.ResponseWriter, r *http.Request) {
 	infReq := &inference.Request{
 		RequestID: requestID,
 		ProjectID: projectID,
-		Model:     "guard_api",
+		Model:     modelName,
 		Messages:  nil,
 		Timings:   &inference.Timings{},
 	}

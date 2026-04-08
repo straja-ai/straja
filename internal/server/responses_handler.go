@@ -271,7 +271,7 @@ func (s *Server) doResponsesUpstream(ctx context.Context, pcfg config.ProviderCo
 		return nil, fmt.Errorf("provider %q base_url is empty", providerName)
 	}
 	apiKey := resolveProviderAPIKey(pcfg)
-	if strings.EqualFold(pcfg.Type, "openai") && strings.TrimSpace(apiKey) == "" {
+	if !pcfg.ForwardAuth && strings.EqualFold(pcfg.Type, "openai") && strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("provider %q api key missing", providerName)
 	}
 
@@ -282,7 +282,11 @@ func (s *Server) doResponsesUpstream(ctx context.Context, pcfg config.ProviderCo
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
+	if pcfg.ForwardAuth {
+		if incomingAuth := incoming.Get("Authorization"); incomingAuth != "" {
+			req.Header.Set("Authorization", incomingAuth)
+		}
+	} else if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	copyHeaders(req.Header, incoming, map[string]struct{}{
@@ -310,7 +314,7 @@ func (s *Server) doChatCompletionsUpstream(ctx context.Context, pcfg config.Prov
 		return nil, fmt.Errorf("provider %q base_url is empty", providerName)
 	}
 	apiKey := resolveProviderAPIKey(pcfg)
-	if strings.EqualFold(pcfg.Type, "openai") && strings.TrimSpace(apiKey) == "" {
+	if !pcfg.ForwardAuth && strings.EqualFold(pcfg.Type, "openai") && strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("provider %q api key missing", providerName)
 	}
 
@@ -321,7 +325,11 @@ func (s *Server) doChatCompletionsUpstream(ctx context.Context, pcfg config.Prov
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
+	if pcfg.ForwardAuth {
+		if incomingAuth := incoming.Get("Authorization"); incomingAuth != "" {
+			req.Header.Set("Authorization", incomingAuth)
+		}
+	} else if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	copyHeaders(req.Header, incoming, map[string]struct{}{

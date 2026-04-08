@@ -20,6 +20,10 @@ providers:
     type: "openai"
     base_url: "https://api.openai.com/v1"
     api_key_env: "OPENAI_API_KEY"
+  openai_passthrough:
+    type: "openai"
+    base_url: "https://api.openai.com/v1"
+    forward_auth: true
   #claude_demo:
   #  type: "claude"
   #  base_url: "https://api.anthropic.com/v1"
@@ -30,6 +34,9 @@ projects:
     provider: "openai_demo"
     api_keys:
       - "local-dev-key-123"
+  - id: "workspace"
+    provider: "openai_passthrough"
+    auth_mode: "passthrough"
   #- id: "demo-claude"
   #  provider: "claude_demo"
   #  api_keys:

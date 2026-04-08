@@ -176,7 +176,28 @@ func handleRobots(w http.ResponseWriter, r *http.Request) {
 
 type consoleProject struct {
 	ID       string `json:"id"`
+	Label    string `json:"label"`
 	Provider string `json:"provider"`
+}
+
+func formatConsoleProjectLabel(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(id, func(r rune) bool {
+		return r == '_' || r == '-' || r == '.'
+	})
+	if len(parts) == 0 {
+		return id
+	}
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
+	}
+	return strings.Join(parts, " ")
 }
 
 func (s *Server) handleConsoleProjects(w http.ResponseWriter, r *http.Request) {
@@ -190,6 +211,7 @@ func (s *Server) handleConsoleProjects(w http.ResponseWriter, r *http.Request) {
 	for _, p := range s.cfg.Projects {
 		projects = append(projects, consoleProject{
 			ID:       p.ID,
+			Label:    formatConsoleProjectLabel(p.ID),
 			Provider: p.Provider,
 		})
 	}
@@ -798,7 +820,7 @@ func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, er
 			if apiKey == "" {
 				apiKey = strings.TrimSpace(pcfg.APIKey)
 			}
-			if apiKey == "" {
+			if apiKey == "" && !pcfg.ForwardAuth {
 				return nil, fmt.Errorf("provider %q: api key missing (env %s empty)", name, pcfg.APIKeyEnv)
 			}
 			reg[name] = provider.NewOpenAI(pcfg.BaseURL, apiKey, cfg.Server.UpstreamTimeout, cfg.Server.MaxNonStreamResponseBytes)
@@ -807,7 +829,7 @@ func buildProviderRegistry(cfg *config.Config) (map[string]provider.Provider, er
 			if apiKey == "" {
 				apiKey = strings.TrimSpace(pcfg.APIKey)
 			}
-			if apiKey == "" {
+			if apiKey == "" && !pcfg.ForwardAuth {
 				return nil, fmt.Errorf("provider %q: api key missing (env %s empty)", name, pcfg.APIKeyEnv)
 			}
 			reg[name] = provider.NewClaude(pcfg.BaseURL, apiKey, cfg.Server.UpstreamTimeout, cfg.Server.MaxNonStreamResponseBytes)
@@ -1075,6 +1097,9 @@ func (s *Server) missingProjectProviderAPIKeys(projectID string) []string {
 		}
 		pType := strings.ToLower(strings.TrimSpace(pcfg.Type))
 		if pType != "openai" && pType != "claude" {
+			continue
+		}
+		if pcfg.ForwardAuth {
 			continue
 		}
 		if strings.TrimSpace(resolveProviderAPIKey(pcfg)) == "" {

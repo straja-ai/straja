@@ -8,13 +8,15 @@ import (
 
 // Project is the runtime representation of a project with its provider binding.
 type Project struct {
-	ID       string
-	Provider string
+	ID          string
+	Provider    string
+	Passthrough bool // accept any Bearer token and forward to upstream
 }
 
 // Auth holds mappings from API keys to projects.
 type Auth struct {
-	apiKeyToProject map[string]Project
+	apiKeyToProject    map[string]Project
+	passthroughProject *Project // if set, matches any Bearer token not matched by apiKeyToProject
 }
 
 // NewAuth is a convenience constructor that panics on invalid config.
@@ -31,14 +33,24 @@ func NewAuth(cfg *config.Config) *Auth {
 // NewFromConfig builds an Auth instance from the loaded config, with validation.
 func NewFromConfig(cfg *config.Config) (*Auth, error) {
 	m := make(map[string]Project)
+	var passthrough *Project
 
 	for _, p := range cfg.Projects {
 		if p.ID == "" {
 			return nil, fmt.Errorf("project with empty id in config")
 		}
+		isPassthrough := p.AuthMode == "passthrough"
 		proj := Project{
-			ID:       p.ID,
-			Provider: p.Provider,
+			ID:          p.ID,
+			Provider:    p.Provider,
+			Passthrough: isPassthrough,
+		}
+		if isPassthrough {
+			if passthrough != nil {
+				return nil, fmt.Errorf("multiple passthrough projects not allowed (project %q and %q)", passthrough.ID, p.ID)
+			}
+			pp := proj
+			passthrough = &pp
 		}
 		for _, key := range p.APIKeys {
 			if key == "" {
@@ -52,15 +64,23 @@ func NewFromConfig(cfg *config.Config) (*Auth, error) {
 	}
 
 	return &Auth{
-		apiKeyToProject: m,
+		apiKeyToProject:    m,
+		passthroughProject: passthrough,
 	}, nil
 }
 
 // Lookup returns the project for a given API key, if any.
+// For passthrough projects, any Bearer token is accepted if no exact key match is found.
 func (a *Auth) Lookup(apiKey string) (Project, bool) {
 	if a == nil {
 		return Project{}, false
 	}
-	p, ok := a.apiKeyToProject[apiKey]
-	return p, ok
+	if p, ok := a.apiKeyToProject[apiKey]; ok {
+		return p, true
+	}
+	// Fall back to passthrough project: accept any non-empty token.
+	if a.passthroughProject != nil && apiKey != "" {
+		return *a.passthroughProject, true
+	}
+	return Project{}, false
 }

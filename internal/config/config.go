@@ -96,13 +96,15 @@ type ProviderConfig struct {
 	APIKey               string   `yaml:"api_key"`                // optional fallback for local dev; env wins
 	AllowedModels        []string `yaml:"allowed_models"`         // optional allowlist
 	AllowPrivateNetworks bool     `yaml:"allow_private_networks"` // default false; true for dev
+	ForwardAuth          bool     `yaml:"forward_auth"`           // forward original Authorization header to upstream instead of replacing with provider key
 }
 
 type ProjectConfig struct {
 	ID            string   `yaml:"id"`
-	Provider      string   `yaml:"provider"` // provider name from Providers map
+	Provider      string   `yaml:"provider"`  // provider name from Providers map
 	APIKeys       []string `yaml:"api_keys"`
 	AllowedModels []string `yaml:"allowed_models"`
+	AuthMode      string   `yaml:"auth_mode"` // "api_key" (default) or "passthrough" (accept any Bearer token, forward to upstream)
 }
 
 type LoggingConfig struct {

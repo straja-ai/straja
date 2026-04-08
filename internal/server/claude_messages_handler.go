@@ -411,7 +411,7 @@ func (s *Server) doClaudeMessagesUpstream(ctx context.Context, pcfg config.Provi
 		return nil, fmt.Errorf("provider %q base_url is empty", providerName)
 	}
 	apiKey := resolveProviderAPIKey(pcfg)
-	if strings.TrimSpace(apiKey) == "" {
+	if !pcfg.ForwardAuth && strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("provider %q api key missing", providerName)
 	}
 

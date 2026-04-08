@@ -52,7 +52,7 @@ func Validate(cfg *Config) error {
 		if _, ok := cfg.Providers[providerName]; !ok {
 			return fmt.Errorf("project %q references unknown provider %q", p.ID, providerName)
 		}
-		if cfg.Security.Enabled && len(p.APIKeys) == 0 {
+		if cfg.Security.Enabled && len(p.APIKeys) == 0 && p.AuthMode != "passthrough" {
 			return fmt.Errorf("project %q must define at least one api_keys entry", p.ID)
 		}
 	}
@@ -100,7 +100,7 @@ func validateProviderConfig(name string, p ProviderConfig) error {
 	if strings.TrimSpace(p.Type) == "" {
 		return fmt.Errorf("provider %q missing type", name)
 	}
-	if strings.EqualFold(p.Type, "openai") || strings.EqualFold(p.Type, "claude") {
+	if (strings.EqualFold(p.Type, "openai") || strings.EqualFold(p.Type, "claude")) && !p.ForwardAuth {
 		if strings.TrimSpace(p.APIKeyEnv) == "" && strings.TrimSpace(p.APIKey) == "" {
 			return fmt.Errorf("provider %q missing api key (env or api_key)", name)
 		}
